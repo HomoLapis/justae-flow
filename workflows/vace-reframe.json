@@ -1,0 +1,135 @@
+{
+  "id": "vace-reframe",
+  "title": "Wan VACE 14B · Reframe",
+  "description": "Changes the clip's aspect ratio and generates the new space around it (720p). A new comp: the generated frame below, your clip on top, untouched, with a soft edge.",
+  "task": "outpaint-video",
+  "hosts": [
+    "effectcraft"
+  ],
+  "output": "video",
+  "input": "video",
+  "bindings": {
+    "prompt": "6.text",
+    "negative": "7.text",
+    "video": "71.file",
+    "seed": "3.seed",
+    "width": "137.value",
+    "height": "139.value",
+    "frames": "131.value",
+    "fps": "68.fps"
+  },
+  "frameLattice": {
+    "min": 1,
+    "step": 4
+  },
+  "params": [
+    {
+      "ref": "@aspect",
+      "label": "Aspect",
+      "options": [
+        "9:16",
+        "4:5",
+        "1:1",
+        "16:9"
+      ]
+    }
+  ],
+  "outpaint": {
+    "take": "200.length",
+    "start": "200.batch_index",
+    "scale": [
+      "201.width",
+      "201.height"
+    ],
+    "pad": [
+      "110.left",
+      "110.top",
+      "110.right",
+      "110.bottom"
+    ],
+    "maxFrames": 125,
+    "chain": {
+      "padded": [
+        "110",
+        0
+      ],
+      "padMask": [
+        "110",
+        1
+      ],
+      "controlVideo": "49.control_video",
+      "controlMasks": "49.control_masks"
+    },
+    "sizes": {
+      "9:16": [
+        720,
+        1280
+      ],
+      "4:5": [
+        832,
+        1040
+      ],
+      "1:1": [
+        960,
+        960
+      ],
+      "16:9": [
+        1280,
+        720
+      ]
+    }
+  },
+  "license": {
+    "weights": "Apache-2.0 (Wan2.1 VACE 14B; lightx2v 4-step LoRA)",
+    "openWeights": true,
+    "note": "The template accelerates with the CausVid LoRA, which is CC BY-NC 4.0; this workflow uses lightx2v's Apache-2.0 distillation LoRA instead."
+  },
+  "api": "vace-reframe.api.json",
+  "models": [
+    {
+      "name": "wan2.1_vace_1.3B_fp16.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_vace_1.3B_fp16.safetensors"
+    },
+    {
+      "name": "Wan21_CausVid_bidirect2_T2V_1_3B_lora_rank32.safetensors",
+      "directory": "loras",
+      "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan21_CausVid_bidirect2_T2V_1_3B_lora_rank32.safetensors"
+    },
+    {
+      "name": "umt5_xxl_fp16.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors"
+    },
+    {
+      "name": "wan_2.1_vae.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+    },
+    {
+      "name": "wan2.1_vace_14B_fp16.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_vace_14B_fp16.safetensors"
+    },
+    {
+      "name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors?download=true"
+    },
+    {
+      "name": "Wan21_CausVid_14B_T2V_lora_rank32.safetensors",
+      "directory": "loras",
+      "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan21_CausVid_14B_T2V_lora_rank32.safetensors"
+    },
+    {
+      "name": "wan2.1_t2v_14b_lora_rank64_lightx2v_4step.safetensors",
+      "directory": "loras",
+      "url": "https://huggingface.co/lightx2v/Wan2.1-Distill-Loras/resolve/main/wan2.1_t2v_14b_lora_rank64_lightx2v_4step.safetensors"
+    }
+  ],
+  "source": {
+    "template": "video_wan_vace_outpainting",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

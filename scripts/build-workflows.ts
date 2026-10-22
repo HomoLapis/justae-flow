@@ -27,6 +27,8 @@ const base = process.argv[2] ?? process.env.COMFY_URL ?? 'http://127.0.0.1:8188'
 type Recipe = Omit<WorkflowManifest, 'api' | 'models' | 'source'> & {
   template: string;
   patch?: (api: WorkflowJson) => void;
+  /** Model files a patch brings in that the template does not list. */
+  extraModels?: ModelFile[];
 };
 
 const LTX_LICENSE = {
@@ -37,6 +39,23 @@ const LTX_LICENSE = {
 const SAM_LICENSE = {
   weights: 'SAM License (Meta) — royalty-free, commercial use included; trade-control and lawful-use terms apply',
   openWeights: true,
+};
+
+const LIGHTX2V = 'wan2.1_t2v_14b_lora_rank64_lightx2v_4step.safetensors';
+
+const VACE_BINDINGS: WorkflowManifest['bindings'] = {
+  prompt: '6.text', negative: '7.text', video: '71.file', seed: '3.seed',
+  width: '137.value', height: '139.value', frames: '131.value', fps: '68.fps',
+};
+
+const VACE_OUTPAINT = {
+  take: '200.length',
+  start: '200.batch_index',
+  scale: ['201.width', '201.height'] as [string, string],
+  pad: ['110.left', '110.top', '110.right', '110.bottom'] as [string, string, string, string],
+  // Tested: 125 frames in one run stay coherent to the last frame.
+  maxFrames: 125,
+  chain: { padded: ['110', 0] as [string, number], padMask: ['110', 1] as [string, number], controlVideo: '49.control_video', controlMasks: '49.control_masks' },
 };
 
 const RECIPES: Recipe[] = [
@@ -147,8 +166,8 @@ const RECIPES: Recipe[] = [
   {
     id: 'sam3-reframe',
     template: 'utility_video_segment_sam3',
-    title: 'SAM 3 · Reframe',
-    description: 'Follows what the prompt names and builds a new comp in another aspect ratio, framed on it with keyframes you can edit.',
+    title: 'SAM 3 · Auto Crop',
+    description: 'Crops to another aspect ratio and follows what the prompt names: a new comp, the clip at 100%, framed with keyframes you can edit. Nothing is generated.',
     task: 'reframe', hosts: ['effectcraft'], output: 'image', input: 'video',
     bindings: { video: '115.file', prompt: '114:100.text' },
     params: [
@@ -164,7 +183,70 @@ const RECIPES: Recipe[] = [
       api['120'] = { class_type: 'SaveImage', inputs: { images: ['119', 0], filename_prefix: SLUG + '/sam3_track' }, _meta: { title: 'Save Image' } };
     },
   },
+  {
+    id: 'vace-reframe',
+    template: 'video_wan_vace_outpainting',
+    title: 'Wan VACE 14B · Reframe',
+    description: 'Changes the clip\'s aspect ratio and generates the new space around it (720p). A new comp: the generated frame below, your clip on top, untouched, with a soft edge.',
+    task: 'outpaint-video', hosts: ['effectcraft'], output: 'video', input: 'video',
+    bindings: VACE_BINDINGS,
+    frameLattice: { min: 1, step: 4 },
+    params: [{ ref: '@aspect', label: 'Aspect', options: ['9:16', '4:5', '1:1', '16:9'] }],
+    outpaint: { ...VACE_OUTPAINT, sizes: { '9:16': [720, 1280], '4:5': [832, 1040], '1:1': [960, 960], '16:9': [1280, 720] } },
+    license: {
+      weights: 'Apache-2.0 (Wan2.1 VACE 14B; lightx2v 4-step LoRA)',
+      openWeights: true,
+      note: 'The template accelerates with the CausVid LoRA, which is CC BY-NC 4.0; this workflow uses lightx2v\'s Apache-2.0 distillation LoRA instead.',
+    },
+    extraModels: [{ name: LIGHTX2V, directory: 'loras', url: `https://huggingface.co/lightx2v/Wan2.1-Distill-Loras/resolve/main/${LIGHTX2V}` }],
+    patch: (api) => {
+      vacePatch(api, SLUG + '/vace_reframe');
+      api['165'].inputs.lora_name = LIGHTX2V;
+      api['165'].inputs.strength_model = 1;
+      api['3'].inputs.steps = 4;
+      api['3'].inputs.cfg = 1;
+    },
+  },
+  {
+    id: 'vace-reframe-draft',
+    template: 'video_wan_vace_outpainting',
+    title: 'Wan VACE 1.3B · Reframe (draft)',
+    description: 'The same reframe on the template\'s small model, at 480p: a quick look at the framing before the 14B run.',
+    task: 'outpaint-video', hosts: ['effectcraft'], output: 'video', input: 'video',
+    bindings: VACE_BINDINGS,
+    frameLattice: { min: 1, step: 4 },
+    params: [{ ref: '@aspect', label: 'Aspect', options: ['9:16', '4:5', '1:1', '16:9'] }],
+    outpaint: { ...VACE_OUTPAINT, sizes: { '9:16': [480, 832], '4:5': [576, 720], '1:1': [624, 624], '16:9': [832, 480] } },
+    license: { weights: 'Apache-2.0 (Wan2.1 VACE 1.3B)', openWeights: true },
+    patch: (api) => {
+      vacePatch(api, SLUG + '/vace_reframe_draft');
+      // The template's 1.3B loader, without the CausVid LoRA (CC BY-NC 4.0): its default sampler settings instead.
+      api['151'].inputs.unet_name = 'wan2.1_vace_1.3B_fp16.safetensors';
+      delete api['165'];
+      api['48'].inputs.model = ['151', 0];
+      api['6'].inputs.clip = ['161', 0];
+      api['7'].inputs.clip = ['161', 0];
+      api['3'].inputs.steps = 20;
+      api['3'].inputs.cfg = 6;
+    },
+  },
 ];
+
+/**
+ * The template pads a clip by fixed amounts and previews it; here the clip is
+ * first cut to the frames one run holds and scaled into the generation frame,
+ * so the padding is the new space exactly, and the result is saved.
+ */
+function vacePatch(api: WorkflowJson, prefix: string): void {
+  delete api['135'];
+  delete api['143'];
+  api['200'] = { class_type: 'ImageFromBatch', inputs: { image: ['72', 0], batch_index: 0, length: 81 }, _meta: { title: 'Image From Batch' } };
+  api['201'] = { class_type: 'ImageScale', inputs: { image: ['200', 0], upscale_method: 'lanczos', width: 720, height: 404, crop: 'disabled' }, _meta: { title: 'Upscale Image' } };
+  api['110'].inputs.image = ['201', 0];
+  // A soft strip into the clip, so the new space grows out of it rather than meeting it at a line.
+  api['110'].inputs.feathering = 24;
+  api['69'].inputs.filename_prefix = prefix;
+}
 
 /**
  * The template detects frame by frame and only previews; tracking keeps one
@@ -209,16 +291,17 @@ for (const r of RECIPES) {
   const api = conv.api;
   r.patch?.(api);
   const absent = missingNodes(api, objectInfo);
-  for (const [k, ref] of [...Object.entries(r.bindings), ...(r.params ?? []).filter((p) => !p.ref.startsWith('@')).map((p) => [p.label, p.ref] as const)]) {
+  const outpaintRefs = r.outpaint ? [r.outpaint.take, r.outpaint.start, ...r.outpaint.scale, ...r.outpaint.pad, r.outpaint.chain.controlVideo, r.outpaint.chain.controlMasks].map((ref) => ['outpaint', ref] as const) : [];
+  for (const [k, ref] of [...Object.entries(r.bindings), ...(r.params ?? []).filter((p) => !p.ref.startsWith('@')).map((p) => [p.label, p.ref] as const), ...outpaintRefs]) {
     const dot = ref.indexOf('.', ref.lastIndexOf(':') + 1);
     const node = api[ref.slice(0, dot)];
     if (!node || !(ref.slice(dot + 1) in node.inputs)) { console.error(`✖ ${r.id}: binding ${k} → ${ref} not in graph`); failed++; }
   }
-  const { template, patch: _patch, ...rest } = r;
+  const { template, patch: _patch, extraModels, ...rest } = r;
   const manifest: WorkflowManifest = {
     ...rest,
     api: `${r.id}.api.json`,
-    models: templateModels(ui),
+    models: [...templateModels(ui), ...(extraModels ?? [])],
     source: { template, package: 'comfyui-workflow-templates', version },
   };
   writeFileSync(join(outDir, `${r.id}.api.json`), JSON.stringify(api, null, 2) + '\n');

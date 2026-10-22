@@ -44,7 +44,8 @@ Open questions to settle before submitting (not answered on the rules page):
 7. **Never destructive** — <kbd>V</kbd> for a new version, <kbd>Tab</kbd> to swap back; an error turns fuchsia,
    *Retry failed* picks it up.
 8. **On a layer** — select a clip → *Use selected layers* → SeedVR2 ×2 lands exactly over it; name a subject →
-   SAM 3 cuts it out with a track matte (the clip untouched); *Reframe 9:16* → a new comp whose keyframes follow it.
+   SAM 3 cuts it out with a track matte (the clip untouched); *Wan VACE · Reframe 9:16* → a new vertical comp whose
+   sky and sand are generated around the original clip, which stays on top untouched.
 9. **Same storyboard in PhotoCraft** — switch app in Settings; select the sky, *Card from selection*, "add a striped
    balloon" → a new layer masked to the selection; a placeholder box filled with a generated image; a layer cut out.
 10. **The comparison** — the same tools are sold as a subscription inside Adobe; here they are open source,
@@ -62,7 +63,7 @@ Open questions to settle before submitting (not answered on the rules page):
 | Source | closed | open |
 
 Feature parity status (EffectCraft, vs the Premiere Pro / After Effects plugin): Generate AI Video ✔ · Generate AI
-Image ✔ · Upscale ✔ · Remove Background (stills ✔, video subjects ✔ — SAM 3) · Reframe ✔ (SAM 3 tracking + keyframes) ·
+Image ✔ · Upscale ✔ · Remove Background (stills ✔, video subjects ✔ — SAM 3) · Reframe ✔ (generative: Wan2.1 VACE outpainting; or crop: SAM 3 tracking + keyframes) ·
 Draw to edit, Edit Video — not in this version.
 
 Feature parity status (PhotoCraft, vs the Photoshop plugin): Generate AI Image ✔ (placeholder) · edit inside a

@@ -8,7 +8,8 @@
  *   cuePoint) · comp.addMarker · file.import · layer.addItem · layer.timing ·
  *   file.replaceFootage · file.importPlaceholder · layer.revealSource ·
  *   item.metadata · edit.label · layer.setComment · layer.rename ·
- *   layer.setTrackMatte · comp.new · comp.open · prop.get · prop.set · prop.addKey
+ *   layer.setTrackMatte · comp.new · comp.open · prop.get · prop.set · prop.addKey ·
+ *   layer.addMask · layer.mask.set
  *
  * plus the control method `render.frame`. The channel has no authentication
  * and listens on loopback only; the user turns it on.
@@ -18,7 +19,7 @@ import { copyFileSync } from 'node:fs';
 import { LEGACY_SLUG, PRODUCT, SLUG } from '../../core/brand.ts';
 import { JsonLinesClient } from '../jsonlines.ts';
 import type { CardStatus } from '../../core/storyboard/types.ts';
-import type { HostLayer, HostMarker, HostSnapshot, ItemInfo, PlaceRequest, ReframeRequest, TimelineHost } from '../types.ts';
+import type { HostLayer, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, TimelineHost } from '../types.ts';
 import { HostError } from '../types.ts';
 
 /** Marker/layer label for each card state. Names are EffectCraft's own (After Effects' label set). */
@@ -251,6 +252,27 @@ export class EffectCraftAdapter implements TimelineHost {
       }
     }
     return { compId: made.comp, layerId: added.layer };
+  }
+
+  async buildOutpaint(req: OutpaintRequest): Promise<{ compId: number; fillLayer: number; fillItem: number; clipLayer: number }> {
+    const imp = await this.exec<{ items: number[]; errors: unknown[] }>('file.import', { paths: [req.file] }, 120_000);
+    const fillItem = imp.items?.[0];
+    if (fillItem === undefined) throw new HostError(`EffectCraft could not import ${req.file}: ${JSON.stringify(imp.errors)}`);
+    const made = await this.exec<{ comp: number }>('comp.new', {
+      name: req.name, width: req.width, height: req.height, frameRate: req.fps, duration: req.duration, open: true,
+    });
+    const fill = await this.exec<{ layer: number }>('layer.addItem', { item: fillItem, time: 0 });
+    await this.exec('prop.set', { layer: fill.layer, path: 'transform/scale', value: [req.fillScale, req.fillScale] });
+    await this.exec('layer.rename', { layer: fill.layer, name: req.fillName });
+    await this.exec('layer.setComment', { layers: [fill.layer], comment: req.comment }).catch(() => undefined);
+    const clip = await this.exec<{ layer: number }>('layer.addItem', { item: req.itemId, time: 0, index: 1 });
+    await this.exec('prop.set', { layer: clip.layer, path: 'transform/scale', value: [req.clipScale, req.clipScale] });
+    await this.exec('prop.set', { layer: clip.layer, path: 'transform/position', value: req.clipCentre });
+    await this.exec('layer.rename', { layer: clip.layer, name: req.clipName });
+    // The clip's own pixels, softened only where they meet the generated space.
+    await this.exec('layer.addMask', { layer: clip.layer, shape: 'rect', rect: req.mask });
+    await this.exec('layer.mask.set', { layer: clip.layer, mask: 1, field: 'feather', value: req.feather });
+    return { compId: made.comp, fillLayer: fill.layer, fillItem, clipLayer: clip.layer };
   }
 
   async openComp(compId: number): Promise<void> {

@@ -10,7 +10,7 @@
 import type { ObjectInfo, WorkflowJson } from '../comfy/types.ts';
 import { snapFramesUp } from './form.ts';
 
-export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg' | 'matte-video' | 'reframe';
+export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg' | 'matte-video' | 'reframe' | 'outpaint-video';
 export type MediaKind = 'image' | 'video';
 
 /** "nodeId.field" — the node id may itself contain colons (subgraph paths). */
@@ -59,6 +59,21 @@ export interface WorkflowManifest {
    * starts with "@" is the app's own setting, not a node field.
    */
   params?: Array<{ ref: FieldRef; label: string; options?: string[] }>;
+  /**
+   * Generative reframe: the fields that place the clip in the generation frame,
+   * the frame sizes the model is made for (per aspect), and how many frames one
+   * run holds.
+   */
+  outpaint?: {
+    take: FieldRef;
+    start: FieldRef;
+    scale: [FieldRef, FieldRef];
+    pad: [FieldRef, FieldRef, FieldRef, FieldRef];
+    sizes: Record<string, [number, number]>;
+    maxFrames: number;
+    /** For a clip longer than one run: where the padded clip and its mask come out, where the model takes its control. */
+    chain: { padded: [string, number]; padMask: [string, number]; controlVideo: FieldRef; controlMasks: FieldRef };
+  };
   models: ModelFile[];
   source: { template: string; package: string; version: string };
   license: { weights: string; openWeights: boolean; note?: string };

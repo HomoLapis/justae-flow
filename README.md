@@ -29,7 +29,8 @@ workflow and lands back in the project at its place, as a new version — never 
 | add a **marker** and type the shot as its comment | makes it a card; generates a clip sized to the comp and timed to the next marker; places it at the marker |
 | add a **placeholder** (button or <kbd>M</kbd>) and move/scale/trim it | uses its box and length as the shot; fills the placeholder in place — the layer keeps its transform, timing and name |
 | select a **clip** and press *Use selected layers*, then name a subject | **cuts the subject out** (SAM 3 tracking): a matte layer above the clip becomes its luma track matte — the clip's pixels are untouched |
-| the same, with *SAM 3 · Reframe* and an aspect (9:16, 4:5, 1:1, 16:9) | **reframes** it: a new comp in that aspect, the clip at 100%, with Position keyframes that follow the subject — ordinary keyframes you can edit |
+| the same, with *Wan VACE · Reframe*, an aspect (9:16, 4:5, 1:1, 16:9) and a description of the scene | **reframes** it generatively: a new comp in that aspect where the space the clip does not cover (above and below, or at the sides) is generated around it, and your clip sits on top, untouched, with a soft edge. Clips longer than one run go through in runs that carry on from each other |
+| the same, with *SAM 3 · Auto Crop* and a subject | **crops** to the new aspect instead: the clip at 100% in a new comp, with Position keyframes that follow the subject — ordinary keyframes you can edit |
 | select **footage layers** for other workflows | upscales a clip (SeedVR2 ×2) or cuts out a still (BiRefNet), laid exactly over the source, which is switched off — not deleted |
 | select several cards | changes workflow / seed / length on all of them at once; <kbd>Ctrl G</kbd> generates them in series |
 
@@ -62,14 +63,24 @@ All bundled workflows are **official ComfyUI templates** with **open weights**, 
 | `seedvr2-upscale` | `utility_seedvr2_3b_int8_upscale_video` | video ×2 restoration upscale | Apache-2.0 |
 | `birefnet-rmbg` | `utility_birefnet_remove_background` | still → cut-out with alpha | MIT |
 | `sam3-matte` | `utility_video_segment_sam3` | clip + subject name → tracked matte video (luma) | SAM License (Meta) |
-| `sam3-reframe` | `utility_video_segment_sam3` | clip + subject name → a small mask per frame, for the framing | SAM License (Meta) |
+| `sam3-reframe` | `utility_video_segment_sam3` | clip + subject name → a small mask per frame, for the auto crop | SAM License (Meta) |
+| `vace-reframe` | `video_wan_vace_outpainting` | clip in a new aspect → the space around it generated (Wan2.1 VACE 14B, 720p) | Apache-2.0 |
+| `vace-reframe-draft` | `video_wan_vace_outpainting` | the same on the template's 1.3B model, 480p, for a quick look | Apache-2.0 |
 | `qwen-edit` | `image_qwen_image_edit_2511_int8` | image + prompt → edited image (PhotoCraft selections) | Apache-2.0 |
 | `seedvr2-upscale-image` | `utility_seedvr2_3b_int8_upscale_image` | image restoration upscale | Apache-2.0 |
 
 The SAM 3 template detects the subject frame by frame and only previews the mask; the build replaces the detection
 with the core nodes `SAM3_VideoTrack` + `SAM3_TrackToMask` (one subject stays the same subject through the clip)
-and saves the result. The reframe itself is not done in ComfyUI: it only says where the subject is; JustAE Flow
+and saves the result. The auto crop is not done in ComfyUI: SAM 3 only says where the subject is; JustAE Flow
 builds the new comp on the original footage, so nothing is resampled and the framing stays editable.
+
+The generative reframe starts from the official Wan2.1 VACE outpainting template. The build cuts the clip to the
+frames one run holds and scales it into the generation frame, so the padding is exactly the new space; JustAE Flow
+sets the sizes per aspect. The template speeds the 14B model up with the CausVid LoRA, whose weights are CC BY-NC 4.0
+(non-commercial); `vace-reframe` uses lightx2v's Apache-2.0 4-step distillation LoRA for Wan2.1 14B instead, and
+`vace-reframe-draft` runs the 1.3B model without a LoRA, on the template's default sampler settings. A clip longer
+than one run (125 frames) is split into runs where each one starts from the last 8 frames the one before generated,
+and the runs are joined into one video in ComfyUI.
 
 Each `workflows/<id>.json` manifest names the node fields the host fills in (prompt, image, size, length, seed),
 the model files with their download URLs, and the licence. If your ComfyUI has another precision of the same
@@ -122,8 +133,10 @@ layers, generate, stop. **↗** opens the full storyboard in the browser.
 2. The storyboard lists them in time order. Click a card: prompt, workflow, length, seed, start image, versions.
 3. **Generate all** (<kbd>Ctrl G</kbd>) runs every card that has a prompt and no result yet; select cards to (re)run only those.
 4. Results land at their place; generate again for a new version; pick any version to put it back in the comp.
-5. To cut out or reframe a clip: select its layer, **Use selected layers**, pick *SAM 3 · Subject Matte* or
-   *SAM 3 · Reframe*, and write the subject in a word or two (`woman`, `dog`, `red car`).
+5. To cut out a subject: select the clip's layer, **Use selected layers**, pick *SAM 3 · Subject Matte* and write the
+   subject in a word or two (`woman`, `dog`, `red car`).
+6. To reframe: the same, with *Wan VACE 14B · Reframe* (or the 1.3B draft first), an aspect, and a description of the
+   whole scene, including what the new space should show. The new comp opens when it is done.
 
 | Key | Action |
 |---|---|
@@ -152,7 +165,7 @@ layers, generate, stop. **↗** opens the full storyboard in the browser.
 
 ```
 core/        host-independent: ComfyUI client, workflow conversion/inspection, manifests, storyboard types,
-             reframe planning (subject per frame → smoothed, simplified keyframes)
+             reframe planning (outpaint frame, padding and chained runs; subject per frame → smoothed keyframes)
 hosts/       one adapter per host app (effectcraft: a timeline, photocraft: a canvas) behind hosts/types.ts
 server/      engine (sync, queue, generation pipeline), settings, HTTP API
 client/      the browser UI
@@ -165,7 +178,8 @@ EffectCraft commands used (all documented by the app — `effectcraft-cli comman
 `project.summary`, `comp.info`, `markers.list`, `markers.set` (comment, label, cue point), `comp.addMarker`,
 `file.import`, `layer.addItem`, `layer.timing`, `layer.rename`, `layer.setComment`, `edit.label`,
 `file.importPlaceholder`, `file.replaceFootage`, `layer.revealSource`, `item.metadata`, `project.setComment`,
-`prop.get`, `prop.set`, `prop.addKey`, `layer.setSwitch`, `layer.setTrackMatte`, `comp.new`, `comp.open`,
+`prop.get`, `prop.set`, `prop.addKey`, `layer.setSwitch`, `layer.setTrackMatte`, `layer.addMask`, `layer.mask.set`,
+`comp.new`, `comp.open`,
 `footage.relink`, `app.capabilities`, plus the control method `render.frame`. A marker's card id is kept in the
 marker's cue point, so a marker can move and be edited freely.
 
@@ -205,8 +219,11 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
   a marker cannot feed them.
 - The subject matte follows the subject's shape as SAM 3 sees it; hair and motion blur get a hard edge. Refine it in
   EffectCraft (the matte is an ordinary layer) or generate a new version with another subject word.
-- Reframe crops; it does not invent pixels. A 9:16 comp from 16:9 footage is as tall as the footage (1080 px from
-  1080p). Upscale the clip first (SeedVR2) for a larger delivery size.
+- The auto crop does not invent pixels: a 9:16 comp from 16:9 footage is as tall as the footage. The generative
+  reframe does: its new space is generated at 720p (14B) or 480p (draft) and scaled to the 1080-wide comp, so it is
+  softer than the clip in the middle.
+- A generative reframe takes time: on a 16 GB GPU the 1.3B draft needs about 6 minutes for 125 frames at 480p; one
+  card makes at most four runs (about 20 s of a 24 fps clip).
 - Live previews depend on the model: ComfyUI sends them while sampling (`preview_method: auto` per job).
 - Storyboards written under the project's former name (`*.shiftfield.json`) are still read, where they are.
 

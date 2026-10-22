@@ -93,6 +93,7 @@ function PromptBox({ card, wf }: { card: CardView; wf?: WorkflowInfo }) {
         value={text}
         placeholder={wf?.task === 'matte-video' ? 'Name what to cut out, in a word or two: “woman”, “dog”, “red car”. Several: “woman, surfboard”.'
           : wf?.task === 'reframe' ? 'Name what the frame should follow: “woman”, “surfer”, “car”…'
+          : wf?.task === 'outpaint-video' ? 'Describe the whole scene, including what the new space should show: “a girl paddleboarding at sunset, wide calm sea below, golden clouds above”.'
           : card.origin.kind === 'selection' ? 'Describe the change: “replace the sky with a stormy sunset”, “add a red umbrella”…'
           : card.origin.kind === 'marker' || wf?.output === 'video' ? 'Describe the shot: subject, action, camera, light…' : 'Describe the image: subject, setting, light, style…'}
         onChange={(e) => { dirty.current = true; setText(e.target.value); }}

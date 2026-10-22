@@ -22,6 +22,7 @@ import { newCardId, type Box, type Card, type CardStatus, type Sidecar, type Ver
 import { layerNameFromPrompt, slugFromPrompt } from '../core/lib/filenames.ts';
 import { decodePngGrey } from '../core/lib/png.ts';
 import { ASPECTS, planReframe, subjectOf, type ReframePlan, type Smoothing, type SubjectFrame } from '../core/reframe/plan.ts';
+import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/outpaint.ts';
 import { EffectCraftAdapter } from '../hosts/effectcraft/adapter.ts';
 import { PhotoCraftAdapter } from '../hosts/photocraft/adapter.ts';
 import type { CanvasHost, HostAdapter, HostSnapshot, TimelineHost } from '../hosts/types.ts';
@@ -524,6 +525,16 @@ export class Engine {
       const aspect = String(card.params['@aspect'] ?? '9:16');
       return { sizeNote: `a new ${aspect} comp, the clip at 100%, framed with Position keyframes`, lengthNote: 'the whole clip' };
     }
+    if (m.task === 'outpaint-video' && m.outpaint) {
+      const aspect = String(card.params['@aspect'] ?? '9:16');
+      const [gw, gh] = m.outpaint.sizes[aspect] ?? m.outpaint.sizes['9:16'];
+      const [dw, dh] = DELIVERY[aspect] ?? DELIVERY['9:16'];
+      const fps = comp.fps || 24;
+      return {
+        sizeNote: `a new ${aspect} comp (${dw}×${dh}): your clip in the middle, untouched; the new space generated at ${gw}×${gh}`,
+        lengthNote: `the whole clip, in runs of up to ${((4 * Math.floor((m.outpaint.maxFrames - 1) / 4) + 1) / fps).toFixed(1)} s that carry on from each other`,
+      };
+    }
     if (m.input === 'video') return { sizeNote: 'from the clip', lengthNote: 'the clip\'s own length' };
     if (this.host.kind === 'canvas') {
       if (m.task === 'upscale-image') return { sizeNote: 'the layer enlarged, opened as a new document' };
@@ -909,20 +920,22 @@ export class Engine {
   }
 
   /** Submit, follow with live phases and previews, download the primary output. Returns its bytes and name. */
-  private async runJob(card: Card, api: WorkflowJson, m: WorkflowManifest): Promise<{ bytes: Uint8Array; filename: string; jobId: string }> {
-    const { outputs, jobId } = await this.execute(card, api);
+  private async runJob(card: Card, api: WorkflowJson, m: WorkflowManifest, part?: string): Promise<{ bytes: Uint8Array; filename: string; jobId: string }> {
+    const { outputs, jobId } = await this.execute(card, api, part);
     const wanted = m.output === 'video' ? /\.(mp4|mov|webm|mkv)$/i : /\.(png|jpe?g|webp|exr|tiff?)$/i;
     const primary = outputs.filter((o) => o.type === 'output' && wanted.test(o.filename)).pop()
       ?? outputs.filter((o) => wanted.test(o.filename)).pop();
     if (!primary) throw new Error(`The workflow finished without a ${m.output} file.`);
-    this.phase(card, 'Downloading');
+    this.phase(card, part ? `${part} · Downloading` : 'Downloading');
     return { bytes: await this.comfy.download(primary), filename: primary.filename, jobId };
   }
 
   /** Submit and follow a job; every file it wrote, in the order the nodes reported them. */
-  private async execute(card: Card, api: WorkflowJson): Promise<{ outputs: OutputFile[]; jobId: string }> {
+  private async execute(card: Card, api: WorkflowJson, part?: string): Promise<{ outputs: OutputFile[]; jobId: string }> {
     this.throwIfCancelled();
-    this.phase(card, 'Queued in ComfyUI');
+    // A run that is one of several says which one it is.
+    const label = (phase: string): string => (part ? `${part} · ${phase}` : phase);
+    this.phase(card, label('Queued in ComfyUI'));
     const jobId = await this.comfy.submit(api, this.clientId, { previewMethod: 'auto' });
     if (this.running) this.running.jobId = jobId;
     if (this.running?.cancelled) {
@@ -935,14 +948,14 @@ export class Engine {
       let lastPreview = 0;
       const stop = this.comfy.watch(jobId, this.clientId, (ev) => {
         switch (ev.kind) {
-          case 'queued': this.phase(card, 'Starting'); break;
+          case 'queued': this.phase(card, label('Starting')); break;
           case 'executing': {
             if (ev.nodeId === null) break;
-            const phase = friendlyPhase(api[ev.nodeId]?.class_type ?? '');
+            const phase = label(friendlyPhase(api[ev.nodeId]?.class_type ?? ''));
             if (phase !== card.progress?.phase) this.phase(card, phase, 0, 1);
             break;
           }
-          case 'progress': this.phase(card, card.progress?.phase ?? 'Sampling', ev.value, ev.max); break;
+          case 'progress': this.phase(card, card.progress?.phase ?? label('Sampling'), ev.value, ev.max); break;
           case 'preview': {
             const now = Date.now();
             if (now - lastPreview < 700) break;
@@ -994,6 +1007,7 @@ export class Engine {
     const m = entry.manifest;
     const comp = this.snap!.comp!;
     const { api, seed } = this.fill(card, entry);
+    if (m.task === 'outpaint-video') return this.outpaint(card, entry, api, seed, t0);
     const slot = this.slotOf(card);
 
     // Size and length, from the slot.
@@ -1147,6 +1161,87 @@ export class Engine {
       width: plan.width, height: plan.height, seconds: duration, jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0,
       remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId: built.compId,
     }, stem, { comp: compName, aspect: aspectName, smoothing, keys: plan.keys.length, found: plan.found, frames: plan.frames });
+    await this.setHostStatus(card, 'done');
+  }
+
+  /**
+   * Generative reframe: the clip goes into the model scaled into the new
+   * frame with the space around it to fill; the result comes back as a new comp
+   * where the generated video fills the frame and the original clip sits on
+   * top, untouched, softened only where it meets the new space.
+   */
+  private async outpaint(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, t0: number): Promise<void> {
+    const host = this.tl();
+    const m = entry.manifest;
+    const o = m.outpaint;
+    const origin = card.origin;
+    if (!o) throw new Error(`${m.title} has no outpaint settings in its manifest.`);
+    if (origin.kind !== 'layer' || !origin.sourcePath) throw new Error('Reframe works on a clip: select its layer in EffectCraft, then press "Use selected layers".');
+    const info = await host.itemInfo(origin.itemId);
+    if (!info?.width || !info.height) throw new Error('EffectCraft did not report the clip\'s size.');
+    const fps = info.frameRate || this.snap?.comp?.fps || 24;
+    const aspectName = String(card.params['@aspect'] ?? '9:16');
+    const gen = o.sizes[aspectName] ?? o.sizes['9:16'];
+    const delivery = DELIVERY[aspectName] ?? DELIVERY['9:16'];
+    const plan = planOutpaint({ width: info.width, height: info.height, fps, frames: (info.duration || 0) * fps }, gen, delivery, o.maxFrames);
+
+    setRef(api, m.bindings.width, plan.gen[0]);
+    setRef(api, m.bindings.height, plan.gen[1]);
+    setRef(api, m.bindings.fps, fps);
+    setRef(api, o.scale[0], plan.scaled[0]);
+    setRef(api, o.scale[1], plan.scaled[1]);
+    o.pad.forEach((ref, i) => setRef(api, ref, plan.pad[i]));
+
+    this.phase(card, 'Uploading');
+    setRef(api, m.bindings.video, await this.comfy.upload(readFileSync(origin.sourcePath), `flow_${card.id}${extname(origin.sourcePath)}`, 'video/mp4'));
+    const models = this.checkModels(api, m);
+
+    // One run per segment; each later run carries on from the frames the one before made.
+    const parts: Array<{ bytes: Uint8Array; filename: string; jobId: string; uploaded: string; skip: number; take: number }> = [];
+    const count = plan.segments.length;
+    for (const [i, seg] of plan.segments.entries()) {
+      const g = structuredClone(api);
+      setRef(g, m.bindings.frames, seg.frames);
+      setRef(g, o.start, seg.start);
+      setRef(g, o.take, seg.take);
+      if (i > 0) {
+        const before = plan.segments[i - 1];
+        chainGraph(g, { start: o.start, ...o.chain }, {
+          previous: parts[i - 1].uploaded, from: before.overlap + before.take - seg.overlap, overlap: seg.overlap, take: seg.take, size: plan.gen,
+        });
+      }
+      const r = await this.runJob(card, g, m, count > 1 ? `Part ${i + 1} of ${count}` : undefined);
+      const uploaded = count > 1 ? await this.comfy.upload(r.bytes, `flow_${card.id}_part${i + 1}.mp4`, 'video/mp4') : '';
+      parts.push({ ...r, uploaded, skip: seg.overlap, take: seg.take });
+    }
+    let result: { bytes: Uint8Array; filename: string; jobId: string } = parts[0];
+    if (count > 1) {
+      const joined = await this.execute(card, joinGraph(parts.map((p) => ({ file: p.uploaded, skip: p.skip, take: p.take })), fps, `${SLUG}/vace_reframe_joined`), 'Joining the parts');
+      const out = joined.outputs.filter((f) => f.type === 'output' && /\.(mp4|mov|webm|mkv)$/i.test(f.filename)).pop();
+      if (!out) throw new Error('Joining the parts finished without a video.');
+      result = { bytes: await this.comfy.download(out), filename: out.filename, jobId: joined.jobId };
+    }
+    const { n, rel, abs, stem } = this.saveVersion(card, m, result);
+
+    this.phase(card, 'Building the comp');
+    const sourceName = this.snap?.layers.find((l) => l.id === origin.layerId)?.name ?? info.name;
+    const compName = `${sourceName.replace(/\.[a-z0-9]{2,4}$/i, '')} · ${aspectName} v${String(n).padStart(3, '0')}`;
+    const comment = `${SLUG} card=${card.id} v${n} · ${m.title} · ${aspectName}${seed !== null ? ` · seed ${seed}` : ''}\n${card.prompt}`;
+    const built = await host.buildOutpaint({
+      name: compName, width: plan.delivery[0], height: plan.delivery[1], fps, duration: plan.seconds,
+      file: abs, fillScale: plan.bgScale, fillName: `${TAG} reframe · ${layerNameFromPrompt(card.prompt, 32)}`,
+      itemId: origin.itemId, clipName: sourceName, clipScale: plan.clipScale, clipCentre: plan.clipCentre,
+      mask: plan.mask, feather: plan.feather, comment,
+    });
+    this.notice = `Reframed to ${aspectName} in the new comp "${compName}": the space ${plan.pad[0] + plan.pad[2] > plan.pad[1] + plan.pad[3] ? 'left and right' : 'above and below'} `
+      + `is generated, your clip sits on top of it untouched.`
+      + (count > 1 ? ` The clip went through in ${count} runs, each carrying on from the last.` : '')
+      + (plan.cut ? ` The comp covers the clip's first ${plan.seconds.toFixed(1)} s (${count} runs is the most one card makes).` : '');
+    this.recordVersion(card, m, {
+      n, file: rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed,
+      width: plan.gen[0], height: plan.gen[1], seconds: plan.seconds, jobId: result.jobId, createdAt: new Date().toISOString(),
+      elapsedMs: Date.now() - t0, remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId: built.compId,
+    }, stem, { comp: compName, aspect: aspectName, plan });
     await this.setHostStatus(card, 'done');
   }
 

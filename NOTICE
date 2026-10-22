@@ -20,11 +20,15 @@ workflows/*.api.json
   0.11.76, License: MIT. Templates used: video_ltx2_5_i2v, video_ltx2_5_t2v,
   image_z_image_turbo, utility_seedvr2_3b_int8_upscale_video,
   utility_birefnet_remove_background, image_qwen_image_edit_2511_int8,
-  utility_seedvr2_3b_int8_upscale_image, utility_video_segment_sam3. Changes:
+  utility_seedvr2_3b_int8_upscale_image, utility_video_segment_sam3,
+  video_wan_vace_outpainting. Changes:
   converted to the API format; output filename prefixes set; in the BiRefNet
   graph, the preview node is replaced by a save node; in the two SAM 3 graphs,
   the per-frame detection and its preview are replaced by the core tracking
-  nodes (SAM3_VideoTrack, SAM3_TrackToMask) and a save node.
+  nodes (SAM3_VideoTrack, SAM3_TrackToMask) and a save node; in the two Wan
+  VACE graphs, the clip is cut to one run and scaled before the padding, the
+  previews are removed, and the CausVid LoRA (CC BY-NC 4.0) is replaced by
+  lightx2v's Apache-2.0 LoRA (14B) or removed (1.3B, template defaults).
 
 Model weights are NOT included. Each workflow manifest (workflows/<id>.json)
 names the files it needs, where the official template downloads them from,
@@ -36,6 +40,8 @@ and the licence of the weights:
   Qwen-Image-Edit-2511 and its Lightning LoRA (lightx2v)   Apache-2.0
   SAM 3.1            SAM License (Meta) — royalty-free, commercial use
                      included; trade-control and lawful-use terms apply
+  Wan2.1 VACE 14B and 1.3B, Wan2.1 VAE, umt5-xxl   Apache-2.0 (Wan-AI)
+  lightx2v Wan2.1 T2V 14B 4-step LoRA              Apache-2.0 (lightx2v)
   Gemma 4 encoders   see the model card of the files the template downloads
 Read each licence before using the outputs commercially.
 

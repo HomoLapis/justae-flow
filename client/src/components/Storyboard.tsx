@@ -126,6 +126,7 @@ function CardTile({ card, n }: { card: CardView; n: number }) {
           {card.prompt || (wf?.task.startsWith('upscale') || wf?.task === 'remove-bg' ? 'No prompt needed'
             : wf?.task === 'matte-video' ? 'Name the subject to cut out'
             : wf?.task === 'reframe' ? 'Name the subject the frame follows'
+            : wf?.task === 'outpaint-video' ? 'Describe the scene to extend'
             : card.origin.kind === 'selection' ? 'Describe the change for the selected area'
             : canvas ? 'Describe the image for this box' : 'Write the shot — here or as the marker text')}
         </p>

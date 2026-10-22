@@ -1,0 +1,339 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "48",
+        0
+      ],
+      "seed": 776767434080331,
+      "steps": 20,
+      "cfg": 6,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "positive": [
+        "49",
+        0
+      ],
+      "negative": [
+        "49",
+        1
+      ],
+      "latent_image": [
+        "49",
+        2
+      ],
+      "denoise": 1
+    },
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "A portrait of a woman with her eyes closed, her head surrounded by white transparent glass flowers, with only her face exposed. The camera slowly moves in, and the girl smiles. There are other transparent glass flowers in the style of Nicoletta Ceccoli around her. The detailed painting features natural light and soft lighting, creating a beautiful, surreal, and emotionally expressive movie scene.\n",
+      "clip": [
+        "161",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "bad quality, blurry, messy, chaotic",
+      "clip": [
+        "161",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "58",
+        0
+      ],
+      "vae": [
+        "152",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "48": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": {
+      "model": [
+        "151",
+        0
+      ],
+      "shift": 8.000000000000002
+    },
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "49": {
+    "class_type": "WanVaceToVideo",
+    "inputs": {
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "vae": [
+        "152",
+        0
+      ],
+      "width": [
+        "137",
+        0
+      ],
+      "height": [
+        "139",
+        0
+      ],
+      "length": [
+        "131",
+        0
+      ],
+      "batch_size": 1,
+      "strength": 1,
+      "control_video": [
+        "110",
+        0
+      ],
+      "control_masks": [
+        "130",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "WanVaceToVideo"
+    }
+  },
+  "58": {
+    "class_type": "TrimVideoLatent",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "trim_amount": [
+        "49",
+        3
+      ]
+    },
+    "_meta": {
+      "title": "TrimVideoLatent"
+    }
+  },
+  "68": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ],
+      "fps": 16
+    },
+    "_meta": {
+      "title": "CreateVideo"
+    }
+  },
+  "69": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "68",
+        0
+      ],
+      "filename_prefix": "justae-flow/vace_reframe_draft",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "SaveVideo"
+    }
+  },
+  "71": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "video_wan_vace_outpainting_input_video.mp4"
+    },
+    "_meta": {
+      "title": "LoadVideo"
+    }
+  },
+  "72": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "71",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "GetVideoComponents"
+    }
+  },
+  "110": {
+    "class_type": "ImagePadForOutpaint",
+    "inputs": {
+      "image": [
+        "201",
+        0
+      ],
+      "left": 120,
+      "top": 120,
+      "right": 120,
+      "bottom": 200,
+      "feathering": 24
+    },
+    "_meta": {
+      "title": "ImagePadForOutpaint"
+    }
+  },
+  "111": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "110",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "MaskToImage"
+    }
+  },
+  "129": {
+    "class_type": "RepeatImageBatch",
+    "inputs": {
+      "image": [
+        "111",
+        0
+      ],
+      "amount": [
+        "131",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "RepeatImageBatch"
+    }
+  },
+  "130": {
+    "class_type": "ImageToMask",
+    "inputs": {
+      "image": [
+        "129",
+        0
+      ],
+      "channel": "red"
+    },
+    "_meta": {
+      "title": "ImageToMask"
+    }
+  },
+  "131": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 81
+    },
+    "_meta": {
+      "title": "Length"
+    }
+  },
+  "137": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 960
+    },
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "139": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 960
+    },
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "151": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "wan2.1_vace_1.3B_fp16.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "152": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "161": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp16.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "200": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "72",
+        0
+      ],
+      "batch_index": 0,
+      "length": 81
+    },
+    "_meta": {
+      "title": "Image From Batch"
+    }
+  },
+  "201": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "200",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 720,
+      "height": 404,
+      "crop": "disabled"
+    },
+    "_meta": {
+      "title": "Upscale Image"
+    }
+  }
+}

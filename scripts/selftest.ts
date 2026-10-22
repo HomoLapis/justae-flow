@@ -20,7 +20,8 @@ import type { ObjectInfo } from '../core/comfy/types.ts';
 import { getRef, modelFamily, planLength, planSize, resolveModels, setRef, splitRef, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import type { CardStatus } from '../core/storyboard/types.ts';
-import type { Box, CanvasHost, CanvasPlaceRequest, HostMarker, HostSnapshot, ItemInfo, PlaceRequest, ReframeRequest, TimelineHost } from '../hosts/types.ts';
+import type { Box, CanvasHost, CanvasPlaceRequest, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, TimelineHost } from '../hosts/types.ts';
+import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/outpaint.ts';
 import type { Settings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
@@ -124,6 +125,31 @@ function maskPng(w: number, h: number, block: [number, number, number, number] |
   check('16:9 from a vertical clip moves up and down', planReframe(moving, { width: 768, height: 1344, fps: 24 }, ASPECTS['16:9'], 'gentle').axis === 'y');
   check('simplify keeps a straight line to its ends', JSON.stringify(simplify([0, 1, 2, 3, 4], 0.1)) === '[0,4]');
 }
+{
+  const p = planOutpaint({ width: 1344, height: 768, fps: 24, frames: 124 }, [720, 1280], DELIVERY['9:16'], 81);
+  check('outpaint 9:16: the clip fills the width, the space above and below is to be generated', p.scaled[0] === 720 && p.scaled[1] === 411 && p.pad[0] === 0 && p.pad[2] === 0 && p.pad[1] + p.pad[3] === 1280 - 411);
+  check('outpaint: a long clip in chained runs on the model\'s 4k+1 lattice, each carrying on from the last',
+    JSON.stringify(p.segments) === JSON.stringify([{ start: 0, take: 81, frames: 81, overlap: 0 }, { start: 81, take: 43, frames: 53, overlap: 8 }]) && !p.cut && Math.abs(p.seconds - 124 / 24) < 1e-9);
+  check('outpaint: a short clip is one run', JSON.stringify(planOutpaint({ width: 1344, height: 768, fps: 24, frames: 50 }, [720, 1280], DELIVERY['9:16'], 81).segments) === JSON.stringify([{ start: 0, take: 50, frames: 53, overlap: 0 }]));
+  const long = planOutpaint({ width: 1344, height: 768, fps: 24, frames: 1000 }, [720, 1280], DELIVERY['9:16'], 125);
+  check('outpaint: a card makes at most four runs, and says what it left out', long.segments.length === 4 && long.cut && long.segments.reduce((n, s) => n + s.take, 0) === 125 + 3 * 117);
+  {
+    const g: Record<string, { class_type: string; inputs: Record<string, unknown> }> = { 49: { class_type: 'WanVaceToVideo', inputs: { control_video: ['110', 0], control_masks: ['130', 0] } }, 200: { class_type: 'ImageFromBatch', inputs: {} } };
+    chainGraph(g, { start: '200.batch_index', padded: ['110', 0], padMask: ['110', 1], controlVideo: '49.control_video', controlMasks: '49.control_masks' }, { previous: 'part1.mp4', from: 73, overlap: 8, take: 43, size: [720, 1280] });
+    check('a chained run starts from the last 8 frames of the run before (kept), then the clip\'s next frames (filled around)',
+      JSON.stringify(g['49'].inputs.control_video) === '["903",0]' && g['902'].inputs.batch_index === 73 && g['902'].inputs.length === 8
+      && g['904'].inputs.value === 0 && g['906'].inputs.amount === 8 && g['908'].inputs.amount === 43 && JSON.stringify(g['49'].inputs.control_masks) === '["910",0]');
+    const j = joinGraph([{ file: 'a.mp4', skip: 0, take: 81 }, { file: 'b.mp4', skip: 8, take: 43 }], 24, 'x/joined');
+    check('the parts are joined without the frames they repeat', j['22'].inputs.batch_index === 8 && j['22'].inputs.length === 43 && JSON.stringify(j['1'].inputs.images) === '["23",0]' && j['1'].inputs.fps === 24);
+  }
+  check('outpaint: in the 1080×1920 comp the clip spans the width, centred where the model saw it',
+    Math.abs(p.clipScale - 1080 / 1344 * 100) < 0.01 && Math.abs(p.clipCentre[0] - 540) < 0.01 && Math.abs(p.clipCentre[1] - (p.pad[1] + 411 / 2) * 1.5) < 0.01 && p.bgScale === 150);
+  check('outpaint: the soft edge stays inside the clip where it meets new space, and off its outer edges',
+    p.mask[1] > 0 && p.mask[1] + p.mask[3] < 768 && p.mask[0] < 0 && p.mask[0] + p.mask[2] > 1344);
+  let same = false;
+  try { planOutpaint({ width: 1080, height: 1920, fps: 24, frames: 24 }, [720, 1280], DELIVERY['9:16'], 81); } catch { same = true; }
+  check('outpaint: a clip already in the target shape is refused plainly', same);
+}
 
 /* ─── Fake ComfyUI ─────────────────────────────────────────────────── */
 const submits: Array<{ prompt: Record<string, { inputs: Record<string, unknown> }>; extra_data?: { preview_method?: string } }> = [];
@@ -192,6 +218,7 @@ class FakeHost implements TimelineHost {
   compId = 1;
   mattes: Array<[number, number, string]> = [];
   reframes: ReframeRequest[] = [];
+  outpaints: OutpaintRequest[] = [];
   async snapshot(): Promise<HostSnapshot> {
     return {
       app: 'effectcraft', version: 'fake', project: { path: join(projectDir, 'p.ecproj'), dirty: false },
@@ -215,6 +242,7 @@ class FakeHost implements TimelineHost {
   async setTrackMatte(layer: number, matte: number, kind: string): Promise<void> { this.mattes.push([layer, matte, kind]); }
   async buildReframe(r: ReframeRequest): Promise<{ compId: number; layerId: number }> { this.reframes.push(r); this.compId = this.nextId++; return { compId: this.compId, layerId: this.nextId++ }; }
   async openComp(id: number): Promise<void> { this.compId = id; }
+  async buildOutpaint(r: OutpaintRequest): Promise<{ compId: number; fillLayer: number; fillItem: number; clipLayer: number }> { this.outpaints.push(r); this.compId = this.nextId++; return { compId: this.compId, fillLayer: this.nextId++, fillItem: this.nextId++, clipLayer: this.nextId++ }; }
   async replaceFootage(itemId: number, file: string): Promise<void> { const it = this.items.get(itemId); if (it) it.path = file; }
   async coverComp(): Promise<void> {}
   async matchLayer(): Promise<void> {}
@@ -371,6 +399,26 @@ check('choosing the matte version again leaves the comp alone', host.compId !== 
 await host.openComp(1);
 await engine.sync();
 check('back in the source comp, the card is where it was', engine.state().cards.some((c) => c.id === clipCard2 && !c.orphan));
+
+await engine.updateCards([clipCard], { workflowId: 'vace-reframe', prompt: 'a woman paddleboarding at sunset, wide calm sea', params: { '@aspect': '9:16' } });
+check('the generative reframe plan names the comp and the generated size', /1080×1920/.test(engine.state().cards.find((c) => c.id === clipCard)!.plan.sizeNote ?? ''));
+engine.enqueue([clipCard]);
+await until(() => engine.state().cards.find((c) => c.id === clipCard)!.versions.length === 3 || engine.state().cards.find((c) => c.id === clipCard)!.status === 'error');
+const op = engine.state().cards.find((c) => c.id === clipCard)!;
+const opReq = host.outpaints.at(-1);
+const opSent = submits.at(-1)!.prompt as never;
+const vace = library.get('vace-reframe')!.manifest;
+check('a generative reframe finishes as a new version with its own comp', op.status === 'done' && op.versions.length === 3 && op.versions[2].compId === host.compId, op.error);
+check('the model gets the clip scaled into 720×1280 with the new space above and below',
+  getRef(opSent, vace.bindings.width) === 720 && getRef(opSent, vace.bindings.height) === 1280
+  && getRef(opSent, vace.outpaint!.scale[0]) === 720 && getRef(opSent, vace.outpaint!.pad[0]) === 0 && Number(getRef(opSent, vace.outpaint!.pad[1])) > 400);
+check('the whole 4 s clip in one run: 96 frames in, 97 on the model\'s lattice, at the clip\'s own rate',
+  getRef(opSent, vace.bindings.frames) === 97 && getRef(opSent, vace.outpaint!.take) === 96 && getRef(opSent, vace.bindings.fps) === 24);
+check('the comp: 1080×1920, the generated video filling it, the clip on top with a soft edge',
+  opReq?.width === 1080 && opReq.height === 1920 && opReq.fillScale === 150 && opReq.itemId === 900 && opReq.feather > 0);
+check('no non-commercial LoRA in the bundled reframe', !JSON.stringify(library.graph('vace-reframe')).includes('CausVid') && !JSON.stringify(library.graph('vace-reframe-draft')).includes('CausVid'));
+await host.openComp(1);
+await engine.sync();
 
 const sidecar = JSON.parse(readFileSync(join(projectDir, 'p.justae-flow.json'), 'utf8')) as { cards: unknown[] };
 engine.stop();

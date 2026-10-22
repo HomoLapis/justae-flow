@@ -105,6 +105,26 @@ export interface ReframeRequest {
   keys: Array<{ t: number; x: number; y: number }>;
 }
 
+export interface OutpaintRequest {
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  /** The generated video: it fills the comp. */
+  file: string;
+  fillScale: number;
+  fillName: string;
+  /** The original clip on top, untouched: its scale (%), centre (comp px) and soft-edged mask (layer px). */
+  itemId: number;
+  clipName: string;
+  clipScale: number;
+  clipCentre: [number, number];
+  mask: [number, number, number, number];
+  feather: number;
+  comment: string;
+}
+
 interface HostBase {
   readonly id: HostId;
   readonly label: string;
@@ -142,6 +162,8 @@ export interface TimelineHost extends HostBase {
   setTrackMatte(layerId: number, matteLayerId: number, kind: 'luma' | 'alpha'): Promise<void>;
   /** A new comp holding the footage with keyed Position; it is left open. */
   buildReframe(req: ReframeRequest): Promise<{ compId: number; layerId: number }>;
+  /** A new comp: the generated frame below, the original clip above it; it is left open. */
+  buildOutpaint(req: OutpaintRequest): Promise<{ compId: number; fillLayer: number; fillItem: number; clipLayer: number }>;
   openComp(compId: number): Promise<void>;
 }
 

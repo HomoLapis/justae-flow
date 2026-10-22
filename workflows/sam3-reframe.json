@@ -1,7 +1,7 @@
 {
   "id": "sam3-reframe",
-  "title": "SAM 3 · Reframe",
-  "description": "Follows what the prompt names and builds a new comp in another aspect ratio, framed on it with keyframes you can edit.",
+  "title": "SAM 3 · Auto Crop",
+  "description": "Crops to another aspect ratio and follows what the prompt names: a new comp, the clip at 100%, framed with keyframes you can edit. Nothing is generated.",
   "task": "reframe",
   "hosts": [
     "effectcraft"
