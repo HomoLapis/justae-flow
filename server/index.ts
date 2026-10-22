@@ -11,9 +11,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ComfyClient } from '../core/comfy/client.ts';
-import { EffectCraftAdapter } from '../hosts/effectcraft/adapter.ts';
 import { loadSettings, type Settings } from './config.ts';
-import { Engine } from './engine.ts';
+import { Engine, makeHost } from './engine.ts';
 import { WorkflowLibrary } from './library.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -100,11 +99,11 @@ const routes: Array<[string, RegExp, Handler]> = [
     send(res, 200, await new ComfyClient(url || engine.settings.comfyUrl).health());
   }],
   ['POST', /^\/api\/test\/host$/, async (req, res) => {
-    const { port } = await json<{ port?: number }>(req);
-    const probe = new EffectCraftAdapter(port || engine.settings.effectcraftPort);
+    const body = await json<Partial<Settings>>(req);
+    const probe = makeHost({ ...engine.settings, ...body });
     try {
       const s = await probe.snapshot();
-      send(res, 200, { ok: true, version: s.version, project: s.project.path, comp: s.comp?.name ?? null, markers: s.markers.length });
+      send(res, 200, { ok: true, app: probe.label, version: s.version, project: s.project.path, comp: s.comp?.name ?? null, markers: s.markers.length, layers: s.layers.length });
     } catch (e) {
       send(res, 200, { ok: false, error: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -146,6 +145,7 @@ const routes: Array<[string, RegExp, Handler]> = [
   ['POST', /^\/api\/queue\/discard$/, (_q, res) => { engine.discardRecovered(); send(res, 200, { ok: true }); }],
   ['POST', /^\/api\/placeholder$/, async (_q, res) => send(res, 200, { id: await engine.createPlaceholder() })],
   ['POST', /^\/api\/adopt$/, async (_q, res) => send(res, 200, { ids: await engine.adoptSelectedLayers() })],
+  ['POST', /^\/api\/selection$/, async (_q, res) => send(res, 200, { id: await engine.addSelectionCard() })],
   ['POST', /^\/api\/marker$/, async (req, res) => {
     const { comment } = await json<{ comment?: string }>(req);
     await engine.addMarkerAtPlayhead(comment ?? '');
@@ -176,7 +176,9 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Shiftfield  →  http://127.0.0.1:${PORT}`);
-  console.log(`  host: EffectCraft on 127.0.0.1:${settings.effectcraftPort} · ComfyUI: ${settings.comfyUrl}`);
+  console.log(settings.host === 'photocraft'
+    ? `  host: PhotoCraft on 127.0.0.1:${settings.photocraftPort} (root ${settings.photocraftRoot}) · ComfyUI: ${settings.comfyUrl}`
+    : `  host: EffectCraft on 127.0.0.1:${settings.effectcraftPort} · ComfyUI: ${settings.comfyUrl}`);
   engine.start();
 });
 

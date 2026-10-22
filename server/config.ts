@@ -14,6 +14,11 @@ export interface Settings {
   effectcraftPort: number;
   photocraftPort: number;
   photocraftTokenFile: string;
+  /** PhotoCraft's automation root: it may read and write only here, so the storyboard and media live here too. */
+  photocraftRoot: string;
+  /** PhotoCraft: workflow for a new placeholder card, and for a card made from a selection. */
+  canvasPlaceholderWorkflow: string;
+  selectionWorkflow: string;
   /** Workflow a new marker card starts with. */
   markerWorkflow: string;
   /** Workflow a new placeholder card starts with. */
@@ -31,6 +36,9 @@ const DEFAULTS: Settings = {
   effectcraftPort: 9877,
   photocraftPort: 7878,
   photocraftTokenFile: '',
+  photocraftRoot: '',
+  canvasPlaceholderWorkflow: 'zimage-t2i',
+  selectionWorkflow: 'qwen-edit',
   markerWorkflow: 'ltx25-i2v',
   placeholderWorkflow: 'ltx25-t2v',
   placeholderSeconds: 4,
@@ -67,6 +75,10 @@ export function loadSettings(repoRoot: string): Settings {
   if (process.env.EFFECTCRAFT_CONTROL_PORT) s.effectcraftPort = Number(process.env.EFFECTCRAFT_CONTROL_PORT);
   if (process.env.PHOTOCRAFT_CONTROL_PORT) s.photocraftPort = Number(process.env.PHOTOCRAFT_CONTROL_PORT);
   if (process.env.PHOTOCRAFT_CONTROL_TOKEN_FILE) s.photocraftTokenFile = process.env.PHOTOCRAFT_CONTROL_TOKEN_FILE;
+  if (process.env.PHOTOCRAFT_AUTOMATION_ROOT) s.photocraftRoot = process.env.PHOTOCRAFT_AUTOMATION_ROOT;
+  if (process.env.SHIFTFIELD_HOST === 'effectcraft' || process.env.SHIFTFIELD_HOST === 'photocraft') s.host = process.env.SHIFTFIELD_HOST;
+  if (!s.photocraftTokenFile) s.photocraftTokenFile = join(configDir(), 'photocraft.token');
+  if (!s.photocraftRoot) s.photocraftRoot = join(homedir(), 'Documents', 'Shiftfield', 'PhotoCraft');
   return s;
 }
 

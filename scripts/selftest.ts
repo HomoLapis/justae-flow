@@ -17,7 +17,7 @@ import type { ObjectInfo } from '../core/comfy/types.ts';
 import { getRef, modelFamily, planLength, planSize, resolveModels, setRef, splitRef, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import type { CardStatus } from '../core/storyboard/types.ts';
-import type { HostAdapter, HostMarker, HostSnapshot, ItemInfo, PlaceRequest } from '../hosts/types.ts';
+import type { Box, CanvasHost, CanvasPlaceRequest, HostMarker, HostSnapshot, ItemInfo, PlaceRequest, TimelineHost } from '../hosts/types.ts';
 import type { Settings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
@@ -121,8 +121,10 @@ const comfyUrl = `http://127.0.0.1:${(fake.address() as { port: number }).port}`
 
 /* ─── Fake host ────────────────────────────────────────────────────── */
 const projectDir = mkdtempSync(join(tmpdir(), 'sf-selftest-'));
-class FakeHost implements HostAdapter {
+class FakeHost implements TimelineHost {
   readonly id = 'effectcraft' as const;
+  readonly kind = 'timeline' as const;
+  readonly label = 'EffectCraft';
   markers: HostMarker[] = [];
   layers: Array<{ id: number; index: number; name: string; in: number; out: number; start: number; label: string; type: string; item: number; visible: boolean }> = [];
   items = new Map<number, { path: string | null; width: number; height: number }>();
@@ -172,7 +174,8 @@ class FakeHost implements HostAdapter {
 console.log('storyboard sync');
 const host = new FakeHost();
 const settings: Settings = {
-  comfyUrl, host: 'effectcraft', effectcraftPort: 0, photocraftPort: 0, photocraftTokenFile: '',
+  comfyUrl, host: 'effectcraft', effectcraftPort: 0, photocraftPort: 0, photocraftTokenFile: '', photocraftRoot: projectDir,
+  canvasPlaceholderWorkflow: 'zimage-t2i', selectionWorkflow: 'qwen-edit',
   markerWorkflow: 'ltx25-t2v', placeholderWorkflow: 'ltx25-t2v', placeholderSeconds: 4, pollSeconds: 60, setupDone: true,
 };
 const engine = new Engine(settings, library, host);
@@ -267,6 +270,86 @@ const sidecar = JSON.parse(readFileSync(join(projectDir, 'p.shiftfield.json'), '
 engine.stop();
 check('the storyboard is saved next to the project', Array.isArray(sidecar.cards) && sidecar.cards.length >= 3);
 setRef({}, undefined, 1);
+
+/* ─── Canvas host (PhotoCraft) ─────────────────────────────────────── */
+console.log('canvas host');
+const canvasRoot = mkdtempSync(join(tmpdir(), 'sf-canvas-'));
+class FakeCanvas implements CanvasHost {
+  readonly id = 'photocraft' as const;
+  readonly kind = 'canvas' as const;
+  readonly label = 'PhotoCraft';
+  readonly root = canvasRoot;
+  layers: Array<{ id: number; name: string; bounds: Box; visible: boolean; label: string }> = [{ id: 1, name: 'Background', bounds: [0, 0, 1000, 600], visible: true, label: 'none' }];
+  selection: Box | null = null;
+  channels: string[] = [];
+  placed: CanvasPlaceRequest[] = [];
+  exported: string[] = [];
+  opened: string[] = [];
+  next = 10;
+  async snapshot(): Promise<HostSnapshot> {
+    return {
+      app: 'photocraft', version: '', project: { path: 'demo/scene.png', dirty: false },
+      comp: { id: 7, name: 'scene.png', width: 1000, height: 600, fps: 0, duration: 0 }, markers: [],
+      layers: this.layers.map((l, i) => ({ id: l.id, index: i + 1, name: l.name, in: 0, out: 0, start: 0, label: l.label, type: 'Pixel', bounds: l.bounds, visible: l.visible })),
+      selectedLayers: [], time: 0, selection: this.selection, channels: this.channels,
+    };
+  }
+  async exportComposite(rel: string): Promise<void> { const { writeFileSync, mkdirSync } = await import('node:fs'); mkdirSync(dirname(join(canvasRoot, rel)), { recursive: true }); writeFileSync(join(canvasRoot, rel), 'png'); this.exported.push(`composite:${rel}`); }
+  async exportLayer(id: number, rel: string): Promise<void> { await this.exportComposite(rel); this.exported.push(`layer:${id}`); }
+  async placeImage(r: CanvasPlaceRequest): Promise<number> { this.placed.push(r); const id = this.next++; this.layers.unshift({ id, name: r.name, bounds: r.box, visible: true, label: 'none' }); return id; }
+  async openDocument(rel: string): Promise<void> { this.opened.push(rel); }
+  async saveSelection(name: string): Promise<Box | null> { if (!this.selection) return null; this.channels.push(name); return this.selection; }
+  async createPlaceholderBox(name: string, box: Box): Promise<number> { const id = this.next++; this.layers.unshift({ id, name, bounds: box, visible: true, label: 'blue' }); return id; }
+  async setStatus(t: { layerId?: number }, s: CardStatus): Promise<void> { const l = this.layers.find((x) => x.id === t.layerId); if (l) l.label = s; }
+  async setLayerVisible(id: number, v: boolean): Promise<void> { const l = this.layers.find((x) => x.id === id); if (l) l.visible = v; }
+  async setLayerLabel(): Promise<void> {}
+  async renameLayer(): Promise<void> {}
+  close(): void {}
+}
+const pc = new FakeCanvas();
+const canvas = new Engine({ ...settings, host: 'photocraft', photocraftRoot: canvasRoot }, library, pc);
+await canvas.checkComfy();
+await canvas.sync();
+check('a canvas offers only the workflows made for it', canvas.state().workflows.every((w) => w.hosts.includes('photocraft')) && !canvas.state().workflows.some((w) => w.id.startsWith('ltx')));
+check('the storyboard lives in the automation folder', canvas.state().mediaDir.startsWith(canvasRoot));
+let refusedSel = false;
+try { await canvas.addSelectionCard(); } catch { refusedSel = true; }
+check('no selection, no selection card — said plainly', refusedSel);
+pc.selection = [600, 40, 300, 200];
+await canvas.sync();
+const selId = await canvas.addSelectionCard();
+const sel = canvas.state().cards.find((c) => c.id === selId)!;
+check('a selection is saved as an alpha channel and becomes a card', sel.origin.kind === 'selection' && pc.channels.includes(`SF ${selId}`) && sel.workflowId === 'qwen-edit');
+const phId = await canvas.createPlaceholder();
+const ph2 = canvas.state().cards.find((c) => c.id === phId)!;
+check('a canvas placeholder is a box over the selection', ph2.origin.kind === 'placeholder' && JSON.stringify(ph2.origin.box) === JSON.stringify([600, 40, 300, 200]));
+pc.layers.find((l) => l.name.startsWith('SF placeholder'))!.bounds = [100, 300, 400, 200];
+await canvas.sync();
+check('moving the placeholder in the host moves the card\'s box', JSON.stringify((canvas.state().cards.find((c) => c.id === phId)!.origin as { box: Box }).box) === JSON.stringify([100, 300, 400, 200]));
+check('the plan follows the box (400×200 → 416×192)', canvas.state().cards.find((c) => c.id === phId)!.plan.width === 416);
+await canvas.updateCards([selId], { prompt: 'add a striped balloon' });
+await canvas.updateCards([phId], { prompt: 'a cabin at dawn' });
+canvas.enqueue();
+await until(() => canvas.state().cards.every((c) => c.status === 'done'));
+check('both canvas cards finish', canvas.state().cards.every((c) => c.status === 'done'), canvas.state().cards.map((c) => c.error ?? '').join(' | '));
+const selPlace = pc.placed.find((p) => p.maskChannel === `SF ${selId}`);
+check('a selection result covers the canvas, masked to the saved selection, feathered', !!selPlace && selPlace.fit === 'stretch' && JSON.stringify(selPlace.box) === '[0,0,1000,600]' && (selPlace.feather ?? 0) >= 4);
+check('the selection card sent the whole visible image', pc.exported.some((e) => e.startsWith('composite:')));
+const phPlace = pc.placed.find((p) => p.maskBox);
+check('a placeholder result covers its box, masked to it', !!phPlace && phPlace.fit === 'cover' && JSON.stringify(phPlace.box) === '[100,300,400,200]');
+check('the placeholder is hidden, not deleted', pc.layers.find((l) => l.name.startsWith('SF placeholder'))?.visible === false);
+canvas.enqueue([selId]);
+await until(() => canvas.state().cards.find((c) => c.id === selId)!.versions.length === 2);
+const two2 = canvas.state().cards.find((c) => c.id === selId)!;
+const v1Layer = pc.layers.find((l) => l.id === two2.versions[0].layerId)!;
+const v2Layer = pc.layers.find((l) => l.id === two2.versions[1].layerId)!;
+check('a new version is a new layer; the old one is hidden, kept', v1Layer.visible === false && v2Layer.visible === true);
+await canvas.selectVersion(selId, 1);
+check('switching versions swaps which layer shows', v1Layer.visible === true && v2Layer.visible === false);
+pc.channels = [];
+await canvas.sync();
+check('a deleted selection channel orphans its card', canvas.state().cards.find((c) => c.id === selId)?.orphan === true);
+canvas.stop();
 
 fake.close();
 console.log(`\n${passed} passed, ${failed} failed`);

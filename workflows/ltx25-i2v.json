@@ -3,6 +3,9 @@
   "title": "LTX-2.5 · Image to Video",
   "description": "Animates the frame under the marker (or an image you attach) into a clip with sound.",
   "task": "i2v",
+  "hosts": [
+    "effectcraft"
+  ],
   "output": "video",
   "input": "image",
   "bindings": {

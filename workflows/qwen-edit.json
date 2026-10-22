@@ -1,0 +1,54 @@
+{
+  "id": "qwen-edit",
+  "title": "Qwen-Image-Edit 2511 · Edit",
+  "description": "Changes the image as the prompt says; only the selected area takes the change.",
+  "task": "i2i",
+  "hosts": [
+    "photocraft"
+  ],
+  "output": "image",
+  "input": "image",
+  "bindings": {
+    "prompt": "170:151.prompt",
+    "image": "41.image",
+    "seed": "170:169.seed"
+  },
+  "params": [
+    {
+      "ref": "170:168.value",
+      "label": "Lightning LoRA (4 steps, faster)"
+    }
+  ],
+  "license": {
+    "weights": "Apache-2.0 (Qwen-Image-Edit-2511; Lightning LoRA by lightx2v, Apache-2.0)",
+    "openWeights": true
+  },
+  "api": "qwen-edit.api.json",
+  "models": [
+    {
+      "name": "qwen_image_vae.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors"
+    },
+    {
+      "name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "directory": "loras",
+      "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+    },
+    {
+      "name": "qwen_image_edit_2511_int8_convrot.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2511_int8_convrot.safetensors"
+    },
+    {
+      "name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    }
+  ],
+  "source": {
+    "template": "image_qwen_image_edit_2511_int8",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

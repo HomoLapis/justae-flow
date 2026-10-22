@@ -3,7 +3,7 @@ import { api, mediaUrl } from '../api.ts';
 import { act, useUi } from '../store.ts';
 import { Dot, Icon, Kbd } from './ui.tsx';
 
-const STEPS = ['Host', 'EffectCraft', 'ComfyUI', 'Test', 'Ready'];
+const STEPS = ['Host', 'Connect', 'ComfyUI', 'Test', 'Ready'];
 
 export function Wizard() {
   const s = useUi((u) => u.server)!;
@@ -26,7 +26,7 @@ export function Wizard() {
         </div>
         <div className="min-h-[300px] p-5">
           {step === 0 && <StepHost />}
-          {step === 1 && <StepEffectCraft port={s.settings.effectcraftPort} />}
+          {step === 1 && (s.settings.host === 'photocraft' ? <StepPhotoCraft /> : <StepEffectCraft port={s.settings.effectcraftPort} />)}
           {step === 2 && <StepComfy url={s.settings.comfyUrl} />}
           {step === 3 && <StepTest />}
           {step === 4 && <StepReady />}
@@ -44,24 +44,63 @@ export function Wizard() {
 }
 
 function StepHost() {
+  const host = useUi((u) => u.server!.settings.host);
+  const pick = (h: 'effectcraft' | 'photocraft'): void => { if (h !== host) void act(api.settings({ host: h })); };
+  const card = (h: 'effectcraft' | 'photocraft', icon: string, title: string, text: string) => (
+    <button onClick={() => pick(h)} className={`rounded-lg border p-3 text-left transition ${host === h ? 'border-accent/60 bg-accent-soft' : 'border-ink-700 hover:border-ink-500'}`}>
+      <div className="mb-1 flex items-center gap-2 font-semibold"><Icon name={icon} />{title}{host === h && <Icon name="check" className="ml-auto h-3.5 w-3.5 text-accent" />}</div>
+      <p className="text-[12px] text-ink-300">{text}</p>
+    </button>
+  );
   return (
     <div className="space-y-4">
-      <h2 className="text-[17px] font-semibold">The AI tools, inside your compositor</h2>
+      <h2 className="text-[17px] font-semibold">The AI tools, inside your open-source apps</h2>
       <p className="leading-relaxed text-ink-300">
-        Shiftfield turns the markers and placeholder layers of your project into a storyboard, generates every shot on
-        <b className="text-ink-100"> your own ComfyUI</b>, and puts each result back at its place in the timeline — as a new version, never over the old one.
+        Shiftfield turns the markers, placeholders, selections and layers of your project into a storyboard, generates every card on
+        <b className="text-ink-100"> your own ComfyUI</b>, and puts each result back in its place — as a new version, never over the old one.
       </p>
       <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-accent/60 bg-accent-soft p-3">
-          <div className="mb-1 flex items-center gap-2 font-semibold"><Icon name="film" />EffectCraft</div>
-          <p className="text-[12px] text-ink-300">Open-source motion graphics &amp; VFX. Markers, placeholders, layers.</p>
-        </div>
-        <div className="rounded-lg border border-ink-700 p-3 opacity-60">
-          <div className="mb-1 flex items-center gap-2 font-semibold"><Icon name="image" />PhotoCraft</div>
-          <p className="text-[12px] text-ink-300">Open-source image editing. Selections and placeholder layers — next.</p>
-        </div>
+        {card('effectcraft', 'film', 'EffectCraft', 'Motion graphics & VFX. Markers, placeholders, footage layers.')}
+        {card('photocraft', 'image', 'PhotoCraft', 'Image editing. Selections, placeholder layers, layers.')}
       </div>
-      <p className="text-[11.5px] text-ink-500">Nothing leaves your computer unless your ComfyUI does. No account, no telemetry.</p>
+      <p className="text-[11.5px] text-ink-500">Nothing leaves your computer unless your ComfyUI does. No account, no telemetry. You can switch app later in Settings.</p>
+    </div>
+  );
+}
+
+function StepPhotoCraft() {
+  const st = useUi((u) => u.server!.settings);
+  const [port, setPort] = useState(String(st.photocraftPort));
+  const [root, setRoot] = useState(st.photocraftRoot);
+  const [r, setR] = useState<Awaited<ReturnType<typeof api.testHost>> | null>(null);
+  useEffect(() => {
+    let stop = false;
+    const tick = async (): Promise<void> => {
+      const res = await api.testHost({ host: 'photocraft', photocraftPort: Number(port), photocraftRoot: root }).catch(() => null);
+      if (!stop) { setR(res); if (!res?.ok) setTimeout(tick, 2000); }
+    };
+    void tick();
+    return () => { stop = true; };
+  }, [port, root]);
+  const q = (p: string): string => (/\s/.test(p) ? `"${p}"` : p);
+  const line = `photocraft --control ${port} --control-token-file ${q(st.photocraftTokenFile)} --automation-read-root ${q(root)} --automation-write-root ${q(root)}`;
+  return (
+    <div className="space-y-3.5">
+      <h2 className="text-[17px] font-semibold">Connect PhotoCraft</h2>
+      <p className="text-ink-300">Start PhotoCraft with its control channel. It listens on this computer only, asks for the token in the file below, and may read and write only inside its automation folder — where Shiftfield keeps the storyboard and the generated images:</p>
+      <CopyLine text={line} />
+      <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5">
+        <span className="text-ink-400">Port</span>
+        <input className="field !w-24 font-mono" value={port} onChange={(e) => setPort(e.target.value.replace(/\D/g, ''))} />
+        <span className="text-ink-400">Folder</span>
+        <input className="field font-mono" value={root} onChange={(e) => setRoot(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+      </div>
+      <button className="btn-outline" onClick={() => act(api.settings({ photocraftPort: Number(port), photocraftRoot: root }), 'Saved')}>Use these</button>
+      <div className="flex items-center gap-2 rounded-md border border-ink-700 bg-ink-850 px-3 py-2.5">
+        <Dot ok={!!r?.ok} />
+        {r?.ok ? <span>Connected to <b>PhotoCraft</b> · {r.comp ? <>document “{r.comp}”, {r.layers} layer{r.layers === 1 ? '' : 's'}</> : 'no document open yet'}</span>
+          : <span className="text-ink-300">Waiting for PhotoCraft on port {port}… <span className="text-ink-500">{r?.error ? r.error.slice(0, 140) : '(checks every 2 s)'}</span></span>}
+      </div>
     </div>
   );
 }
@@ -72,7 +111,7 @@ function StepEffectCraft({ port }: { port: number }) {
   useEffect(() => {
     let stop = false;
     const tick = async (): Promise<void> => {
-      const res = await api.testHost(Number(p)).catch(() => null);
+      const res = await api.testHost({ host: 'effectcraft', effectcraftPort: Number(p) }).catch(() => null);
       if (!stop) { setR(res); if (!res?.ok) setTimeout(tick, 2000); }
     };
     void tick();
@@ -150,6 +189,20 @@ function StepTest() {
 }
 
 function StepReady() {
+  const canvas = useUi((u) => u.server!.settings.host === 'photocraft');
+  if (canvas) {
+    return (
+      <div className="space-y-4">
+        <h2 className="text-[17px] font-semibold">How it works</h2>
+        <ol className="space-y-2.5 text-ink-200">
+          <li><b>1.</b> In PhotoCraft, select an area and press <b>Card from selection</b> (<Kbd>S</Kbd>) — or add a <b>placeholder</b> (<Kbd>M</Kbd>) and move and resize it.</li>
+          <li><b>2.</b> Describe the change, or the image. Select layers and press <b>Use selected layers</b> to cut out or upscale them.</li>
+          <li><b>3.</b> <Kbd>Ctrl G</Kbd> generates them all. Placeholders turn <span className="text-st-queued">yellow</span>, <span className="text-st-running">seafoam</span>, results <span className="text-st-done">green</span> in the Layers panel.</li>
+          <li><b>4.</b> Each result is a new layer above, masked to the selection or the box. Every version stays in the document, hidden; switch any time.</li>
+        </ol>
+      </div>
+    );
+  }
   return (
     <div className="space-y-4">
       <h2 className="text-[17px] font-semibold">How it works</h2>

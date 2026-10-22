@@ -31,11 +31,12 @@ export const api = {
   placeholder: () => call<{ id: string }>('POST', '/api/placeholder'),
   adopt: () => call<{ ids: string[] }>('POST', '/api/adopt'),
   marker: (comment: string) => call('POST', '/api/marker', { comment }),
+  selectionCard: () => call<{ id: string }>('POST', '/api/selection'),
   resume: () => call('POST', '/api/queue/resume'),
   discard: () => call('POST', '/api/queue/discard'),
   settings: (patch: Partial<Settings>) => call<Settings>('POST', '/api/settings', patch),
   testComfy: (url: string) => call<{ online: boolean; version?: string; device?: string; message?: string }>('POST', '/api/test/comfy', { url }),
-  testHost: (port: number) => call<{ ok: boolean; version?: string; project?: string | null; comp?: string | null; markers?: number; error?: string }>('POST', '/api/test/host', { port }),
+  testHost: (body: Partial<Settings>) => call<{ ok: boolean; app?: string; version?: string; project?: string | null; comp?: string | null; markers?: number; layers?: number; error?: string }>('POST', '/api/test/host', body),
   testGenerate: () => call<{ file: string; seconds: number }>('POST', '/api/test/generate'),
   dismissNotice: () => call('POST', '/api/notice/dismiss'),
 };

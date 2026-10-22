@@ -2,6 +2,7 @@
   "name": "shiftfield",
   "version": "0.1.0",
   "private": true,
+  "license": "GPL-3.0-only",
   "description": "Generative AI inside open-source compositing and image apps (EffectCraft, PhotoCraft), on your own ComfyUI.",
   "type": "module",
   "engines": {

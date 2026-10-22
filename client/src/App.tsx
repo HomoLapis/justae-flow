@@ -83,7 +83,9 @@ function useShortcuts(): void {
           void act(api.version(card.id, prev), `v${prev} in the comp`);
         }
       } else if (k === 'm' && s.host.comp) {
-        void act(api.placeholder(), 'Placeholder added at the playhead');
+        void act(api.placeholder(), 'Placeholder added');
+      } else if (k === 's' && s.host.kind === 'canvas' && s.host.selection) {
+        void act(api.selectionCard(), 'Selection saved as a card');
       } else if (/^[1-9]$/.test(e.key)) {
         const c = s.cards[Number(e.key) - 1];
         if (c) st.select(c.id, 'only');

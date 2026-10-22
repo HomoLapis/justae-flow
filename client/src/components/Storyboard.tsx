@@ -14,22 +14,42 @@ export function Storyboard() {
 }
 
 function Empty() {
+  const canvas = useUi((u) => u.server!.host.kind === 'canvas');
+  const hasSelection = useUi((u) => !!u.server!.host.selection);
   return (
     <div className="flex h-full items-center justify-center p-8">
       <div className="max-w-md space-y-4 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-ink-850 text-accent"><Icon name="marker" className="h-6 w-6" /></div>
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-ink-850 text-accent"><Icon name={canvas ? 'selection' : 'marker'} className="h-6 w-6" /></div>
         <h2 className="text-[16px] font-semibold">Your storyboard builds itself</h2>
-        <p className="leading-relaxed text-ink-300">
-          Add a <b className="text-ink-100">marker</b> in EffectCraft and type the shot as its comment — it shows up here as a card.
-          Or add a <b className="text-ink-100">placeholder</b> layer and move and scale it: its size and length are the shot.
-        </p>
+        {canvas ? (
+          <p className="leading-relaxed text-ink-300">
+            Select an area in PhotoCraft and make it a <b className="text-ink-100">card</b>: the change you describe lands on a new layer, masked to it.
+            Or add a <b className="text-ink-100">placeholder</b> layer and move and resize it: its box is the image to generate.
+          </p>
+        ) : (
+          <p className="leading-relaxed text-ink-300">
+            Add a <b className="text-ink-100">marker</b> in EffectCraft and type the shot as its comment — it shows up here as a card.
+            Or add a <b className="text-ink-100">placeholder</b> layer and move and scale it: its size and length are the shot.
+          </p>
+        )}
         <div className="flex justify-center gap-2">
-          <button className="btn-outline" onClick={() => act(api.marker(''))}><Icon name="marker" />Marker at playhead</button>
+          {canvas
+            ? <button className="btn-outline" disabled={!hasSelection} onClick={() => act(api.selectionCard())}><Icon name="selection" />Card from selection <Kbd>S</Kbd></button>
+            : <button className="btn-outline" onClick={() => act(api.marker(''))}><Icon name="marker" />Marker at playhead</button>}
           <button className="btn-outline" onClick={() => act(api.placeholder())}><Icon name="box" />Placeholder <Kbd>M</Kbd></button>
         </div>
       </div>
     </div>
   );
+}
+
+function originIcon(card: CardView): string {
+  return card.origin.kind === 'marker' ? 'marker' : card.origin.kind === 'placeholder' ? 'box' : card.origin.kind === 'selection' ? 'selection' : 'layers';
+}
+
+function boxText(card: CardView): string {
+  const box = card.origin.kind === 'marker' ? undefined : card.origin.box;
+  return box ? `${Math.round(box[2])}×${Math.round(box[3])}` : card.label;
 }
 
 function CardTile({ card, n }: { card: CardView; n: number }) {
@@ -42,6 +62,7 @@ function CardTile({ card, n }: { card: CardView; n: number }) {
   const version = card.versions.find((v) => v.n === card.activeVersion);
   const [hover, setHover] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvas = useUi((u) => u.server!.host.kind === 'canvas');
 
   const running = card.status === 'running';
   const pct = card.progress && card.progress.max > 0 ? card.progress.value / card.progress.max : 0;
@@ -74,7 +95,7 @@ function CardTile({ card, n }: { card: CardView; n: number }) {
           <StatusChip status={card.status} extra={card.versions.length ? ` · v${card.activeVersion}` : undefined} />
         </div>
         <div className="absolute right-2 top-2 rounded bg-ink-950/80 px-1.5 py-0.5 font-mono text-[10.5px] text-ink-200">
-          {String(n).padStart(2, '0')} · {fmtTime(card.at)}
+          {String(n).padStart(2, '0')} · {canvas ? boxText(card) : fmtTime(card.at)}
         </div>
         {running && (
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-950/90 to-transparent px-2 pb-1.5 pt-5">
@@ -102,15 +123,17 @@ function CardTile({ card, n }: { card: CardView; n: number }) {
 
       <div className="space-y-1.5 p-2.5">
         <p className={`line-clamp-2 min-h-[2.6em] leading-snug ${card.prompt ? 'text-ink-100' : 'italic text-ink-500'}`}>
-          {card.prompt || (wf?.task.startsWith('upscale') || wf?.task === 'remove-bg' ? 'No prompt needed' : 'Write the shot — here or as the marker text')}
+          {card.prompt || (wf?.task.startsWith('upscale') || wf?.task === 'remove-bg' ? 'No prompt needed'
+            : card.origin.kind === 'selection' ? 'Describe the change for the selected area'
+            : canvas ? 'Describe the image for this box' : 'Write the shot — here or as the marker text')}
         </p>
         <div className="flex items-center gap-1.5 text-[11px] text-ink-400">
-          <Icon name={card.origin.kind === 'marker' ? 'marker' : card.origin.kind === 'placeholder' ? 'box' : 'layers'} className="h-3 w-3" />
+          <Icon name={originIcon(card)} className="h-3 w-3" />
           <span className="truncate">{wf?.title ?? card.workflowId}</span>
-          <span className="ml-auto shrink-0 font-mono">{card.seconds ? `${card.seconds}s` : card.slotSeconds ? `${card.slotSeconds.toFixed(1)}s` : ''}</span>
+          <span className="ml-auto shrink-0 font-mono">{canvas ? '' : card.seconds ? `${card.seconds}s` : card.slotSeconds ? `${card.slotSeconds.toFixed(1)}s` : ''}</span>
         </div>
         {card.status === 'error' && <p className="line-clamp-2 text-[11px] text-st-error" title={card.error}>{card.error}</p>}
-        {card.orphan && <p className="text-[11px] text-ink-400">Its {card.origin.kind} is gone from the comp — versions are kept.</p>}
+        {card.orphan && <p className="text-[11px] text-ink-400">Its {card.origin.kind === 'selection' ? 'saved selection' : card.origin.kind} is gone from the {canvas ? 'document' : 'comp'} — versions are kept.</p>}
         {version && card.status !== 'error' && <p className="text-[10.5px] text-ink-500">v{version.n} of {card.versions.length} · {fmtDuration(version.elapsedMs)} · seed {version.seed}</p>}
       </div>
     </div>

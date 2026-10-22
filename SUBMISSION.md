@@ -6,7 +6,7 @@ Deadline: **30 October 2026, 9:00 PT (17:00 in Italy)**. Rules page: https://com
 ## Checklist
 
 - [ ] Signed up (the first 200 sign-ups get Comfy credits).
-- [ ] Licence chosen and `LICENSE` replaced with the full text — the rules require an open-source licence.
+- [x] Licence: GPL-3.0, full text in `LICENSE` — the rules require an open-source licence.
 - [ ] Author name in `NOTICE`; name/logo wording in `TRADEMARKS.md`.
 - [ ] README placeholders filled (tagline, presentation, closing link to JustAE / Homo Lapis).
 - [ ] `docs/media/` screenshot or GIF; `examples/` filled with your own SFW outputs (no unlicensed IP or faces).
@@ -43,7 +43,9 @@ Open questions to settle before submitting (not answered on the rules page):
 6. **Never destructive** — <kbd>V</kbd> for a new version, <kbd>Tab</kbd> to swap back; an error turns fuchsia,
    *Retry failed* picks it up.
 7. **On a layer** — select a clip → *Use selected layers* → SeedVR2 ×2 lands exactly over it; a still → BiRefNet cut-out.
-8. **The comparison** — the same tools are sold as a subscription inside Adobe; here they are open source,
+8. **Same storyboard in PhotoCraft** — switch app in Settings; select the sky, *Card from selection*, "add a striped
+   balloon" → a new layer masked to the selection; a placeholder box filled with a generated image; a layer cut out.
+9. **The comparison** — the same tools are sold as a subscription inside Adobe; here they are open source,
    inside an open-source compositor, on your own GPU.
 
 ## Comparison with the Higgsfield Adobe plugin (from its official pages, read 22 Oct 2026)
@@ -57,7 +59,12 @@ Open questions to settle before submitting (not answered on the rules page):
 | Timeline integration | the generated file is inserted into the Adobe timeline | storyboard from markers and placeholders, in-place fills, versions, status colours on the timeline |
 | Source | closed | open |
 
-Feature parity status (EffectCraft): Generate AI Video ✔ · Generate AI Image ✔ · Upscale ✔ · Remove Background
-(stills) ✔ · Reframe, Draw to edit, Edit Video — not in this version.
+Feature parity status (EffectCraft, vs the Premiere Pro / After Effects plugin): Generate AI Video ✔ · Generate AI
+Image ✔ · Upscale ✔ · Remove Background (stills) ✔ · Reframe, Draw to edit, Edit Video — not in this version.
+
+Feature parity status (PhotoCraft, vs the Photoshop plugin): Generate AI Image ✔ (placeholder) · edit inside a
+selection ✔ (generative fill) · Remove Background ✔ · Upscale ✔ · Realtime, Mockup Studio, Layer Decompose, Angles,
+Shots, Expand, Relight — not in this version · Face Swap, Character Swap, AI Stylist — left out on purpose (the open
+models for them carry non-commercial licences, and they work on people's faces).
 
 <!-- PLACEHOLDER (author): post text with #OpenSourceHiggsfield -->

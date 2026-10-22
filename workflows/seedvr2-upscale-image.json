@@ -1,0 +1,43 @@
+{
+  "id": "seedvr2-upscale-image",
+  "title": "SeedVR2 · Image Upscale",
+  "description": "Restores detail and enlarges the layer; the result keeps its place and size on the canvas.",
+  "task": "upscale-image",
+  "hosts": [
+    "photocraft"
+  ],
+  "output": "image",
+  "input": "image",
+  "bindings": {
+    "image": "1.image",
+    "seed": "66:54.seed"
+  },
+  "params": [
+    {
+      "ref": "66:57.resize_type.multiplier",
+      "label": "Scale"
+    }
+  ],
+  "license": {
+    "weights": "Apache-2.0 (ByteDance Seed SeedVR2)",
+    "openWeights": true
+  },
+  "api": "seedvr2-upscale-image.api.json",
+  "models": [
+    {
+      "name": "seedvr2_ema_vae_fp16.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/SeedVR2/resolve/main/vae/seedvr2_ema_vae_fp16.safetensors"
+    },
+    {
+      "name": "seedvr2_3b_int8_convrot.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/SeedVR2/resolve/main/diffusion_models/seedvr2_3b_int8_convrot.safetensors"
+    }
+  ],
+  "source": {
+    "template": "utility_seedvr2_3b_int8_upscale_image",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

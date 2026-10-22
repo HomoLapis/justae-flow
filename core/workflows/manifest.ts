@@ -28,6 +28,8 @@ export interface WorkflowManifest {
   /** One line shown under the title in the picker. */
   description: string;
   task: Task;
+  /** The host apps the workflow makes sense in. */
+  hosts: Array<'effectcraft' | 'photocraft'>;
   output: MediaKind;
   /** What the workflow needs as input, if anything. */
   input?: MediaKind;
@@ -146,7 +148,8 @@ const QUANT_TOKENS = /(^|[-_.])(comfy|int8|int4|convrot|fp8|fp16|bf16|fp32|nvfp4
 
 /** The model's identity without its precision: "ltx-2.5-22b-distilled-transformer". */
 export function modelFamily(file: string): string {
-  const base = file.split('/').pop()!.replace(/\.(safetensors|ckpt|pt|pth|bin|gguf)$/i, '').toLowerCase();
+  // Separators are spelled freely ("Qwen-Image-Edit-2511-FP8" vs "qwen_image_edit_2511_int8"): normalise them first.
+  const base = file.split('/').pop()!.replace(/\.(safetensors|ckpt|pt|pth|bin|gguf)$/i, '').toLowerCase().replace(/[-_.]+/g, '-');
   let prev = '';
   let cur = base;
   while (cur !== prev) { prev = cur; cur = cur.replace(QUANT_TOKENS, ''); }

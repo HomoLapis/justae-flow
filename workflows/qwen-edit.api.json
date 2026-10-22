@@ -1,0 +1,351 @@
+{
+  "41": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "lily_girl_blue.png"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "195": {
+    "class_type": "SaveImageAdvanced",
+    "inputs": {
+      "images": [
+        "170:158",
+        0
+      ],
+      "filename_prefix": "shiftfield/qwen_edit",
+      "format": "png",
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB"
+    },
+    "_meta": {
+      "title": "SaveImageAdvanced"
+    }
+  },
+  "170:145": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "170:161",
+        0
+      ],
+      "shift": 3.1
+    },
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "170:146": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "170:147": {
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "inputs": {
+      "conditioning": [
+        "170:149",
+        0
+      ],
+      "reference_latents_method": "index_timestep_zero"
+    },
+    "_meta": {
+      "title": "FluxKontextMultiReferenceLatentMethod"
+    }
+  },
+  "170:148": {
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "inputs": {
+      "conditioning": [
+        "170:151",
+        0
+      ],
+      "reference_latents_method": "index_timestep_zero"
+    },
+    "_meta": {
+      "title": "FluxKontextMultiReferenceLatentMethod"
+    }
+  },
+  "170:149": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "170:162",
+        0
+      ],
+      "prompt": "",
+      "vae": [
+        "170:146",
+        0
+      ],
+      "image1": [
+        "170:160",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus"
+    }
+  },
+  "170:151": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "170:162",
+        0
+      ],
+      "prompt": "Convert this image to pop art poster style",
+      "vae": [
+        "170:146",
+        0
+      ],
+      "image1": [
+        "170:160",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus (Positive)"
+    }
+  },
+  "170:152": {
+    "class_type": "CFGNorm",
+    "inputs": {
+      "model": [
+        "170:145",
+        0
+      ],
+      "strength": 1,
+      "pre_cfg": false
+    },
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "170:153": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "170:152",
+        0
+      ],
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "170:154": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 4
+    },
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "170:155": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 1
+    },
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "170:156": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "170:160",
+        0
+      ],
+      "vae": [
+        "170:146",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEEncode"
+    }
+  },
+  "170:161": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2511_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "170:162": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "170:163": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "170:168",
+        0
+      ],
+      "on_false": [
+        "170:152",
+        0
+      ],
+      "on_true": [
+        "170:153",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Switch (Model)"
+    }
+  },
+  "170:165": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 4
+    },
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "170:166": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 40
+    },
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "170:168": {
+    "class_type": "PrimitiveBoolean",
+    "inputs": {
+      "value": false
+    },
+    "_meta": {
+      "title": "Enable 4steps LoRA?"
+    }
+  },
+  "170:164": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "170:168",
+        0
+      ],
+      "on_false": [
+        "170:154",
+        0
+      ],
+      "on_true": [
+        "170:155",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Switch (CFG)"
+    }
+  },
+  "170:167": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "170:168",
+        0
+      ],
+      "on_false": [
+        "170:166",
+        0
+      ],
+      "on_true": [
+        "170:165",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Switch (Steps)"
+    }
+  },
+  "170:169": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "170:163",
+        0
+      ],
+      "seed": 1119496583977398,
+      "steps": [
+        "170:167",
+        0
+      ],
+      "cfg": [
+        "170:164",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": [
+        "170:148",
+        0
+      ],
+      "negative": [
+        "170:147",
+        0
+      ],
+      "latent_image": [
+        "170:156",
+        0
+      ],
+      "denoise": 1
+    },
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "170:158": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "170:169",
+        0
+      ],
+      "vae": [
+        "170:146",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "170:160": {
+    "class_type": "FluxKontextImageScale",
+    "inputs": {
+      "image": [
+        "41",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "FluxKontextImageScale"
+    }
+  }
+}

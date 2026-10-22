@@ -15,7 +15,7 @@ export function CardDetail() {
     <aside className="flex w-[380px] shrink-0 flex-col border-l border-ink-800 bg-ink-900">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-ink-800 px-3">
         <span className="font-semibold">Card {String(n).padStart(2, '0')}</span>
-        <span className="text-ink-400">· {card.label} @ {fmtTime(card.at)}</span>
+        <span className="text-ink-400">· {card.label}{s.host.kind === 'canvas' ? (card.origin.kind !== 'marker' && card.origin.box ? ` · ${Math.round(card.origin.box[2])}×${Math.round(card.origin.box[3])}` : '') : ` @ ${fmtTime(card.at)}`}</span>
         <div className="ml-auto flex items-center gap-1"><StatusChip status={card.status} /><button className="btn-ghost !px-1" onClick={() => open(null)}><Icon name="x" /></button></div>
       </div>
       <div className="flex-1 space-y-5 overflow-y-auto p-3">
@@ -90,7 +90,8 @@ function PromptBox({ card, wf }: { card: CardView; wf?: WorkflowInfo }) {
         data-prompt
         className="field min-h-[96px] resize-y leading-relaxed"
         value={text}
-        placeholder="Describe the shot: subject, action, camera, light…"
+        placeholder={card.origin.kind === 'selection' ? 'Describe the change: “replace the sky with a stormy sunset”, “add a red umbrella”…'
+          : card.origin.kind === 'marker' || wf?.output === 'video' ? 'Describe the shot: subject, action, camera, light…' : 'Describe the image: subject, setting, light, style…'}
         onChange={(e) => { dirty.current = true; setText(e.target.value); }}
         onBlur={save}
         onKeyDown={(e) => {
@@ -136,19 +137,31 @@ function WorkflowPicker({ card, workflows }: { card: CardView; workflows: Workfl
 function InputImage({ card }: { card: CardView }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const src = card.attachment ? mediaUrl(card.attachment, card.previewRev) : mediaUrl(card.thumb, card.previewRev);
+  const what = card.origin.kind === 'marker' ? `The frame under the marker at ${fmtTime(card.at)}, as the comp shows it.`
+    : card.origin.kind === 'selection' ? 'The whole visible image, exported when you generate; only the selection takes the change.'
+    : card.origin.kind === 'layer' ? 'The layer on its own, exported when you generate.'
+    : 'The image as it is, exported when you generate.';
   return (
-    <Section title="Start image" right={
+    <Section title="Input image" right={
       <div className="flex gap-1">
         <button className="btn-ghost !py-0.5" onClick={() => fileRef.current?.click()}><Icon name="clip" />Attach</button>
-        {card.attachment && <button className="btn-ghost !py-0.5" onClick={() => act(api.detach(card.id))}><Icon name="x" />Use the frame</button>}
+        {card.attachment && <button className="btn-ghost !py-0.5" onClick={() => act(api.detach(card.id))}><Icon name="x" />Use the {card.origin.kind === 'marker' ? 'frame' : 'image'}</button>}
       </div>}>
       <div className="flex items-center gap-2.5">
         <div className="h-14 w-24 shrink-0 overflow-hidden rounded border border-ink-700 bg-ink-950">{src && <img src={src} className="h-full w-full object-cover" alt="" />}</div>
-        <p className="text-[11.5px] text-ink-400">{card.attachment ? 'Your attached image.' : `The frame under the ${card.origin.kind} at ${fmtTime(card.at)}, as the comp shows it.`}</p>
+        <p className="text-[11.5px] text-ink-400">{card.attachment ? 'Your attached image.' : what}</p>
       </div>
       <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void act(api.attach(card.id, f), 'Image attached'); e.target.value = ''; }} />
     </Section>
   );
+}
+
+function sizeOf(card: CardView, comp: { width: number; height: number }): string {
+  const o = card.origin;
+  if (o.kind === 'marker') return `${comp.width}×${comp.height}`;
+  if (o.box) return `${Math.round(o.box[2])}×${Math.round(o.box[3])}`;
+  if (o.kind !== 'selection' && o.width && o.height) return `${o.width}×${o.height}`;
+  return `${comp.width}×${comp.height}`;
 }
 
 function Shot({ card, wf }: { card: CardView; wf?: WorkflowInfo }) {
@@ -157,7 +170,7 @@ function Shot({ card, wf }: { card: CardView; wf?: WorkflowInfo }) {
   useEffect(() => setSeconds(card.seconds ? String(card.seconds) : ''), [card.seconds, card.id]);
   const video = wf?.output === 'video' && !wf.input?.startsWith('video');
   return (
-    <Section title="Shot">
+    <Section title={card.origin.kind === 'marker' || video ? 'Shot' : 'Output'}>
       <div className="grid grid-cols-2 gap-2">
         {video && (
           <label className="space-y-1">
@@ -174,16 +187,16 @@ function Shot({ card, wf }: { card: CardView; wf?: WorkflowInfo }) {
         )}
         <div className="space-y-1">
           <span className="text-[11px] text-ink-400">Size</span>
-          <p className="field font-mono !text-ink-300">{comp ? `${card.origin.kind === 'marker' ? comp.width : card.origin.width ?? comp.width}×${card.origin.kind === 'marker' ? comp.height : card.origin.height ?? comp.height}` : '—'}</p>
-          <span className="block text-[10.5px] text-ink-500">{card.origin.kind === 'marker' ? 'the comp' : card.origin.kind === 'placeholder' ? 'the placeholder' : 'the layer'}</span>
+          <p className="field font-mono !text-ink-300">{comp ? sizeOf(card, comp) : '—'}</p>
+          <span className="block text-[10.5px] text-ink-500">{card.origin.kind === 'marker' ? 'the comp' : card.origin.kind === 'placeholder' ? 'the placeholder' : card.origin.kind === 'selection' ? 'the selection' : 'the layer'}</span>
         </div>
       </div>
       <div className="flex items-start gap-2 rounded-md bg-ink-850 px-2.5 py-2 text-[11.5px]">
         <Icon name="check" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
         <p className="text-ink-300">
-          Will render <b className="font-mono text-ink-100">{card.plan.width ? `${card.plan.width}×${card.plan.height}` : card.plan.sizeNote ?? '—'}</b>
+          {card.plan.width ? <>Will render <b className="font-mono text-ink-100">{card.plan.width}×{card.plan.height}</b></> : <>Will render {card.plan.sizeNote ?? '—'}</>}
           {card.plan.seconds ? <> · <b className="font-mono text-ink-100">{card.plan.seconds}s</b></> : null}
-          {card.plan.width && card.plan.sizeNote ? <span className="text-ink-500"> ({card.plan.sizeNote}{card.origin.kind === 'marker' ? ', scaled to cover the comp' : ', fitted to the placeholder'})</span> : null}
+          {card.plan.width && card.plan.sizeNote ? <span className="text-ink-500"> ({card.plan.sizeNote}{card.origin.kind === 'marker' ? ', scaled to cover the comp' : ''})</span> : null}
           {card.plan.lengthNote ? <span className="text-ink-500"> · {card.plan.lengthNote}</span> : null}
         </p>
       </div>

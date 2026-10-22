@@ -3,6 +3,10 @@
   "title": "Z-Image-Turbo · Text to Image",
   "description": "A still in a few seconds: backgrounds, plates, title cards, keyframes.",
   "task": "t2i",
+  "hosts": [
+    "effectcraft",
+    "photocraft"
+  ],
   "output": "image",
   "bindings": {
     "prompt": "57:27.text",

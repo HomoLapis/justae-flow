@@ -20,13 +20,18 @@ export function Banners() {
     <>
       {!s.host.ok && (
         <Banner tone="error" actions={<button className="btn-outline" onClick={() => set({ wizardOpen: true })}>Connection guide</button>}>
-          <b>EffectCraft is not connected.</b> Start it with its control channel on:{' '}
-          <code className="rounded bg-ink-950 px-1.5 py-0.5 font-mono text-[11px]">effectcraft --control {s.settings.effectcraftPort}</code>
-          <span className="text-ink-400"> — it listens on this computer only and is off unless you ask for it.</span>
+          <b>{s.host.app} is not connected.</b>{' '}
+          {s.host.kind === 'canvas'
+            ? <>Start it with its control channel, a token file and its automation folder (the connection guide has the full line). <span className="text-ink-400">{s.host.error}</span></>
+            : <>Start it with its control channel on:{' '}
+              <code className="rounded bg-ink-950 px-1.5 py-0.5 font-mono text-[11px]">effectcraft --control {s.settings.effectcraftPort}</code>
+              <span className="text-ink-400"> — it listens on this computer only and is off unless you ask for it.</span></>}
         </Banner>
       )}
       {s.host.ok && !s.host.comp && (
-        <Banner tone="warn">Open a composition in EffectCraft: its markers and placeholders become the storyboard.</Banner>
+        <Banner tone="warn">{s.host.kind === 'canvas'
+          ? 'Open or create a document in PhotoCraft: its placeholders, selections and layers become the storyboard.'
+          : 'Open a composition in EffectCraft: its markers and placeholders become the storyboard.'}</Banner>
       )}
       {!s.comfy.online && (
         <Banner tone="error" actions={<button className="btn-outline" onClick={() => set({ settingsOpen: true })}>Settings</button>}>
@@ -38,7 +43,7 @@ export function Banners() {
           {s.queue.recovered} card{s.queue.recovered > 1 ? 's were' : ' was'} queued when Shiftfield last stopped.
         </Banner>
       )}
-      {s.host.ok && s.host.unsaved && s.cards.length > 0 && (
+      {s.host.ok && s.host.kind === 'timeline' && s.host.unsaved && s.cards.length > 0 && (
         <Banner tone="info">
           This EffectCraft project is not saved yet: the storyboard is kept in <code className="font-mono text-[11px]">Documents/Shiftfield</code> and moves next to the project as soon as you save it.
         </Banner>

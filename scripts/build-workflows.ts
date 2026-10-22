@@ -39,7 +39,7 @@ const RECIPES: Recipe[] = [
     template: 'video_ltx2_5_i2v',
     title: 'LTX-2.5 · Image to Video',
     description: 'Animates the frame under the marker (or an image you attach) into a clip with sound.',
-    task: 'i2v', output: 'video', input: 'image',
+    task: 'i2v', hosts: ['effectcraft'], output: 'video', input: 'image',
     bindings: {
       prompt: '398:376.value', negative: '398:373.text', image: '395.image', seed: '398:339.noise_seed',
       width: '398:372.value', height: '398:360.value', seconds: '398:362.value', fps: '398:361.value',
@@ -54,7 +54,7 @@ const RECIPES: Recipe[] = [
     template: 'video_ltx2_5_t2v',
     title: 'LTX-2.5 · Text to Video',
     description: 'A clip with sound from the prompt alone, sized and timed by the slot.',
-    task: 't2v', output: 'video',
+    task: 't2v', hosts: ['effectcraft'], output: 'video',
     bindings: {
       prompt: '405:376.value', negative: '405:373.text', seed: '405:338.noise_seed',
       width: '405:372.value', height: '405:360.value', seconds: '405:362.value', fps: '405:361.value',
@@ -69,7 +69,7 @@ const RECIPES: Recipe[] = [
     template: 'image_z_image_turbo',
     title: 'Z-Image-Turbo · Text to Image',
     description: 'A still in a few seconds: backgrounds, plates, title cards, keyframes.',
-    task: 't2i', output: 'image',
+    task: 't2i', hosts: ['effectcraft', 'photocraft'], output: 'image',
     bindings: { prompt: '57:27.text', seed: '57:3.seed', width: '57:13.width', height: '57:13.height' },
     sizeMultiple: 32, maxLongSide: 2048, defaults: { width: 1024, height: 1024 },
     license: { weights: 'Apache-2.0 (Tongyi-MAI Z-Image-Turbo)', openWeights: true },
@@ -80,7 +80,7 @@ const RECIPES: Recipe[] = [
     template: 'utility_seedvr2_3b_int8_upscale_video',
     title: 'SeedVR2 · Video Upscale ×2',
     description: 'Restores and doubles the resolution of the clip in the slot.',
-    task: 'upscale-video', output: 'video', input: 'video',
+    task: 'upscale-video', hosts: ['effectcraft'], output: 'video', input: 'video',
     bindings: { video: '73.file', seed: '66:54.seed' },
     params: [{ ref: '66:57.resize_type.multiplier', label: 'Scale' }],
     license: { weights: 'Apache-2.0 (ByteDance Seed SeedVR2)', openWeights: true },
@@ -91,7 +91,7 @@ const RECIPES: Recipe[] = [
     template: 'utility_birefnet_remove_background',
     title: 'BiRefNet · Remove Background',
     description: 'Cuts the subject out of a still, with a clean alpha channel.',
-    task: 'remove-bg', output: 'image', input: 'image',
+    task: 'remove-bg', hosts: ['effectcraft', 'photocraft'], output: 'image', input: 'image',
     bindings: { image: '17.image' },
     license: { weights: 'MIT (BiRefNet)', openWeights: true },
     patch: (api) => {
@@ -99,6 +99,28 @@ const RECIPES: Recipe[] = [
       api['18'] = { class_type: 'SaveImage', inputs: { images: ['19:16', 0], filename_prefix: 'shiftfield/rmbg' }, _meta: { title: 'Save Image' } };
       delete api['20'];
     },
+  },
+  {
+    id: 'qwen-edit',
+    template: 'image_qwen_image_edit_2511_int8',
+    title: 'Qwen-Image-Edit 2511 · Edit',
+    description: 'Changes the image as the prompt says; only the selected area takes the change.',
+    task: 'i2i', hosts: ['photocraft'], output: 'image', input: 'image',
+    bindings: { prompt: '170:151.prompt', image: '41.image', seed: '170:169.seed' },
+    params: [{ ref: '170:168.value', label: 'Lightning LoRA (4 steps, faster)' }],
+    license: { weights: 'Apache-2.0 (Qwen-Image-Edit-2511; Lightning LoRA by lightx2v, Apache-2.0)', openWeights: true },
+    patch: (api) => { api['195'].inputs.filename_prefix = 'shiftfield/qwen_edit'; },
+  },
+  {
+    id: 'seedvr2-upscale-image',
+    template: 'utility_seedvr2_3b_int8_upscale_image',
+    title: 'SeedVR2 · Image Upscale',
+    description: 'Restores detail and enlarges the layer; the result keeps its place and size on the canvas.',
+    task: 'upscale-image', hosts: ['photocraft'], output: 'image', input: 'image',
+    bindings: { image: '1.image', seed: '66:54.seed' },
+    params: [{ ref: '66:57.resize_type.multiplier', label: 'Scale' }],
+    license: { weights: 'Apache-2.0 (ByteDance Seed SeedVR2)', openWeights: true },
+    patch: (api) => { api['9'].inputs.filename_prefix = 'shiftfield/seedvr2_image'; },
   },
 ];
 

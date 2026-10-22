@@ -16,7 +16,7 @@
 import { copyFileSync } from 'node:fs';
 import { JsonLinesClient } from '../jsonlines.ts';
 import type { CardStatus } from '../../core/storyboard/types.ts';
-import type { HostAdapter, HostLayer, HostMarker, HostSnapshot, ItemInfo, PlaceRequest } from '../types.ts';
+import type { HostLayer, HostMarker, HostSnapshot, ItemInfo, PlaceRequest, TimelineHost } from '../types.ts';
 import { HostError } from '../types.ts';
 
 /** Marker/layer label for each card state. Names are EffectCraft's own (After Effects' label set). */
@@ -36,8 +36,10 @@ interface RawMarker {
   cuePoint: { name?: string; params?: Array<[string, string]> } | null;
 }
 
-export class EffectCraftAdapter implements HostAdapter {
+export class EffectCraftAdapter implements TimelineHost {
   readonly id = 'effectcraft' as const;
+  readonly kind = 'timeline' as const;
+  readonly label = 'EffectCraft';
   private rpc: JsonLinesClient;
   private version = '';
 

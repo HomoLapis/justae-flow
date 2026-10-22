@@ -1,22 +1,27 @@
 import type { ReactNode } from 'react';
 import type { CardView } from '../api.ts';
+import { useUi } from '../store.ts';
 
 type Status = CardView['status'];
 
 const STATUS_TEXT: Record<Status, string> = {
   idle: 'Draft', queued: 'Queued', running: 'Generating', done: 'Done', error: 'Error', canceled: 'Canceled',
 };
-const STATUS_HOST_LABEL: Record<Status, string> = {
-  idle: '', queued: 'Yellow label', running: 'Cyan label', done: 'Green label', error: 'Fuchsia label', canceled: '',
+/** The label each host paints for a state (EffectCraft: After Effects' names; PhotoCraft: its own). */
+const HOST_LABEL: Record<'effectcraft' | 'photocraft', Partial<Record<Status, string>>> = {
+  effectcraft: { queued: 'Yellow', running: 'Cyan', done: 'Green', error: 'Fuchsia' },
+  photocraft: { queued: 'yellow', running: 'seafoam', done: 'green', error: 'fuchsia' },
 };
 export const STATUS_COLOR: Record<Status, string> = {
   idle: 'bg-st-idle', queued: 'bg-st-queued', running: 'bg-st-running', done: 'bg-st-done', error: 'bg-st-error', canceled: 'bg-st-idle',
 };
 
 export function StatusChip({ status, extra }: { status: Status; extra?: string }) {
+  const host = useUi((u) => u.server?.host);
+  const label = host ? HOST_LABEL[host.id][status] : undefined;
   return (
     <span
-      title={STATUS_HOST_LABEL[status] ? `Same colour as the ${STATUS_HOST_LABEL[status]} on the EffectCraft timeline` : undefined}
+      title={label && host ? `${host.app} shows this as the ${label} label on the ${host.kind === 'timeline' ? 'marker or layer' : 'layer'}` : undefined}
       className="inline-flex items-center gap-1.5 rounded-full bg-ink-950/80 px-2 py-0.5 text-[10.5px] font-semibold text-ink-100 backdrop-blur"
     >
       <span className={`h-2 w-2 rounded-full ${STATUS_COLOR[status]} ${status === 'running' ? 'animate-pulseRing' : ''}`} />
@@ -62,6 +67,7 @@ const paths: Record<string, string> = {
   clip: 'M16 6l-8.5 8.5a2.1 2.1 0 003 3L19 9a3.5 3.5 0 00-5-5l-8.5 8.5a5 5 0 007 7L20 12',
   chevron: 'M9 6l6 6-6 6',
   lock: 'M6 11h12v9H6z M9 11V8a3 3 0 016 0v3',
+  selection: 'M4 7V4h3 M10 4h4 M17 4h3v3 M20 10v4 M20 17v3h-3 M14 20h-4 M7 20H4v-3 M4 14v-4',
 };
 
 export function Icon({ name, className = 'h-3.5 w-3.5' }: { name: keyof typeof paths | string; className?: string }) {

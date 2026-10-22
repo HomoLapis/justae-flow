@@ -3,6 +3,9 @@
   "title": "SeedVR2 · Video Upscale ×2",
   "description": "Restores and doubles the resolution of the clip in the slot.",
   "task": "upscale-video",
+  "hosts": [
+    "effectcraft"
+  ],
   "output": "video",
   "input": "video",
   "bindings": {

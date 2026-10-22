@@ -3,6 +3,9 @@
   "title": "LTX-2.5 · Text to Video",
   "description": "A clip with sound from the prompt alone, sized and timed by the slot.",
   "task": "t2v",
+  "hosts": [
+    "effectcraft"
+  ],
   "output": "video",
   "bindings": {
     "prompt": "405:376.value",

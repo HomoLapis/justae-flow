@@ -3,6 +3,10 @@
   "title": "BiRefNet · Remove Background",
   "description": "Cuts the subject out of a still, with a clean alpha channel.",
   "task": "remove-bg",
+  "hosts": [
+    "effectcraft",
+    "photocraft"
+  ],
   "output": "image",
   "input": "image",
   "bindings": {

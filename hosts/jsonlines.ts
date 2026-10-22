@@ -48,22 +48,28 @@ export class JsonLinesClient {
           + `Start it with its control channel enabled.`, true));
       };
       s.once('error', fail);
-      s.once('connect', () => {
+      s.once('connect', async () => {
         s.off('error', fail);
         s.setNoDelay(true);
         s.on('data', (d) => this.onData(d));
         s.on('close', () => this.onClose());
         s.on('error', () => { /* close follows */ });
+        try {
+          // The first frame of a connection (an auth token) must succeed before anything else is sent.
+          const h = this.hello?.();
+          if (h) await this.raw(s, h.method, h.params, 10_000);
+        } catch (e) {
+          this.connecting = null;
+          s.destroy();
+          reject(e instanceof Error ? e : new HostError(String(e)));
+          return;
+        }
         this.sock = s;
         this.connecting = null;
         resolve(s);
       });
     });
-    return this.connecting.then(async (s) => {
-      const h = this.hello?.();
-      if (h) await this.raw(s, h.method, h.params, 10_000);
-      return s;
-    });
+    return this.connecting;
   }
 
   private onData(d: Buffer): void {

@@ -13,10 +13,14 @@ export type CardStatus = 'idle' | 'queued' | 'running' | 'done' | 'error' | 'can
 export type CardOrigin =
   /** A composition marker. Identified by the card id we store in its cue point; time and text are mirrors. */
   | { kind: 'marker'; time: number; comment: string }
-  /** A placeholder item we created, on a layer the user moves and scales. */
-  | { kind: 'placeholder'; layerId: number; itemId: number; width?: number; height?: number }
-  /** Any existing footage layer the user turned into a card (its media is the input). */
-  | { kind: 'layer'; layerId: number; itemId: number; sourcePath: string | null; width?: number; height?: number; labelBefore?: string };
+  /** A placeholder we created (timeline: an item on a layer; canvas: a filled layer), which the user moves and scales. */
+  | { kind: 'placeholder'; layerId: number; itemId: number; width?: number; height?: number; box?: Box }
+  /** Any existing layer the user turned into a card (its media is the input). */
+  | { kind: 'layer'; layerId: number; itemId: number; sourcePath: string | null; width?: number; height?: number; labelBefore?: string; box?: Box }
+  /** Canvas hosts: a selection, saved in the document as an alpha channel so it outlives the next click. */
+  | { kind: 'selection'; channel: string; box: Box };
+
+export type Box = [x: number, y: number, w: number, h: number];
 
 export interface Version {
   n: number;
@@ -34,6 +38,8 @@ export interface Version {
   elapsedMs: number;
   /** Model files swapped for a local variant, said rather than hidden. */
   remaps: string[];
+  /** Canvas hosts: every version is its own layer; the active one is visible. */
+  layerId?: number;
 }
 
 export interface Card {
