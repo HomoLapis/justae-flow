@@ -4,7 +4,8 @@
  * the file, so a headless setup needs no UI at all.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { LEGACY_PRODUCT_DIR, PRODUCT } from '../core/brand.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -52,7 +53,12 @@ export function configDir(): string {
     : process.platform === 'darwin'
       ? join(homedir(), 'Library', 'Application Support')
       : (process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'));
-  const dir = join(base, 'Shiftfield');
+  const dir = join(base, PRODUCT);
+  const legacy = join(base, LEGACY_PRODUCT_DIR);
+  // Settings written under the project's former name come along once.
+  if (!existsSync(dir) && existsSync(legacy)) {
+    try { cpSync(legacy, dir, { recursive: true }); } catch { /* start fresh */ }
+  }
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -76,9 +82,10 @@ export function loadSettings(repoRoot: string): Settings {
   if (process.env.PHOTOCRAFT_CONTROL_PORT) s.photocraftPort = Number(process.env.PHOTOCRAFT_CONTROL_PORT);
   if (process.env.PHOTOCRAFT_CONTROL_TOKEN_FILE) s.photocraftTokenFile = process.env.PHOTOCRAFT_CONTROL_TOKEN_FILE;
   if (process.env.PHOTOCRAFT_AUTOMATION_ROOT) s.photocraftRoot = process.env.PHOTOCRAFT_AUTOMATION_ROOT;
-  if (process.env.SHIFTFIELD_HOST === 'effectcraft' || process.env.SHIFTFIELD_HOST === 'photocraft') s.host = process.env.SHIFTFIELD_HOST;
+  const host = process.env.JUSTAE_FLOW_HOST ?? process.env.SHIFTFIELD_HOST;
+  if (host === 'effectcraft' || host === 'photocraft') s.host = host;
   if (!s.photocraftTokenFile) s.photocraftTokenFile = join(configDir(), 'photocraft.token');
-  if (!s.photocraftRoot) s.photocraftRoot = join(homedir(), 'Documents', 'Shiftfield', 'PhotoCraft');
+  if (!s.photocraftRoot) s.photocraftRoot = join(homedir(), 'Documents', PRODUCT, 'PhotoCraft');
   return s;
 }
 

@@ -84,13 +84,16 @@ function PromptBox({ card, wf }: { card: CardView; wf?: WorkflowInfo }) {
     if (text !== card.prompt) void act(api.update(card.id, { prompt: text }));
   };
   if (wf && !wf.bindings.prompt) return <Section title="Prompt"><p className="text-ink-400">{wf.title} does not take a prompt.</p></Section>;
+  const subject = wf?.task === 'matte-video' || wf?.task === 'reframe';
   return (
-    <Section title="Prompt" right={card.origin.kind === 'marker' ? <span className="text-[10.5px] text-ink-500">mirrors the marker text</span> : undefined}>
+    <Section title={subject ? 'Subject' : 'Prompt'} right={card.origin.kind === 'marker' ? <span className="text-[10.5px] text-ink-500">mirrors the marker text</span> : undefined}>
       <textarea
         data-prompt
-        className="field min-h-[96px] resize-y leading-relaxed"
+        className={`field resize-y leading-relaxed ${subject ? 'min-h-[52px]' : 'min-h-[96px]'}`}
         value={text}
-        placeholder={card.origin.kind === 'selection' ? 'Describe the change: “replace the sky with a stormy sunset”, “add a red umbrella”…'
+        placeholder={wf?.task === 'matte-video' ? 'Name what to cut out, in a word or two: “woman”, “dog”, “red car”. Several: “woman, surfboard”.'
+          : wf?.task === 'reframe' ? 'Name what the frame should follow: “woman”, “surfer”, “car”…'
+          : card.origin.kind === 'selection' ? 'Describe the change: “replace the sky with a stormy sunset”, “add a red umbrella”…'
           : card.origin.kind === 'marker' || wf?.output === 'video' ? 'Describe the shot: subject, action, camera, light…' : 'Describe the image: subject, setting, light, style…'}
         onChange={(e) => { dirty.current = true; setText(e.target.value); }}
         onBlur={save}
@@ -201,7 +204,7 @@ function Shot({ card, wf }: { card: CardView; wf?: WorkflowInfo }) {
         </p>
       </div>
       {wf?.bindings.seed && <Seed card={card} />}
-      {(wf?.params ?? []).map((p) => <Param key={p.ref} card={card} refId={p.ref} label={p.label} />)}
+      {(wf?.params ?? []).map((p) => <Param key={p.ref} card={card} refId={p.ref} label={p.label} options={p.options} />)}
     </Section>
   );
 }
@@ -221,8 +224,18 @@ function Seed({ card }: { card: CardView }) {
   );
 }
 
-function Param({ card, refId, label }: { card: CardView; refId: string; label: string }) {
+function Param({ card, refId, label, options }: { card: CardView; refId: string; label: string; options?: string[] }) {
   const value = card.params[refId];
+  if (options?.length) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="w-14 text-[11px] text-ink-400">{label}</span>
+        <select className="field" value={String(value ?? options[0])} onChange={(e) => act(api.update(card.id, { params: { [refId]: e.target.value } }))}>
+          {options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </div>
+    );
+  }
   if (typeof value === 'boolean' || /enhanc|switch|enable/i.test(label)) {
     const on = value === true;
     return (
@@ -248,7 +261,8 @@ function Versions({ card }: { card: CardView }) {
         {[...card.versions].reverse().map((v) => {
           const active = v.n === card.activeVersion;
           return (
-            <button key={v.n} onClick={() => !active && act(api.version(card.id, v.n), `v${v.n} is now in the comp`)}
+            <button key={v.n} title={v.compId !== undefined ? 'Opens this version\'s comp in EffectCraft' : undefined}
+              onClick={() => (!active || v.compId !== undefined) && act(api.version(card.id, v.n), v.compId !== undefined ? `v${v.n}: its comp is open in EffectCraft` : `v${v.n} is now in the comp`)}
               className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left transition ${active ? 'border-accent/60 bg-accent-soft' : 'border-ink-800 hover:border-ink-600'}`}>
               <span className={`font-mono text-[11px] ${active ? 'text-accent' : 'text-ink-300'}`}>v{String(v.n).padStart(3, '0')}</span>
               <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink-200" title={v.prompt}>{v.prompt || '—'}</span>
@@ -269,6 +283,7 @@ function Versions({ card }: { card: CardView }) {
 
 function Actions({ card }: { card: CardView }) {
   const busy = card.status === 'running' || card.status === 'queued';
+  const seeded = !!useUi((u) => u.server!.workflows.find((w) => w.id === card.workflowId))?.bindings.seed;
   return (
     <div className="flex shrink-0 items-center gap-2 border-t border-ink-800 p-3">
       {busy ? (
@@ -278,7 +293,7 @@ function Actions({ card }: { card: CardView }) {
           <button className="btn-primary flex-1 justify-center" disabled={card.orphan} onClick={() => act(api.generate([card.id]))}>
             <Icon name="play" className="h-3 w-3" />{card.versions.length ? 'New version' : 'Generate'} <Kbd>G</Kbd>
           </button>
-          {card.versions.length > 0 && (
+          {card.versions.length > 0 && seeded && (
             <button className="btn-outline" disabled={card.orphan} title="New version with a fresh random seed (V)"
               onClick={async () => { await act(api.update(card.id, { seed: null })); await act(api.generate([card.id])); }}>
               <Icon name="dice" />Vary <Kbd>V</Kbd>

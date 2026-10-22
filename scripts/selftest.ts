@@ -9,7 +9,10 @@
  */
 
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { deflateSync } from 'node:zlib';
+import { decodePngGrey } from '../core/lib/png.ts';
+import { ASPECTS, planReframe, simplify, subjectOf } from '../core/reframe/plan.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +20,7 @@ import type { ObjectInfo } from '../core/comfy/types.ts';
 import { getRef, modelFamily, planLength, planSize, resolveModels, setRef, splitRef, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import type { CardStatus } from '../core/storyboard/types.ts';
-import type { Box, CanvasHost, CanvasPlaceRequest, HostMarker, HostSnapshot, ItemInfo, PlaceRequest, TimelineHost } from '../hosts/types.ts';
+import type { Box, CanvasHost, CanvasPlaceRequest, HostMarker, HostSnapshot, ItemInfo, PlaceRequest, ReframeRequest, TimelineHost } from '../hosts/types.ts';
 import type { Settings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
@@ -64,7 +67,7 @@ for (const m of library.list()) {
   const broken = Object.entries(m.bindings).filter(([, ref]) => getRef(api, ref) === undefined);
   check(`${m.id}: every binding points at a real input`, broken.length === 0, broken.map(([k]) => k).join(', '));
   check(`${m.id}: open weights, licence named`, m.license.openWeights && m.license.weights.length > 3);
-  check(`${m.id}: has a Save node with a shiftfield prefix`, Object.values(api).some((n) => /^Save/.test(n.class_type) && String(n.inputs.filename_prefix ?? '').startsWith('shiftfield/')));
+  check(`${m.id}: has a Save node with a justae-flow prefix`, Object.values(api).some((n) => /^Save/.test(n.class_type) && String(n.inputs.filename_prefix ?? '').startsWith('justae-flow/')));
   check(`${m.id}: no partner/API nodes`, !Object.values(api).some((n) => /Api|API/.test(n.class_type)));
 }
 {
@@ -75,6 +78,51 @@ for (const m of library.list()) {
   ], links: [[1, 1, 0, 2, 0, 'INT']] };
   const conv = convertUiToApi(ui, { Thing: { input: { required: { n: ['INT', {}] } }, output_node: true } });
   check('uiconvert folds a primitive into its consumer and drops notes', conv.api['2']?.inputs.n === 7 && !conv.api['3']);
+}
+
+/* ─── Reframe maths ────────────────────────────────────────────────── */
+console.log('reframe');
+/** A grey PNG with a bright block — the shape of the masks the tracking workflow saves. */
+function maskPng(w: number, h: number, block: [number, number, number, number] | null, colour: 0 | 2 = 0): Uint8Array {
+  const ch = colour === 2 ? 3 : 1;
+  const rows: Buffer[] = [];
+  let prev = Buffer.alloc(w * ch);
+  for (let y = 0; y < h; y++) {
+    const px = Buffer.alloc(w * ch);
+    for (let x = 0; x < w; x++) {
+      const on = block && x >= block[0] && x < block[0] + block[2] && y >= block[1] && y < block[1] + block[3];
+      for (let c = 0; c < ch; c++) px[x * ch + c] = on ? 255 : 0;
+    }
+    // Alternate the Sub and Up filters so the decoder's unfiltering is exercised.
+    const filter = y % 2 === 0 ? 1 : 2;
+    const enc = Buffer.alloc(w * ch);
+    for (let i = 0; i < enc.length; i++) enc[i] = (px[i] - (filter === 1 ? (i >= ch ? px[i - ch] : 0) : prev[i])) & 255;
+    rows.push(Buffer.from([filter]), enc);
+    prev = px;
+  }
+  const chunk = (type: string, body: Buffer): Buffer => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(body.length);
+    return Buffer.concat([len, Buffer.from(type, 'latin1'), body, Buffer.alloc(4)]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = colour;
+  return new Uint8Array(Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]));
+}
+{
+  const g = decodePngGrey(maskPng(32, 18, [10, 4, 6, 8], 2));
+  const f = subjectOf(g);
+  check('PNG masks decode (RGB, Sub/Up filters) and give the subject\'s centre', g.width === 32 && f.found && Math.abs(f.cx - 13 / 32) < 1e-9 && Math.abs(f.cy - 8 / 18) < 1e-9);
+  check('an empty mask says the subject is not there', subjectOf(decodePngGrey(maskPng(8, 8, null))).found === false);
+  const moving = Array.from({ length: 48 }, (_, i) => subjectOf(decodePngGrey(maskPng(64, 36, i === 20 ? null : [8 + i, 10, 6, 16]))));
+  const plan = planReframe(moving, { width: 1344, height: 768, fps: 24 }, ASPECTS['9:16'], 'gentle');
+  check('9:16 from 1344×768 is a 432×768 comp, the clip at 100%', plan.width === 432 && plan.height === 768 && plan.axis === 'x');
+  check('the framing follows the subject (it moves right, the clip moves left)', plan.keys[0].x > plan.keys.at(-1)!.x && plan.keys.every((k) => k.y === 384));
+  check('a few keyframes, not one per frame', plan.keys.length >= 2 && plan.keys.length < 48, String(plan.keys.length));
+  check('the crop never leaves the footage', plan.keys.every((k) => k.x <= 1344 / 2 && k.x >= 432 - 1344 / 2));
+  check('a frame without the subject holds the framing', plan.found === 47);
+  check('"locked" is one still framing', planReframe(moving, { width: 1344, height: 768, fps: 24 }, ASPECTS['9:16'], 'locked').keys.length === 1);
+  check('16:9 from a vertical clip moves up and down', planReframe(moving, { width: 768, height: 1344, fps: 24 }, ASPECTS['16:9'], 'gentle').axis === 'y');
+  check('simplify keeps a straight line to its ends', JSON.stringify(simplify([0, 1, 2, 3, 4], 0.1)) === '[0,4]');
 }
 
 /* ─── Fake ComfyUI ─────────────────────────────────────────────────── */
@@ -105,15 +153,25 @@ const fake = createServer(async (req, res) => {
   if (url.pathname === '/api/prompt') {
     const p = JSON.parse(body);
     submits.push(p);
-    const isVideo = Object.values(p.prompt as Record<string, { class_type: string }>).some((n) => n.class_type === 'SaveVideo');
+    const classes = Object.values(p.prompt as Record<string, { class_type: string }>).map((n) => n.class_type);
+    const isVideo = classes.includes('SaveVideo');
+    // The tracking workflow saves one small mask per frame.
+    const track = classes.includes('SAM3_VideoTrack') && !isVideo;
+    const files = track
+      ? Array.from({ length: 12 }, (_, i) => ({ filename: `track_${String(i).padStart(5, '0')}.png`, subfolder: 'justae-flow', type: 'output' }))
+      : [{ filename: isVideo ? 'out.mp4' : 'out.png', subfolder: 'justae-flow', type: 'output' }];
     setTimeout(() => {
-      history[p.prompt_id] = { status: { status_str: 'success' }, outputs: { 9: { [isVideo ? 'images' : 'images']: [{ filename: isVideo ? 'out.mp4' : 'out.png', subfolder: 'shiftfield', type: 'output' }] } } };
+      history[p.prompt_id] = { status: { status_str: 'success' }, outputs: { 9: { images: files } } };
     }, 150);
     return json({ prompt_id: p.prompt_id });
   }
   const h = /^\/api\/history\/(.+)$/.exec(url.pathname);
   if (h) return json(history[h[1]] ? { [h[1]]: history[h[1]] } : {});
-  if (url.pathname === '/api/view') { res.writeHead(200); return res.end(Buffer.from('fake-media-bytes')); }
+  if (url.pathname === '/api/view') {
+    const t = /^track_(\d+)\.png$/.exec(url.searchParams.get('filename') ?? '');
+    res.writeHead(200);
+    return res.end(t ? maskPng(64, 36, [10 + Number(t[1]) * 3, 8, 6, 20]) : Buffer.from('fake-media-bytes'));
+  }
   res.writeHead(404); res.end();
 });
 await new Promise<void>((r) => fake.listen(0, '127.0.0.1', () => r()));
@@ -131,10 +189,13 @@ class FakeHost implements TimelineHost {
   labels: string[] = [];
   nextId = 100;
   selected: number[] = [];
+  compId = 1;
+  mattes: Array<[number, number, string]> = [];
+  reframes: ReframeRequest[] = [];
   async snapshot(): Promise<HostSnapshot> {
     return {
       app: 'effectcraft', version: 'fake', project: { path: join(projectDir, 'p.ecproj'), dirty: false },
-      comp: { id: 1, name: 'Comp', width: 1280, height: 720, fps: 24, duration: 12 },
+      comp: { id: this.compId, name: 'Comp', width: 1280, height: 720, fps: 24, duration: 12 },
       markers: this.markers.map((m, index) => ({ ...m, index })), layers: this.layers.map(({ item: _i, visible: _v, ...l }) => l),
       selectedLayers: this.selected, time: 0,
     };
@@ -146,10 +207,14 @@ class FakeHost implements TimelineHost {
   async place(r: PlaceRequest): Promise<{ itemId: number; layerId: number }> {
     const itemId = this.nextId++; const layerId = this.nextId++;
     this.items.set(itemId, { path: r.file, width: 1280, height: 704 });
-    this.layers.unshift({ id: layerId, index: 1, name: r.name, in: r.time, out: r.endTime ?? r.time + 4, start: r.time, label: 'Green', type: 'Footage', item: itemId, visible: true });
+    const at = Math.max(0, (r.index ?? 1) - 1);
+    this.layers.splice(at, 0, { id: layerId, index: 1, name: r.name, in: r.time, out: r.endTime ?? r.time + 4, start: r.sourceStart ?? r.time, label: 'Green', type: 'Footage', item: itemId, visible: true });
     this.layers.forEach((l, i) => (l.index = i + 1));
     return { itemId, layerId };
   }
+  async setTrackMatte(layer: number, matte: number, kind: string): Promise<void> { this.mattes.push([layer, matte, kind]); }
+  async buildReframe(r: ReframeRequest): Promise<{ compId: number; layerId: number }> { this.reframes.push(r); this.compId = this.nextId++; return { compId: this.compId, layerId: this.nextId++ }; }
+  async openComp(id: number): Promise<void> { this.compId = id; }
   async replaceFootage(itemId: number, file: string): Promise<void> { const it = this.items.get(itemId); if (it) it.path = file; }
   async coverComp(): Promise<void> {}
   async matchLayer(): Promise<void> {}
@@ -248,12 +313,12 @@ const err = engine.state().cards.find((c) => c.id === b.id)!;
 check('a marker cannot feed a video-input workflow — said plainly', err.status === 'error' && /needs a video/.test(err.error ?? ''));
 check('the error keeps the earlier version', err.versions.length === 1);
 check('the error is painted in the host', host.labels.some((l) => l.endsWith(':error')));
-host.selected = [host.layers.find((l) => l.name.startsWith('SF placeholder'))!.id];
+host.selected = [host.layers.find((l) => l.name.startsWith('Flow placeholder'))!.id];
 await engine.sync();
 let already = false;
 try { await engine.adoptSelectedLayers(); } catch { already = true; }
 check('a layer that already has a card is not adopted twice', already);
-host.selected = [host.layers.find((l) => l.name.startsWith('SF ·'))!.id];
+host.selected = [host.layers.find((l) => l.name.startsWith('Flow ·'))!.id];
 await engine.sync();
 const adopted = await engine.adoptSelectedLayers();
 check('a selected layer becomes a card', adopted.length === 1 && engine.state().cards.find((c) => c.id === adopted[0])?.origin.kind === 'layer');
@@ -266,7 +331,48 @@ let refused = false;
 try { engine.removeCard(err.id); } catch { refused = true; }
 check('a live marker card cannot be removed (it would come back)', refused);
 
-const sidecar = JSON.parse(readFileSync(join(projectDir, 'p.shiftfield.json'), 'utf8')) as { cards: unknown[] };
+console.log('video matte and reframe');
+const clipPath = join(projectDir, 'clip.mov');
+writeFileSync(clipPath, 'fake-clip');
+host.items.set(900, { path: clipPath, width: 1344, height: 768 });
+host.layers.push({ id: 901, index: host.layers.length + 1, name: 'clip.mov', in: 1.5, out: 5, start: 1, label: 'Aqua', type: 'Footage', item: 900, visible: true });
+host.selected = [901];
+await engine.sync();
+const [clipCard] = await engine.adoptSelectedLayers();
+await engine.updateCards([clipCard], { workflowId: 'sam3-matte', prompt: 'woman' });
+check('the matte plan says what it does', /luma track matte/.test(engine.state().cards.find((c) => c.id === clipCard)!.plan.sizeNote ?? ''));
+engine.enqueue([clipCard]);
+await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === clipCard)!.status));
+const matteCard = engine.state().cards.find((c) => c.id === clipCard)!;
+const matteLayer = host.layers.find((l) => l.id === matteCard.placed?.layerId);
+check('a subject matte finishes', matteCard.status === 'done', matteCard.error);
+check('the clip gets the matte as a luma track matte', JSON.stringify(host.mattes.at(-1)) === JSON.stringify([901, matteCard.placed?.layerId, 'luma']));
+check('the matte sits just above the clip', !!matteLayer && matteLayer.index === host.layers.find((l) => l.id === 901)!.index - 1);
+check('the matte lines up frame for frame (same start, same in and out)', matteLayer?.start === 1 && matteLayer?.in === 1.5 && matteLayer?.out === 5);
+check('the clip stays visible — the matte cuts it, nothing is hidden or deleted', host.layers.find((l) => l.id === 901)?.visible === true);
+check('the subject named in the prompt reached SAM 3', JSON.stringify(submits.at(-1)).includes('"woman"'));
+
+const clipCard2 = clipCard;
+await engine.updateCards([clipCard2], { workflowId: 'sam3-reframe', params: { '@aspect': '9:16' } });
+check('the reframe plan says what it does', /new 9:16 comp/.test(engine.state().cards.find((c) => c.id === clipCard2)!.plan.sizeNote ?? ''));
+engine.enqueue([clipCard2]);
+await until(() => engine.state().cards.find((c) => c.id === clipCard2)!.versions.length === 2 || engine.state().cards.find((c) => c.id === clipCard2)!.status === 'error');
+const rf = engine.state().cards.find((c) => c.id === clipCard2)!;
+const req = host.reframes.at(-1);
+check('a reframe finishes as a new version', rf.status === 'done' && rf.versions.length === 2, rf.error);
+check('the "@" settings never reach the graph', !JSON.stringify(submits.at(-1)).includes('@aspect'));
+check('the new comp is 9:16 at the clip\'s own pixels', req?.width === 432 && req.height === 768 && req.itemId === 900);
+check('its keyframes follow the subject (moving right → the clip moves left)', !!req && req.keys.length >= 2 && req.keys[0].x > req.keys.at(-1)!.x);
+check('the version opens its comp', rf.versions[1].compId === host.compId);
+await engine.sync();
+check('inside the new comp, the storyboard still shows the card', engine.state().cards.some((c) => c.id === clipCard2));
+await engine.selectVersion(clipCard2, 1);
+check('choosing the matte version again leaves the comp alone', host.compId !== 1);
+await host.openComp(1);
+await engine.sync();
+check('back in the source comp, the card is where it was', engine.state().cards.some((c) => c.id === clipCard2 && !c.orphan));
+
+const sidecar = JSON.parse(readFileSync(join(projectDir, 'p.justae-flow.json'), 'utf8')) as { cards: unknown[] };
 engine.stop();
 check('the storyboard is saved next to the project', Array.isArray(sidecar.cards) && sidecar.cards.length >= 3);
 setRef({}, undefined, 1);
@@ -319,11 +425,11 @@ pc.selection = [600, 40, 300, 200];
 await canvas.sync();
 const selId = await canvas.addSelectionCard();
 const sel = canvas.state().cards.find((c) => c.id === selId)!;
-check('a selection is saved as an alpha channel and becomes a card', sel.origin.kind === 'selection' && pc.channels.includes(`SF ${selId}`) && sel.workflowId === 'qwen-edit');
+check('a selection is saved as an alpha channel and becomes a card', sel.origin.kind === 'selection' && pc.channels.includes(`Flow ${selId}`) && sel.workflowId === 'qwen-edit');
 const phId = await canvas.createPlaceholder();
 const ph2 = canvas.state().cards.find((c) => c.id === phId)!;
 check('a canvas placeholder is a box over the selection', ph2.origin.kind === 'placeholder' && JSON.stringify(ph2.origin.box) === JSON.stringify([600, 40, 300, 200]));
-pc.layers.find((l) => l.name.startsWith('SF placeholder'))!.bounds = [100, 300, 400, 200];
+pc.layers.find((l) => l.name.startsWith('Flow placeholder'))!.bounds = [100, 300, 400, 200];
 await canvas.sync();
 check('moving the placeholder in the host moves the card\'s box', JSON.stringify((canvas.state().cards.find((c) => c.id === phId)!.origin as { box: Box }).box) === JSON.stringify([100, 300, 400, 200]));
 check('the plan follows the box (400×200 → 416×192)', canvas.state().cards.find((c) => c.id === phId)!.plan.width === 416);
@@ -332,12 +438,12 @@ await canvas.updateCards([phId], { prompt: 'a cabin at dawn' });
 canvas.enqueue();
 await until(() => canvas.state().cards.every((c) => c.status === 'done'));
 check('both canvas cards finish', canvas.state().cards.every((c) => c.status === 'done'), canvas.state().cards.map((c) => c.error ?? '').join(' | '));
-const selPlace = pc.placed.find((p) => p.maskChannel === `SF ${selId}`);
+const selPlace = pc.placed.find((p) => p.maskChannel === `Flow ${selId}`);
 check('a selection result covers the canvas, masked to the saved selection, feathered', !!selPlace && selPlace.fit === 'stretch' && JSON.stringify(selPlace.box) === '[0,0,1000,600]' && (selPlace.feather ?? 0) >= 4);
 check('the selection card sent the whole visible image', pc.exported.some((e) => e.startsWith('composite:')));
 const phPlace = pc.placed.find((p) => p.maskBox);
 check('a placeholder result covers its box, masked to it', !!phPlace && phPlace.fit === 'cover' && JSON.stringify(phPlace.box) === '[100,300,400,200]');
-check('the placeholder is hidden, not deleted', pc.layers.find((l) => l.name.startsWith('SF placeholder'))?.visible === false);
+check('the placeholder is hidden, not deleted', pc.layers.find((l) => l.name.startsWith('Flow placeholder'))?.visible === false);
 canvas.enqueue([selId]);
 await until(() => canvas.state().cards.find((c) => c.id === selId)!.versions.length === 2);
 const two2 = canvas.state().cards.find((c) => c.id === selId)!;

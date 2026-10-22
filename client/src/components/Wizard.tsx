@@ -17,7 +17,7 @@ export function Wizard() {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 backdrop-blur-sm">
       <div className="w-[600px] overflow-hidden rounded-xl border border-ink-700 bg-ink-900 shadow-2xl">
         <div className="flex items-center gap-2 border-b border-ink-800 px-5 py-3">
-          <span className="font-semibold">Set up Shiftfield</span>
+          <span className="font-semibold">Set up JustAE Flow</span>
           <div className="ml-auto flex items-center gap-1.5">
             {STEPS.map((t, i) => (
               <span key={t} className={`rounded-full px-2 py-0.5 text-[10.5px] ${i === step ? 'bg-accent text-ink-950' : i < step ? 'bg-ink-700 text-ink-200' : 'text-ink-500'}`}>{i + 1}. {t}</span>
@@ -56,7 +56,7 @@ function StepHost() {
     <div className="space-y-4">
       <h2 className="text-[17px] font-semibold">The AI tools, inside your open-source apps</h2>
       <p className="leading-relaxed text-ink-300">
-        Shiftfield turns the markers, placeholders, selections and layers of your project into a storyboard, generates every card on
+        JustAE Flow turns the markers, placeholders, selections and layers of your project into a storyboard, generates every card on
         <b className="text-ink-100"> your own ComfyUI</b>, and puts each result back in its place — as a new version, never over the old one.
       </p>
       <div className="grid grid-cols-2 gap-3">
@@ -87,7 +87,7 @@ function StepPhotoCraft() {
   return (
     <div className="space-y-3.5">
       <h2 className="text-[17px] font-semibold">Connect PhotoCraft</h2>
-      <p className="text-ink-300">Start PhotoCraft with its control channel. It listens on this computer only, asks for the token in the file below, and may read and write only inside its automation folder — where Shiftfield keeps the storyboard and the generated images:</p>
+      <p className="text-ink-300">Start PhotoCraft with its control channel. It listens on this computer only, asks for the token in the file below, and may read and write only inside its automation folder — where JustAE Flow keeps the storyboard and the generated images:</p>
       <CopyLine text={line} />
       <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5">
         <span className="text-ink-400">Port</span>

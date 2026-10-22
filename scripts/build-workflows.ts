@@ -14,6 +14,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SLUG } from '../core/brand.ts';
 import { ComfyClient } from '../core/comfy/client.ts';
 import type { WorkflowJson } from '../core/comfy/types.ts';
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
@@ -33,6 +34,11 @@ const LTX_LICENSE = {
   openWeights: true,
 };
 
+const SAM_LICENSE = {
+  weights: 'SAM License (Meta) — royalty-free, commercial use included; trade-control and lawful-use terms apply',
+  openWeights: true,
+};
+
 const RECIPES: Recipe[] = [
   {
     id: 'ltx25-i2v',
@@ -47,7 +53,7 @@ const RECIPES: Recipe[] = [
     sizeMultiple: 64, maxLongSide: 1536, defaults: { seconds: 5, width: 1280, height: 704 },
     params: [{ ref: '398:383.value', label: 'Prompt enhancer (Gemma)' }],
     license: LTX_LICENSE,
-    patch: (api) => { api['75'].inputs.filename_prefix = 'shiftfield/ltx25_i2v'; },
+    patch: (api) => { api['75'].inputs.filename_prefix = SLUG + '/ltx25_i2v'; },
   },
   {
     id: 'ltx25-t2v',
@@ -62,7 +68,7 @@ const RECIPES: Recipe[] = [
     sizeMultiple: 64, maxLongSide: 1536, defaults: { seconds: 5, width: 1280, height: 704 },
     params: [{ ref: '405:383.value', label: 'Prompt enhancer (Gemma)' }],
     license: LTX_LICENSE,
-    patch: (api) => { api['75'].inputs.filename_prefix = 'shiftfield/ltx25_t2v'; },
+    patch: (api) => { api['75'].inputs.filename_prefix = SLUG + '/ltx25_t2v'; },
   },
   {
     id: 'zimage-t2i',
@@ -73,7 +79,7 @@ const RECIPES: Recipe[] = [
     bindings: { prompt: '57:27.text', seed: '57:3.seed', width: '57:13.width', height: '57:13.height' },
     sizeMultiple: 32, maxLongSide: 2048, defaults: { width: 1024, height: 1024 },
     license: { weights: 'Apache-2.0 (Tongyi-MAI Z-Image-Turbo)', openWeights: true },
-    patch: (api) => { api['9'].inputs.filename_prefix = 'shiftfield/zimage'; },
+    patch: (api) => { api['9'].inputs.filename_prefix = SLUG + '/zimage'; },
   },
   {
     id: 'seedvr2-upscale',
@@ -84,7 +90,7 @@ const RECIPES: Recipe[] = [
     bindings: { video: '73.file', seed: '66:54.seed' },
     params: [{ ref: '66:57.resize_type.multiplier', label: 'Scale' }],
     license: { weights: 'Apache-2.0 (ByteDance Seed SeedVR2)', openWeights: true },
-    patch: (api) => { api['76'].inputs.filename_prefix = 'shiftfield/seedvr2'; },
+    patch: (api) => { api['76'].inputs.filename_prefix = SLUG + '/seedvr2'; },
   },
   {
     id: 'birefnet-rmbg',
@@ -96,7 +102,7 @@ const RECIPES: Recipe[] = [
     license: { weights: 'MIT (BiRefNet)', openWeights: true },
     patch: (api) => {
       // The template only previews; a save is what can be downloaded and placed.
-      api['18'] = { class_type: 'SaveImage', inputs: { images: ['19:16', 0], filename_prefix: 'shiftfield/rmbg' }, _meta: { title: 'Save Image' } };
+      api['18'] = { class_type: 'SaveImage', inputs: { images: ['19:16', 0], filename_prefix: SLUG + '/rmbg' }, _meta: { title: 'Save Image' } };
       delete api['20'];
     },
   },
@@ -109,7 +115,7 @@ const RECIPES: Recipe[] = [
     bindings: { prompt: '170:151.prompt', image: '41.image', seed: '170:169.seed' },
     params: [{ ref: '170:168.value', label: 'Lightning LoRA (4 steps, faster)' }],
     license: { weights: 'Apache-2.0 (Qwen-Image-Edit-2511; Lightning LoRA by lightx2v, Apache-2.0)', openWeights: true },
-    patch: (api) => { api['195'].inputs.filename_prefix = 'shiftfield/qwen_edit'; },
+    patch: (api) => { api['195'].inputs.filename_prefix = SLUG + '/qwen_edit'; },
   },
   {
     id: 'seedvr2-upscale-image',
@@ -120,9 +126,60 @@ const RECIPES: Recipe[] = [
     bindings: { image: '1.image', seed: '66:54.seed' },
     params: [{ ref: '66:57.resize_type.multiplier', label: 'Scale' }],
     license: { weights: 'Apache-2.0 (ByteDance Seed SeedVR2)', openWeights: true },
-    patch: (api) => { api['9'].inputs.filename_prefix = 'shiftfield/seedvr2_image'; },
+    patch: (api) => { api['9'].inputs.filename_prefix = SLUG + '/seedvr2_image'; },
+  },
+  {
+    id: 'sam3-matte',
+    template: 'utility_video_segment_sam3',
+    title: 'SAM 3 · Subject Matte',
+    description: 'Tracks what the prompt names through the clip and cuts it out with a luma track matte; the clip itself is untouched.',
+    task: 'matte-video', hosts: ['effectcraft'], output: 'video', input: 'video',
+    bindings: { video: '115.file', prompt: '114:100.text' },
+    params: [{ ref: '116.max_objects', label: 'Subjects' }, { ref: '116.detection_threshold', label: 'Threshold' }],
+    license: SAM_LICENSE,
+    patch: (api) => {
+      samTrack(api, 4);
+      api['118'] = { class_type: 'MaskToImage', inputs: { mask: ['117', 0] }, _meta: { title: 'Convert Mask to Image' } };
+      api['119'] = { class_type: 'CreateVideo', inputs: { images: ['118', 0], fps: ['114:104', 2] }, _meta: { title: 'Create Video' } };
+      api['120'] = { class_type: 'SaveVideo', inputs: { video: ['119', 0], filename_prefix: SLUG + '/sam3_matte', format: 'auto', 'format.codec': 'auto' }, _meta: { title: 'Save Video' } };
+    },
+  },
+  {
+    id: 'sam3-reframe',
+    template: 'utility_video_segment_sam3',
+    title: 'SAM 3 · Reframe',
+    description: 'Follows what the prompt names and builds a new comp in another aspect ratio, framed on it with keyframes you can edit.',
+    task: 'reframe', hosts: ['effectcraft'], output: 'image', input: 'video',
+    bindings: { video: '115.file', prompt: '114:100.text' },
+    params: [
+      { ref: '@aspect', label: 'Aspect', options: ['9:16', '4:5', '1:1', '16:9'] },
+      { ref: '@smooth', label: 'Smoothing', options: ['gentle', 'steady', 'locked'] },
+    ],
+    license: SAM_LICENSE,
+    patch: (api) => {
+      samTrack(api, 1);
+      // A small mask per frame is all the framing needs: where the subject is, not what it looks like.
+      api['118'] = { class_type: 'MaskToImage', inputs: { mask: ['117', 0] }, _meta: { title: 'Convert Mask to Image' } };
+      api['119'] = { class_type: 'ImageScale', inputs: { image: ['118', 0], upscale_method: 'area', width: 160, height: 0, crop: 'disabled' }, _meta: { title: 'Upscale Image' } };
+      api['120'] = { class_type: 'SaveImage', inputs: { images: ['119', 0], filename_prefix: SLUG + '/sam3_track' }, _meta: { title: 'Save Image' } };
+    },
   },
 ];
+
+/**
+ * The template detects frame by frame and only previews; tracking keeps one
+ * subject the same subject from frame to frame.
+ */
+function samTrack(api: WorkflowJson, maxObjects: number): void {
+  delete api['95'];
+  delete api['114:101'];
+  api['116'] = {
+    class_type: 'SAM3_VideoTrack',
+    inputs: { images: ['114:104', 0], model: ['114:102', 0], detection_threshold: 0.5, max_objects: maxObjects, detect_interval: 1, conditioning: ['114:100', 0] },
+    _meta: { title: 'SAM3 Video Track' },
+  };
+  api['117'] = { class_type: 'SAM3_TrackToMask', inputs: { track_data: ['116', 0], object_indices: '' }, _meta: { title: 'SAM3 Track to Mask' } };
+}
 
 function templateModels(ui: unknown): ModelFile[] {
   const w = ui as { nodes?: unknown[]; definitions?: { subgraphs?: Array<{ nodes?: unknown[] }> } };
@@ -152,7 +209,7 @@ for (const r of RECIPES) {
   const api = conv.api;
   r.patch?.(api);
   const absent = missingNodes(api, objectInfo);
-  for (const [k, ref] of Object.entries(r.bindings)) {
+  for (const [k, ref] of [...Object.entries(r.bindings), ...(r.params ?? []).filter((p) => !p.ref.startsWith('@')).map((p) => [p.label, p.ref] as const)]) {
     const dot = ref.indexOf('.', ref.lastIndexOf(':') + 1);
     const node = api[ref.slice(0, dot)];
     if (!node || !(ref.slice(dot + 1) in node.inputs)) { console.error(`✖ ${r.id}: binding ${k} → ${ref} not in graph`); failed++; }

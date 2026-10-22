@@ -1,12 +1,12 @@
-Shiftfield
+JustAE Flow
 Copyright (c) 2026 <AUTHOR — to be filled in>
 
 This program is free software: you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 3, as published by the Free
 Software Foundation (see LICENSE). It is distributed WITHOUT ANY WARRANTY;
 without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. The project name and logo are not covered by the code
-license; see TRADEMARKS.md.
+PARTICULAR PURPOSE. The project name and the JustAE logo are not covered by the
+code license; see TRADEMARKS.md.
 
 The third-party material listed below keeps its own licence (MIT and
 Apache-2.0, both compatible with GPL-3.0).
@@ -20,9 +20,11 @@ workflows/*.api.json
   0.11.76, License: MIT. Templates used: video_ltx2_5_i2v, video_ltx2_5_t2v,
   image_z_image_turbo, utility_seedvr2_3b_int8_upscale_video,
   utility_birefnet_remove_background, image_qwen_image_edit_2511_int8,
-  utility_seedvr2_3b_int8_upscale_image. Changes: converted to the API format;
-  output filename prefixes set; in the BiRefNet graph, the preview node is
-  replaced by a save node.
+  utility_seedvr2_3b_int8_upscale_image, utility_video_segment_sam3. Changes:
+  converted to the API format; output filename prefixes set; in the BiRefNet
+  graph, the preview node is replaced by a save node; in the two SAM 3 graphs,
+  the per-frame detection and its preview are replaced by the core tracking
+  nodes (SAM3_VideoTrack, SAM3_TrackToMask) and a save node.
 
 Model weights are NOT included. Each workflow manifest (workflows/<id>.json)
 names the files it needs, where the official template downloads them from,
@@ -32,6 +34,8 @@ and the licence of the weights:
   SeedVR2            Apache-2.0 (ByteDance Seed)
   BiRefNet           MIT
   Qwen-Image-Edit-2511 and its Lightning LoRA (lightx2v)   Apache-2.0
+  SAM 3.1            SAM License (Meta) — royalty-free, commercial use
+                     included; trade-control and lawful-use terms apply
   Gemma 4 encoders   see the model card of the files the template downloads
 Read each licence before using the outputs commercially.
 
@@ -39,9 +43,10 @@ npm dependencies (installed, not vendored): react, react-dom, zustand (MIT);
 vite, @vitejs/plugin-react, tailwindcss, postcss, autoprefixer, typescript
 (MIT / Apache-2.0) — see their own licence files under node_modules.
 
-EffectCraft and PhotoCraft are products of the ArtCraft Team. Shiftfield is an
+EffectCraft and PhotoCraft are products of the ArtCraft Team. JustAE Flow is an
 independent project that talks to them through their documented control
 channels; it is not affiliated with or endorsed by the ArtCraft Team, and it
 uses none of their marks. Higgsfield is a trademark of its owner; the name is
-used only to describe the comparison. Adobe, After Effects, Premiere Pro and
+used only to describe the comparison. JustAE and its logo belong to their
+author (see TRADEMARKS.md). Adobe, After Effects, Premiere Pro and
 Photoshop are trademarks of Adobe Inc.

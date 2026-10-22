@@ -1,0 +1,124 @@
+{
+  "115": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "drinking_unicorn.mp4"
+    },
+    "_meta": {
+      "title": "LoadVideo"
+    }
+  },
+  "116": {
+    "class_type": "SAM3_VideoTrack",
+    "inputs": {
+      "images": [
+        "114:104",
+        0
+      ],
+      "model": [
+        "114:102",
+        0
+      ],
+      "detection_threshold": 0.5,
+      "max_objects": 4,
+      "detect_interval": 1,
+      "conditioning": [
+        "114:100",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "SAM3 Video Track"
+    }
+  },
+  "117": {
+    "class_type": "SAM3_TrackToMask",
+    "inputs": {
+      "track_data": [
+        "116",
+        0
+      ],
+      "object_indices": ""
+    },
+    "_meta": {
+      "title": "SAM3 Track to Mask"
+    }
+  },
+  "118": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "117",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Convert Mask to Image"
+    }
+  },
+  "119": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "118",
+        0
+      ],
+      "fps": [
+        "114:104",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "120": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "119",
+        0
+      ],
+      "filename_prefix": "justae-flow/sam3_matte",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "114:100": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "unicorn",
+      "clip": [
+        "114:102",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "CLIPTextEncode"
+    }
+  },
+  "114:102": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sam3.1_multiplex_fp16.safetensors"
+    },
+    "_meta": {
+      "title": "CheckpointLoaderSimple"
+    }
+  },
+  "114:104": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "115",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "GetVideoComponents"
+    }
+  }
+}

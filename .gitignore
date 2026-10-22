@@ -3,7 +3,9 @@ client/dist/
 .env
 *.local.json
 # generated media and per-machine state never belong in the repo
-shiftfield-media/
+*.justae-flow/
+*.shiftfield/
+scripts/*.tmp.ts
 examples/**/*.mp4
 examples/**/*.png
 !examples/**/README.md

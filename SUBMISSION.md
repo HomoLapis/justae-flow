@@ -35,22 +35,24 @@ Open questions to settle before submitting (not answered on the rules page):
 1. **First run, 20 s** — the setup guide connects EffectCraft (`--control 9877`) and ComfyUI, test image.
 2. **Markers become a storyboard** — in EffectCraft, three markers with the shots typed as comments; the cards
    appear by themselves, in time order, each sized to the comp and timed to the next marker.
-3. **A placeholder** — <kbd>M</kbd>, move and scale it in EffectCraft: its box is the shot.
-4. **The key moment: generate the series** — select the cards, one workflow for all, <kbd>Ctrl G</kbd>. Markers
+3. **Inside EffectCraft** — the JustAE Flow panel docked in the app: the same cards, prompt, workflow, versions.
+4. **A placeholder** — <kbd>M</kbd>, move and scale it in EffectCraft: its box is the shot.
+5. **The key moment: generate the series** — select the cards, one workflow for all, <kbd>Ctrl G</kbd>. Markers
    turn yellow → cyan → green on the timeline while the cards show live previews.
-5. **The cut is assembled** — scrub the EffectCraft timeline: every clip at its marker, trimmed to the next one;
+6. **The cut is assembled** — scrub the EffectCraft timeline: every clip at its marker, trimmed to the next one;
    the placeholder filled in place, same box, same name.
-6. **Never destructive** — <kbd>V</kbd> for a new version, <kbd>Tab</kbd> to swap back; an error turns fuchsia,
+7. **Never destructive** — <kbd>V</kbd> for a new version, <kbd>Tab</kbd> to swap back; an error turns fuchsia,
    *Retry failed* picks it up.
-7. **On a layer** — select a clip → *Use selected layers* → SeedVR2 ×2 lands exactly over it; a still → BiRefNet cut-out.
-8. **Same storyboard in PhotoCraft** — switch app in Settings; select the sky, *Card from selection*, "add a striped
+8. **On a layer** — select a clip → *Use selected layers* → SeedVR2 ×2 lands exactly over it; name a subject →
+   SAM 3 cuts it out with a track matte (the clip untouched); *Reframe 9:16* → a new comp whose keyframes follow it.
+9. **Same storyboard in PhotoCraft** — switch app in Settings; select the sky, *Card from selection*, "add a striped
    balloon" → a new layer masked to the selection; a placeholder box filled with a generated image; a layer cut out.
-9. **The comparison** — the same tools are sold as a subscription inside Adobe; here they are open source,
+10. **The comparison** — the same tools are sold as a subscription inside Adobe; here they are open source,
    inside an open-source compositor, on your own GPU.
 
 ## Comparison with the Higgsfield Adobe plugin (from its official pages, read 22 Oct 2026)
 
-| | Higgsfield plugin (Premiere Pro / After Effects) | Shiftfield |
+| | Higgsfield plugin (Premiere Pro / After Effects) | JustAE Flow |
 |---|---|---|
 | Host | Adobe Premiere Pro / After Effects 2025+ (subscription) | EffectCraft (open source, MIT OR Apache-2.0) |
 | Where it runs | on Higgsfield's servers; needs an internet connection while generating | your ComfyUI — local or your own server |
@@ -60,7 +62,8 @@ Open questions to settle before submitting (not answered on the rules page):
 | Source | closed | open |
 
 Feature parity status (EffectCraft, vs the Premiere Pro / After Effects plugin): Generate AI Video ✔ · Generate AI
-Image ✔ · Upscale ✔ · Remove Background (stills) ✔ · Reframe, Draw to edit, Edit Video — not in this version.
+Image ✔ · Upscale ✔ · Remove Background (stills ✔, video subjects ✔ — SAM 3) · Reframe ✔ (SAM 3 tracking + keyframes) ·
+Draw to edit, Edit Video — not in this version.
 
 Feature parity status (PhotoCraft, vs the Photoshop plugin): Generate AI Image ✔ (placeholder) · edit inside a
 selection ✔ (generative fill) · Remove Background ✔ · Upscale ✔ · Realtime, Mockup Studio, Layer Decompose, Angles,

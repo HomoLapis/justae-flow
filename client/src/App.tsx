@@ -17,14 +17,14 @@ export function App() {
   useShortcuts();
 
   if (!server) {
-    return <div className="flex h-full items-center justify-center text-ink-400">{serverUp ? 'Loading…' : 'Connecting to the Shiftfield server…'}</div>;
+    return <div className="flex h-full items-center justify-center text-ink-400">{serverUp ? 'Loading…' : 'Connecting to the JustAE Flow server…'}</div>;
   }
   return (
     <div className="flex h-full flex-col">
       <Header />
       <Toolbar />
       <Banners />
-      {!serverUp && <div className="bg-st-error/20 px-3 py-1.5 text-[12px]">Lost the Shiftfield server — reconnecting…</div>}
+      {!serverUp && <div className="bg-st-error/20 px-3 py-1.5 text-[12px]">Lost the JustAE Flow server — reconnecting…</div>}
       <div className="flex min-h-0 flex-1">
         <main className="min-w-0 flex-1 overflow-y-auto" onClick={(e) => { if (e.target === e.currentTarget) ui.clearSelection(); }}>
           <Storyboard />

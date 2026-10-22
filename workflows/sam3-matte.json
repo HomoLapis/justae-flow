@@ -1,0 +1,42 @@
+{
+  "id": "sam3-matte",
+  "title": "SAM 3 · Subject Matte",
+  "description": "Tracks what the prompt names through the clip and cuts it out with a luma track matte; the clip itself is untouched.",
+  "task": "matte-video",
+  "hosts": [
+    "effectcraft"
+  ],
+  "output": "video",
+  "input": "video",
+  "bindings": {
+    "video": "115.file",
+    "prompt": "114:100.text"
+  },
+  "params": [
+    {
+      "ref": "116.max_objects",
+      "label": "Subjects"
+    },
+    {
+      "ref": "116.detection_threshold",
+      "label": "Threshold"
+    }
+  ],
+  "license": {
+    "weights": "SAM License (Meta) — royalty-free, commercial use included; trade-control and lawful-use terms apply",
+    "openWeights": true
+  },
+  "api": "sam3-matte.api.json",
+  "models": [
+    {
+      "name": "sam3.1_multiplex_fp16.safetensors",
+      "directory": "checkpoints",
+      "url": "https://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors"
+    }
+  ],
+  "source": {
+    "template": "utility_video_segment_sam3",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

@@ -84,6 +84,25 @@ export interface PlaceRequest {
   position?: [number, number];
   /** 1-based stack position (1 = top); the new layer goes there, the rest move down. */
   index?: number;
+  /**
+   * Comp time of the media's first frame, when the result is frame-for-frame
+   * the source clip (an upscale, a matte): the layer then starts there and is
+   * trimmed to `time`…`endTime`, so every frame lands on its source frame.
+   */
+  sourceStart?: number;
+}
+
+export interface ReframeRequest {
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  /** The footage item to frame; it goes in at 100%, from time 0. */
+  itemId: number;
+  layerName: string;
+  comment: string;
+  keys: Array<{ t: number; x: number; y: number }>;
 }
 
 interface HostBase {
@@ -119,6 +138,11 @@ export interface TimelineHost extends HostBase {
   setLayerComment(layerId: number, comment: string): Promise<void>;
   /** Point a footage item at its file's new location. */
   relink(itemId: number, path: string): Promise<void>;
+  /** `layerId` shows only where `matteLayerId` is bright (luma) or opaque (alpha). */
+  setTrackMatte(layerId: number, matteLayerId: number, kind: 'luma' | 'alpha'): Promise<void>;
+  /** A new comp holding the footage with keyed Position; it is left open. */
+  buildReframe(req: ReframeRequest): Promise<{ compId: number; layerId: number }>;
+  openComp(compId: number): Promise<void>;
 }
 
 export interface CanvasPlaceRequest {

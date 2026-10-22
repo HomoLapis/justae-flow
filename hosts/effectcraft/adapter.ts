@@ -7,16 +7,18 @@
  *   project.summary · comp.info · markers.list · markers.set (label, comment,
  *   cuePoint) · comp.addMarker · file.import · layer.addItem · layer.timing ·
  *   file.replaceFootage · file.importPlaceholder · layer.revealSource ·
- *   item.metadata · edit.label · layer.setComment · layer.rename
+ *   item.metadata · edit.label · layer.setComment · layer.rename ·
+ *   layer.setTrackMatte · comp.new · comp.open · prop.get · prop.set · prop.addKey
  *
  * plus the control method `render.frame`. The channel has no authentication
  * and listens on loopback only; the user turns it on.
  */
 
 import { copyFileSync } from 'node:fs';
+import { LEGACY_SLUG, PRODUCT, SLUG } from '../../core/brand.ts';
 import { JsonLinesClient } from '../jsonlines.ts';
 import type { CardStatus } from '../../core/storyboard/types.ts';
-import type { HostLayer, HostMarker, HostSnapshot, ItemInfo, PlaceRequest, TimelineHost } from '../types.ts';
+import type { HostLayer, HostMarker, HostSnapshot, ItemInfo, PlaceRequest, ReframeRequest, TimelineHost } from '../types.ts';
 import { HostError } from '../types.ts';
 
 /** Marker/layer label for each card state. Names are EffectCraft's own (After Effects' label set). */
@@ -29,7 +31,9 @@ export const STATUS_LABEL: Record<CardStatus, string | null> = {
   canceled: 'None',
 };
 
-export const CUE_NAME = 'shiftfield';
+export const CUE_NAME = SLUG;
+/** Markers tagged before the rename are still ours. */
+const CUE_NAMES = new Set([SLUG, LEGACY_SLUG]);
 
 interface RawMarker {
   index: number; time: number; duration: number; comment: string; label: string;
@@ -77,7 +81,7 @@ export class EffectCraftAdapter implements TimelineHost {
     const markers = await this.exec<RawMarker[]>('markers.list');
     snap.markers = markers.map((m): HostMarker => ({
       index: m.index, time: m.time, duration: m.duration, comment: m.comment, label: m.label,
-      cardId: m.cuePoint?.name === CUE_NAME ? (m.cuePoint.params?.find(([k]) => k === 'card')?.[1] ?? null) : null,
+      cardId: CUE_NAMES.has(m.cuePoint?.name ?? '') ? (m.cuePoint?.params?.find(([k]) => k === 'card')?.[1] ?? null) : null,
     }));
     return snap;
   }
@@ -108,13 +112,16 @@ export class EffectCraftAdapter implements TimelineHost {
     const imp = await this.exec<{ items: number[]; errors: unknown[] }>('file.import', { paths: [req.file] }, 120_000);
     const itemId = imp.items?.[0];
     if (itemId === undefined) throw new HostError(`EffectCraft could not import ${req.file}: ${JSON.stringify(imp.errors)}`);
+    const frameForFrame = req.sourceStart !== undefined;
     const added = await this.exec<{ layer: number }>('layer.addItem', {
-      item: itemId, time: req.time, ...(req.position ? { position: req.position } : {}),
+      item: itemId, time: frameForFrame ? req.sourceStart : req.time, ...(req.position ? { position: req.position } : {}),
       ...(req.index !== undefined ? { index: req.index } : {}),
-      ...(req.endTime !== undefined ? { duration: Math.max(0.04, req.endTime - req.time) } : {}),
+      ...(req.endTime !== undefined && !frameForFrame ? { duration: Math.max(0.04, req.endTime - req.time) } : {}),
     });
     const layerId = added.layer;
-    if (req.endTime !== undefined) {
+    if (frameForFrame) {
+      await this.exec('layer.timing', { layers: [layerId], in: req.time, ...(req.endTime !== undefined ? { out: req.endTime } : {}) }).catch(() => undefined);
+    } else if (req.endTime !== undefined) {
       await this.exec('layer.timing', { layers: [layerId], out: req.endTime }).catch(() => undefined);
     }
     await this.exec('layer.rename', { layer: layerId, name: req.name });
@@ -175,7 +182,7 @@ export class EffectCraftAdapter implements TimelineHost {
       name: req.name, width: req.width, height: req.height, frameRate: req.fps, duration: req.duration,
     });
     const added = await this.exec<{ layer: number }>('layer.addItem', { item: ph.item, time: req.time });
-    await this.exec('project.setComment', { items: [ph.item], comment: 'shiftfield placeholder' }).catch(() => undefined);
+    await this.exec('project.setComment', { items: [ph.item], comment: `${PRODUCT} placeholder` }).catch(() => undefined);
     return { itemId: ph.item, layerId: added.layer };
   }
 
@@ -221,6 +228,33 @@ export class EffectCraftAdapter implements TimelineHost {
 
   async renameLayer(layerId: number, name: string): Promise<void> {
     await this.exec('layer.rename', { layer: layerId, name });
+  }
+
+  /** EffectCraft switches the matte layer's video off itself, as After Effects does. */
+  async setTrackMatte(layerId: number, matteLayerId: number, kind: 'luma' | 'alpha'): Promise<void> {
+    await this.exec('layer.setTrackMatte', { layer: layerId, matte: matteLayerId, kind });
+  }
+
+  async buildReframe(req: ReframeRequest): Promise<{ compId: number; layerId: number }> {
+    const made = await this.exec<{ comp: number }>('comp.new', {
+      name: req.name, width: req.width, height: req.height, frameRate: req.fps, duration: req.duration, open: true,
+    });
+    const added = await this.exec<{ layer: number }>('layer.addItem', { item: req.itemId, time: 0 });
+    await this.exec('layer.rename', { layer: added.layer, name: req.layerName });
+    await this.exec('layer.setComment', { layers: [added.layer], comment: req.comment }).catch(() => undefined);
+    if (req.keys.length === 1) {
+      const k = req.keys[0];
+      await this.exec('prop.set', { layer: added.layer, path: 'transform/position', value: [k.x, k.y] });
+    } else {
+      for (const k of req.keys) {
+        await this.exec('prop.addKey', { layer: added.layer, path: 'transform/position', time: k.t, value: [k.x, k.y] });
+      }
+    }
+    return { compId: made.comp, layerId: added.layer };
+  }
+
+  async openComp(compId: number): Promise<void> {
+    await this.exec('comp.open', { comp: compId });
   }
 
   close(): void {

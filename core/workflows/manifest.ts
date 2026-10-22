@@ -10,7 +10,7 @@
 import type { ObjectInfo, WorkflowJson } from '../comfy/types.ts';
 import { snapFramesUp } from './form.ts';
 
-export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg';
+export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg' | 'matte-video' | 'reframe';
 export type MediaKind = 'image' | 'video';
 
 /** "nodeId.field" — the node id may itself contain colons (subgraph paths). */
@@ -54,8 +54,11 @@ export interface WorkflowManifest {
   /** Longest side the workflow is comfortable with; the host size is scaled down to it. */
   maxLongSide?: number;
   defaults?: { seconds?: number; width?: number; height?: number };
-  /** A few knobs worth showing on the card, beyond the bound ones. */
-  params?: Array<{ ref: FieldRef; label: string }>;
+  /**
+   * A few knobs worth showing on the card, beyond the bound ones. A ref that
+   * starts with "@" is the app's own setting, not a node field.
+   */
+  params?: Array<{ ref: FieldRef; label: string; options?: string[] }>;
   models: ModelFile[];
   source: { template: string; package: string; version: string };
   license: { weights: string; openWeights: boolean; note?: string };
@@ -71,7 +74,7 @@ export function splitRef(ref: FieldRef): { nodeId: string; field: string } {
 }
 
 export function setRef(api: WorkflowJson, ref: FieldRef | undefined, value: unknown): boolean {
-  if (!ref) return false;
+  if (!ref || ref.startsWith('@')) return false;
   const { nodeId, field } = splitRef(ref);
   const node = api[nodeId];
   if (!node) return false;

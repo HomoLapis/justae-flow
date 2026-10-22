@@ -40,6 +40,8 @@ export interface Version {
   remaps: string[];
   /** Canvas hosts: every version is its own layer; the active one is visible. */
   layerId?: number;
+  /** A reframe: every version is its own comp; choosing it opens that comp. */
+  compId?: number;
 }
 
 export interface Card {
@@ -73,7 +75,8 @@ export interface Card {
 
 export interface Sidecar {
   schema: 1;
-  app: 'shiftfield';
+  /** 'shiftfield' in storyboards written before the rename. */
+  app: 'justae-flow' | 'shiftfield';
   host: 'effectcraft' | 'photocraft';
   project: string | null;
   cards: Card[];

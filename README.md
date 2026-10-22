@@ -1,8 +1,15 @@
-# Shiftfield
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="client/public/justae-logo-white.svg">
+    <img src="client/public/justae-logo.svg" alt="JustAE" height="44">
+  </picture>
+</p>
+
+# JustAE Flow
 
 <!-- PLACEHOLDER (author): one-line tagline. -->
 
-<!-- PLACEHOLDER (author): presentation text — what Shiftfield is, why it exists, the comparison with
+<!-- PLACEHOLDER (author): presentation text — what JustAE Flow is, why it exists, the comparison with
      the subscription plugins it replaces. Keep the technical sections below as they are. -->
 
 **Generative AI inside open-source compositing and image editing, on your own ComfyUI.** Markers and placeholder
@@ -17,14 +24,16 @@ workflow and lands back in the project at its place, as a new version — never 
 
 ## What it does
 
-| In EffectCraft you… | Shiftfield… |
+| In EffectCraft you… | JustAE Flow… |
 |---|---|
 | add a **marker** and type the shot as its comment | makes it a card; generates a clip sized to the comp and timed to the next marker; places it at the marker |
 | add a **placeholder** (button or <kbd>M</kbd>) and move/scale/trim it | uses its box and length as the shot; fills the placeholder in place — the layer keeps its transform, timing and name |
-| select **footage layers** and press *Use selected layers* | upscales a clip (SeedVR2 ×2) or cuts out a still (BiRefNet), laid exactly over the source, which is switched off — not deleted |
+| select a **clip** and press *Use selected layers*, then name a subject | **cuts the subject out** (SAM 3 tracking): a matte layer above the clip becomes its luma track matte — the clip's pixels are untouched |
+| the same, with *SAM 3 · Reframe* and an aspect (9:16, 4:5, 1:1, 16:9) | **reframes** it: a new comp in that aspect, the clip at 100%, with Position keyframes that follow the subject — ordinary keyframes you can edit |
+| select **footage layers** for other workflows | upscales a clip (SeedVR2 ×2) or cuts out a still (BiRefNet), laid exactly over the source, which is switched off — not deleted |
 | select several cards | changes workflow / seed / length on all of them at once; <kbd>Ctrl G</kbd> generates them in series |
 
-| In PhotoCraft you… | Shiftfield… |
+| In PhotoCraft you… | JustAE Flow… |
 |---|---|
 | select an area and press *Card from selection* (<kbd>S</kbd>) | saves the selection in the document (an alpha channel), edits the image as the prompt says (Qwen-Image-Edit 2511) and puts the result on a new layer above, masked to the selection with a soft edge |
 | add a **placeholder** (<kbd>M</kbd>) and move/resize it | generates an image for that box (Z-Image-Turbo) on a new layer that fills it; the placeholder is hidden, not deleted |
@@ -32,11 +41,12 @@ workflow and lands back in the project at its place, as a new version — never 
 
 Always:
 
-- **Non-destructive.** Every run is a numbered version on disk; switch versions any time (<kbd>Tab</kbd> swaps the last two). In PhotoCraft every version is its own layer, the earlier ones hidden.
+- **Non-destructive.** Every run is a numbered version on disk; switch versions any time (<kbd>Tab</kbd> swaps the last two). In PhotoCraft every version is its own layer, the earlier ones hidden; a reframe version is its own comp.
 - **State in the project.** Markers and layers turn yellow (queued), cyan / seafoam (running), green (done), fuchsia (error) — the same colours as the cards.
 - **Two-way sync.** Move a marker or edit its text in EffectCraft and the card follows; edit the prompt in the card and the marker text follows.
-- **Saved with the project.** The storyboard is `<project>.shiftfield.json` next to the `.ecproj`, generated media in `<project>.shiftfield/`, with a `.job.json` per version (workflow, template, prompt, seed, models, timings).
-- **Live.** Progress per card, latent previews while sampling, cancel at any time, resume after an error or a restart.
+- **Saved with the project.** The storyboard is `<project>.justae-flow.json` next to the `.ecproj`, generated media in `<project>.justae-flow/`, with a `.job.json` per version (workflow, template, prompt, seed, models, timings).
+- **Live.** Progress per card (frame by frame while SAM 3 tracks), latent previews while sampling, cancel at any time, resume after an error or a restart.
+- **Inside the app, or in the browser.** A dockable panel in EffectCraft (Window ▸ JustAE Flow) for the everyday loop; the full storyboard at http://127.0.0.1:5199 for bulk edits, previews and settings.
 - **Guided first run.** Connect EffectCraft, connect ComfyUI, generate a test image.
 
 ## Workflows
@@ -51,12 +61,19 @@ All bundled workflows are **official ComfyUI templates** with **open weights**, 
 | `zimage-t2i` | `image_z_image_turbo` | text → image | Apache-2.0 |
 | `seedvr2-upscale` | `utility_seedvr2_3b_int8_upscale_video` | video ×2 restoration upscale | Apache-2.0 |
 | `birefnet-rmbg` | `utility_birefnet_remove_background` | still → cut-out with alpha | MIT |
+| `sam3-matte` | `utility_video_segment_sam3` | clip + subject name → tracked matte video (luma) | SAM License (Meta) |
+| `sam3-reframe` | `utility_video_segment_sam3` | clip + subject name → a small mask per frame, for the framing | SAM License (Meta) |
 | `qwen-edit` | `image_qwen_image_edit_2511_int8` | image + prompt → edited image (PhotoCraft selections) | Apache-2.0 |
 | `seedvr2-upscale-image` | `utility_seedvr2_3b_int8_upscale_image` | image restoration upscale | Apache-2.0 |
 
+The SAM 3 template detects the subject frame by frame and only previews the mask; the build replaces the detection
+with the core nodes `SAM3_VideoTrack` + `SAM3_TrackToMask` (one subject stays the same subject through the clip)
+and saves the result. The reframe itself is not done in ComfyUI: it only says where the subject is; JustAE Flow
+builds the new comp on the original footage, so nothing is resampled and the framing stays editable.
+
 Each `workflows/<id>.json` manifest names the node fields the host fills in (prompt, image, size, length, seed),
 the model files with their download URLs, and the licence. If your ComfyUI has another precision of the same
-weights (for example the LTX-2.5 transformer in nvfp4 instead of int8), Shiftfield uses it and says so on the card.
+weights (for example the LTX-2.5 transformer in nvfp4 instead of int8), JustAE Flow uses it and says so on the card.
 
 ```bash
 npm run verify:workflows -- http://127.0.0.1:8188   # what your server can run, and the URLs of what is missing
@@ -69,24 +86,35 @@ npm run verify:workflows -- http://127.0.0.1:8188   # what your server can run, 
   (Windows: `"C:\Program Files\EffectCraft\effectcraft.exe" --control 9877`). The channel listens on
   127.0.0.1 only and is off unless you start it this way.
 - **PhotoCraft 0.12 or newer** (optional, the other host), started with its control channel, a token file and an
-  automation folder — PhotoCraft may read and write files only there, so Shiftfield keeps that document's storyboard
+  automation folder — PhotoCraft may read and write files only there, so JustAE Flow keeps that document's storyboard
   and images there too:
   `photocraft --control 7878 --control-token-file <token file> --automation-read-root <folder> --automation-write-root <folder>`
-  (the setup guide prints the exact line; the token file is created by PhotoCraft and read by Shiftfield).
+  (the setup guide prints the exact line; the token file is created by PhotoCraft and read by JustAE Flow).
 - **ComfyUI 0.38 or newer** with the official templates package (it ships with ComfyUI), reachable over HTTP —
   local, on your network, or behind `comfy-api-proxy`. The LTX-2.5 workflows need a GPU with 16 GB or more.
 
 ## Install and run
 
 ```bash
-git clone <REPO_URL> shiftfield && cd shiftfield
+git clone <REPO_URL> justae-flow && cd justae-flow
 npm run setup        # npm install + build the UI + enable the pre-commit secret scan
 npm start            # → http://127.0.0.1:5199
 ```
 
 Open http://127.0.0.1:5199 — the setup guide connects EffectCraft and ComfyUI and runs a test image.
-Settings are stored in your user folder (`%APPDATA%\Shiftfield`, `~/Library/Application Support/Shiftfield`,
-`~/.config/Shiftfield`), never in the project or the repository. `.env.example` lists the variables that override them.
+Settings are stored in your user folder (`%APPDATA%\JustAE Flow`, `~/Library/Application Support/JustAE Flow`,
+`~/.config/JustAE Flow`), never in the project or the repository. `.env.example` lists the variables that override them.
+
+### The panel inside EffectCraft
+
+1. In EffectCraft: **Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network**
+   (the panel talks to the JustAE Flow server on 127.0.0.1).
+2. **File ▸ Scripts ▸ Install ScriptUI Panel…** and pick `extensions/effectcraft/JustAE Flow.jsx`.
+3. **Window ▸ JustAE Flow** opens it; dock it wherever you like.
+
+The panel lists the cards of the open comp, and has the prompt, workflow, the workflow's choices (aspect and
+smoothing for a reframe), versions, progress and the buttons to add a marker or a placeholder, use the selected
+layers, generate, stop. **↗** opens the full storyboard in the browser.
 
 ## Using it
 
@@ -94,6 +122,8 @@ Settings are stored in your user folder (`%APPDATA%\Shiftfield`, `~/Library/Appl
 2. The storyboard lists them in time order. Click a card: prompt, workflow, length, seed, start image, versions.
 3. **Generate all** (<kbd>Ctrl G</kbd>) runs every card that has a prompt and no result yet; select cards to (re)run only those.
 4. Results land at their place; generate again for a new version; pick any version to put it back in the comp.
+5. To cut out or reframe a clip: select its layer, **Use selected layers**, pick *SAM 3 · Subject Matte* or
+   *SAM 3 · Reframe*, and write the subject in a word or two (`woman`, `dog`, `red car`).
 
 | Key | Action |
 |---|---|
@@ -111,8 +141,9 @@ Settings are stored in your user folder (`%APPDATA%\Shiftfield`, `~/Library/Appl
 
 ```
  EffectCraft ──(control channel, JSON lines, 127.0.0.1:9877)──┐
-                                                               │
-                         Shiftfield server (Node, 127.0.0.1:5199)
+   └ JustAE Flow panel (ScriptUI) ──(HTTP)──┐                 │
+                                            │                 │
+                         JustAE Flow server (Node, 127.0.0.1:5199)
                          · storyboard engine: sync, queue, versions, sidecar
                          · ComfyUI client: /prompt (idempotent), /ws, /history, /view, /upload/image
                                                                │
@@ -120,20 +151,23 @@ Settings are stored in your user folder (`%APPDATA%\Shiftfield`, `~/Library/Appl
 ```
 
 ```
-core/       host-independent: ComfyUI client, workflow conversion/inspection, manifests, storyboard types
-hosts/      one adapter per host app (effectcraft: a timeline, photocraft: a canvas) behind hosts/types.ts
-server/     engine (sync, queue, generation pipeline), settings, HTTP API
-client/     the UI
-workflows/  bundled workflows: <id>.json manifest + <id>.api.json graph
-scripts/    build-workflows, verify-workflows, verify-effectcraft, selftest, scan-secrets
+core/        host-independent: ComfyUI client, workflow conversion/inspection, manifests, storyboard types,
+             reframe planning (subject per frame → smoothed, simplified keyframes)
+hosts/       one adapter per host app (effectcraft: a timeline, photocraft: a canvas) behind hosts/types.ts
+server/      engine (sync, queue, generation pipeline), settings, HTTP API
+client/      the browser UI
+extensions/  the EffectCraft panel
+workflows/   bundled workflows: <id>.json manifest + <id>.api.json graph
+scripts/     build-workflows, verify-workflows, verify-effectcraft, selftest, scan-secrets
 ```
 
 EffectCraft commands used (all documented by the app — `effectcraft-cli commands --json` — and checked live on 0.11.1):
 `project.summary`, `comp.info`, `markers.list`, `markers.set` (comment, label, cue point), `comp.addMarker`,
 `file.import`, `layer.addItem`, `layer.timing`, `layer.rename`, `layer.setComment`, `edit.label`,
 `file.importPlaceholder`, `file.replaceFootage`, `layer.revealSource`, `item.metadata`, `project.setComment`,
-`prop.get`, `prop.set`, `layer.setSwitch`, `footage.relink`, `app.capabilities`, plus the control method
-`render.frame`. A marker's card id is kept in the marker's cue point, so a marker can move and be edited freely.
+`prop.get`, `prop.set`, `prop.addKey`, `layer.setSwitch`, `layer.setTrackMatte`, `comp.new`, `comp.open`,
+`footage.relink`, `app.capabilities`, plus the control method `render.frame`. A marker's card id is kept in the
+marker's cue point, so a marker can move and be edited freely.
 
 PhotoCraft commands used (checked against the running app at every connection with `engine.commands`, and live on
 0.12.0): `document.inspect`, `layer.list`, `layer.new.layer`, `edit.fill`, `select.rect`, `select.saveSelection`,
@@ -146,14 +180,14 @@ into the document.
 
 ## Privacy and network
 
-Shiftfield listens on 127.0.0.1 only. It talks to two things, both of your choosing: your EffectCraft or PhotoCraft
+JustAE Flow listens on 127.0.0.1 only. It talks to two things, both of your choosing: your EffectCraft or PhotoCraft
 (loopback; PhotoCraft also with its token) and your ComfyUI. No telemetry, no account, no other network access.
 
 ## Development
 
 ```bash
 npm run typecheck
-npm run selftest                 # offline: fake ComfyUI + in-memory hosts, end to end (91 checks)
+npm run selftest                 # offline: fake ComfyUI + in-memory hosts, end to end
 npm run verify:workflows         # bundled workflows against a live ComfyUI (read-only)
 npm run verify:effectcraft       # the storyboard as the engine sees a live EffectCraft
 npm run workflows:build          # regenerate workflows/*.api.json from the official templates
@@ -167,13 +201,19 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
 - PhotoCraft's control channel has no way to pass pixels in memory, so images cross through files in its automation
   folder; a selection edit sends the whole visible image and keeps the change to the selection with a mask.
 - Image-to-video uses the frame under the marker as the comp shows it; attach an image to a card to use another.
-- Upscale and background removal take their input from the layer's own file; a placeholder or a marker cannot feed them.
+- Upscale, background removal, subject matte and reframe take their input from the layer's own file; a placeholder or
+  a marker cannot feed them.
+- The subject matte follows the subject's shape as SAM 3 sees it; hair and motion blur get a hard edge. Refine it in
+  EffectCraft (the matte is an ordinary layer) or generate a new version with another subject word.
+- Reframe crops; it does not invent pixels. A 9:16 comp from 16:9 footage is as tall as the footage (1080 px from
+  1080p). Upscale the clip first (SeedVR2) for a larger delivery size.
 - Live previews depend on the model: ComfyUI sends them while sampling (`preview_method: auto` per job).
+- Storyboards written under the project's former name (`*.shiftfield.json`) are still read, where they are.
 
 ## Licence
 
-Shiftfield is free software under the **GNU General Public License v3.0** ([LICENSE](LICENSE)). Third-party
-material and model licences are listed in [NOTICE](NOTICE); the name and logo are covered by
+JustAE Flow is free software under the **GNU General Public License v3.0** ([LICENSE](LICENSE)). Third-party
+material and model licences are listed in [NOTICE](NOTICE); the name and the JustAE logo are covered by
 [TRADEMARKS.md](TRADEMARKS.md), not by the code licence.
 
 ---

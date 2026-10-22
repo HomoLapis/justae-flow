@@ -15,9 +15,9 @@ export function Header() {
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-ink-800 bg-ink-900 px-3">
-      <div className="flex items-center gap-2 pr-2">
-        <svg viewBox="0 0 32 32" className="h-6 w-6"><rect width="32" height="32" rx="7" fill="#1c2025" /><path d="M8 22 L16 8 L24 22" stroke="#7c9cff" strokeWidth="3" fill="none" strokeLinejoin="round" /><circle cx="16" cy="20" r="2.5" fill="#5fd37a" /></svg>
-        <span className="text-[14px] font-semibold tracking-tight">Shiftfield</span>
+      <div className="flex items-center gap-2 pr-2" title="JustAE Flow">
+        <img src="/justae-logo-white.svg" alt="JustAE" className="h-[18px] w-auto" />
+        <span className="text-[14px] font-semibold tracking-tight">Flow</span>
       </div>
 
       <div className="flex min-w-0 items-center gap-1.5 text-ink-300">
@@ -88,7 +88,7 @@ export function Toolbar() {
       )}
       <button className="btn-ghost" disabled={disabled || s.host.selectedLayers.length === 0} title={`Turn the layers selected in ${s.host.app} into cards (${canvas ? 'remove background, upscale' : 'upscale, remove background'}…)`} onClick={() => act(api.adopt())}><Icon name="layers" />Use selected layers{s.host.selectedLayers.length ? ` (${s.host.selectedLayers.length})` : ''}</button>
       <div className="mx-2 h-5 w-px bg-ink-700" />
-      <span className="text-ink-400">{counts.all} cards · {counts.done} done{counts.error ? ` · ${counts.error} failed` : ''}</span>
+      <span className="text-ink-400">{counts.all} card{counts.all === 1 ? '' : 's'} · {counts.done} done{counts.error ? ` · ${counts.error} failed` : ''}</span>
       {errorIds.length > 0 && <button className="btn-ghost text-st-error" onClick={() => act(api.generate(errorIds))}><Icon name="refresh" />Retry failed</button>}
       <div className="ml-auto flex items-center gap-1">
         <button className="btn-ghost" onClick={selectAll} title="Select all cards (Ctrl+A)">Select all</button>

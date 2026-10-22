@@ -124,6 +124,8 @@ function CardTile({ card, n }: { card: CardView; n: number }) {
       <div className="space-y-1.5 p-2.5">
         <p className={`line-clamp-2 min-h-[2.6em] leading-snug ${card.prompt ? 'text-ink-100' : 'italic text-ink-500'}`}>
           {card.prompt || (wf?.task.startsWith('upscale') || wf?.task === 'remove-bg' ? 'No prompt needed'
+            : wf?.task === 'matte-video' ? 'Name the subject to cut out'
+            : wf?.task === 'reframe' ? 'Name the subject the frame follows'
             : card.origin.kind === 'selection' ? 'Describe the change for the selected area'
             : canvas ? 'Describe the image for this box' : 'Write the shot — here or as the marker text')}
         </p>
@@ -134,7 +136,7 @@ function CardTile({ card, n }: { card: CardView; n: number }) {
         </div>
         {card.status === 'error' && <p className="line-clamp-2 text-[11px] text-st-error" title={card.error}>{card.error}</p>}
         {card.orphan && <p className="text-[11px] text-ink-400">Its {card.origin.kind === 'selection' ? 'saved selection' : card.origin.kind} is gone from the {canvas ? 'document' : 'comp'} — versions are kept.</p>}
-        {version && card.status !== 'error' && <p className="text-[10.5px] text-ink-500">v{version.n} of {card.versions.length} · {fmtDuration(version.elapsedMs)} · seed {version.seed}</p>}
+        {version && card.status !== 'error' && <p className="text-[10.5px] text-ink-500">v{version.n} of {card.versions.length} · {fmtDuration(version.elapsedMs)}{version.seed !== null ? ` · seed ${version.seed}` : ''}</p>}
       </div>
     </div>
   );

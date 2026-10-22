@@ -1,5 +1,5 @@
 /**
- * Shiftfield's local server: the storyboard engine plus a small HTTP API for
+ * JustAE Flow's local server: the storyboard engine plus a small HTTP API for
  * the UI. Listens on loopback only; nothing here talks to anything the user
  * did not configure (their host app, their ComfyUI).
  *
@@ -7,20 +7,29 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ComfyClient } from '../core/comfy/client.ts';
-import { loadSettings, type Settings } from './config.ts';
+import { PRODUCT } from '../core/brand.ts';
+import { configDir, loadSettings, type Settings } from './config.ts';
 import { Engine, makeHost } from './engine.ts';
 import { WorkflowLibrary } from './library.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = Number(process.env.SHIFTFIELD_PORT ?? 5199);
+const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
 const settings = loadSettings(root);
 const library = new WorkflowLibrary(join(root, 'workflows'));
 const engine = new Engine(settings, library);
 const dist = join(root, 'client', 'dist');
+
+/**
+ * A local page that sends the browser to the full storyboard. Host scripts may
+ * not run system commands, but they may open a file with its default app
+ * (File.execute) — and an .html file opens in the browser.
+ */
+const openPage = join(configDir(), `Open ${PRODUCT}.html`);
+writeFileSync(openPage, `<!doctype html><meta charset="utf-8"><title>${PRODUCT}</title><meta http-equiv="refresh" content="0;url=http://127.0.0.1:${PORT}/"><a href="http://127.0.0.1:${PORT}/">Open ${PRODUCT}</a>\n`);
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
@@ -83,6 +92,24 @@ engine.onChange(() => {
 type Handler = (req: IncomingMessage, res: ServerResponse, m: RegExpExecArray) => Promise<void> | void;
 const routes: Array<[string, RegExp, Handler]> = [
   ['GET', /^\/api\/state$/, (_q, res) => send(res, 200, engine.state())],
+  // A small view for the panel inside the host app: it polls this every second or two over a raw socket.
+  ['GET', /^\/api\/panel$/, (_q, res) => {
+    const s = engine.state();
+    send(res, 200, {
+      host: { ok: s.host.ok, app: s.host.app, kind: s.host.kind, comp: s.host.comp?.name ?? null, error: s.host.error ?? null, selection: !!s.host.selection, selectedLayers: s.host.selectedLayers.length },
+      comfy: { online: s.comfy.online, version: s.comfy.version ?? null },
+      queue: { running: s.queue.running, waiting: s.queue.pending.length, ready: s.queue.ready },
+      workflows: s.workflows.map((w) => ({ id: w.id, title: w.title, options: (w.params ?? []).filter((p) => p.options?.length) })),
+      cards: s.cards.map((c, i) => ({
+        id: c.id, n: i + 1, kind: c.origin.kind, at: c.at, status: c.status, prompt: c.prompt, workflowId: c.workflowId, params: c.params,
+        promptless: !s.workflows.find((w) => w.id === c.workflowId)?.bindings.prompt,
+        box: c.origin.kind !== 'marker' && c.origin.box ? [Math.round(c.origin.box[2]), Math.round(c.origin.box[3])] : null,
+        progress: c.progress ? { phase: c.progress.phase, value: c.progress.value, max: c.progress.max } : null,
+        versions: c.versions.map((v) => v.n), active: c.activeVersion, error: c.error ?? null, orphan: !!c.orphan,
+      })),
+      openPage,
+    });
+  }],
   ['GET', /^\/api\/events$/, (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.write(`event: state\ndata: ${JSON.stringify(engine.state())}\n\n`);
@@ -175,7 +202,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Shiftfield  →  http://127.0.0.1:${PORT}`);
+  console.log(`${PRODUCT}  →  http://127.0.0.1:${PORT}`);
   console.log(settings.host === 'photocraft'
     ? `  host: PhotoCraft on 127.0.0.1:${settings.photocraftPort} (root ${settings.photocraftRoot}) · ComfyUI: ${settings.comfyUrl}`
     : `  host: EffectCraft on 127.0.0.1:${settings.effectcraftPort} · ComfyUI: ${settings.comfyUrl}`);

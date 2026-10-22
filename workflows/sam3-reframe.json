@@ -1,0 +1,53 @@
+{
+  "id": "sam3-reframe",
+  "title": "SAM 3 · Reframe",
+  "description": "Follows what the prompt names and builds a new comp in another aspect ratio, framed on it with keyframes you can edit.",
+  "task": "reframe",
+  "hosts": [
+    "effectcraft"
+  ],
+  "output": "image",
+  "input": "video",
+  "bindings": {
+    "video": "115.file",
+    "prompt": "114:100.text"
+  },
+  "params": [
+    {
+      "ref": "@aspect",
+      "label": "Aspect",
+      "options": [
+        "9:16",
+        "4:5",
+        "1:1",
+        "16:9"
+      ]
+    },
+    {
+      "ref": "@smooth",
+      "label": "Smoothing",
+      "options": [
+        "gentle",
+        "steady",
+        "locked"
+      ]
+    }
+  ],
+  "license": {
+    "weights": "SAM License (Meta) — royalty-free, commercial use included; trade-control and lawful-use terms apply",
+    "openWeights": true
+  },
+  "api": "sam3-reframe.api.json",
+  "models": [
+    {
+      "name": "sam3.1_multiplex_fp16.safetensors",
+      "directory": "checkpoints",
+      "url": "https://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors"
+    }
+  ],
+  "source": {
+    "template": "utility_video_segment_sam3",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

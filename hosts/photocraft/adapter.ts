@@ -21,6 +21,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { PRODUCT, SLUG } from '../../core/brand.ts';
 import type { CardStatus } from '../../core/storyboard/types.ts';
 import { JsonLinesClient } from '../jsonlines.ts';
 import type { Box, CanvasHost, CanvasPlaceRequest, HostLayer, HostSnapshot } from '../types.ts';
@@ -92,7 +93,7 @@ export class PhotoCraftAdapter implements CanvasHost {
     const list = await this.rpc.call<Array<{ id: string }>>('engine.commands', {});
     const have = new Set(list.map((c) => c.id));
     const missing = REQUIRED.filter((c) => !have.has(c));
-    if (missing.length) throw new HostError(`This PhotoCraft lacks commands Shiftfield needs: ${missing.join(', ')}. Update PhotoCraft.`);
+    if (missing.length) throw new HostError(`This PhotoCraft lacks commands ${PRODUCT} needs: ${missing.join(', ')}. Update PhotoCraft.`);
     this.checked = true;
   }
 
@@ -135,7 +136,7 @@ export class PhotoCraftAdapter implements CanvasHost {
   async exportLayer(layerId: number, rel: string): Promise<void> {
     const target = await this.activeIndex();
     // The layer alone, on a canvas the size of this one, in a scratch document.
-    await this.exec('layer.duplicate', { layer: layerId, document: 'new', documentName: 'shiftfield-export' });
+    await this.exec('layer.duplicate', { layer: layerId, document: 'new', documentName: `${SLUG}-export` });
     const temp = await this.activeIndex();
     try {
       await this.rpc.call('app.save', { path: rel }, 120_000);

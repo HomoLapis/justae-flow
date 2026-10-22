@@ -35,17 +35,17 @@ export function Banners() {
       )}
       {!s.comfy.online && (
         <Banner tone="error" actions={<button className="btn-outline" onClick={() => set({ settingsOpen: true })}>Settings</button>}>
-          <b>ComfyUI is not reachable</b> at <code className="font-mono text-[11px]">{s.comfy.url}</code>. Start it, or point Shiftfield at another server.
+          <b>ComfyUI is not reachable</b> at <code className="font-mono text-[11px]">{s.comfy.url}</code>. Start it, or point JustAE Flow at another server.
         </Banner>
       )}
       {s.queue.recovered > 0 && (
         <Banner tone="warn" actions={<><button className="btn-primary" onClick={() => act(api.resume())}>Resume</button><button className="btn-ghost" onClick={() => act(api.discard())}>Discard</button></>}>
-          {s.queue.recovered} card{s.queue.recovered > 1 ? 's were' : ' was'} queued when Shiftfield last stopped.
+          {s.queue.recovered} card{s.queue.recovered > 1 ? 's were' : ' was'} queued when JustAE Flow last stopped.
         </Banner>
       )}
       {s.host.ok && s.host.kind === 'timeline' && s.host.unsaved && s.cards.length > 0 && (
         <Banner tone="info">
-          This EffectCraft project is not saved yet: the storyboard is kept in <code className="font-mono text-[11px]">Documents/Shiftfield</code> and moves next to the project as soon as you save it.
+          This EffectCraft project is not saved yet: the storyboard is kept in <code className="font-mono text-[11px]">Documents/JustAE Flow</code> and moves next to the project as soon as you save it.
         </Banner>
       )}
       {s.notice && (

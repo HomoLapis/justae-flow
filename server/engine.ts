@@ -20,10 +20,13 @@ import type { ObjectInfo, OutputFile, WorkflowJson } from '../core/comfy/types.t
 import { getRef, planLength, planSize, resolveModels, setRef, type ModelCheck, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { newCardId, type Box, type Card, type CardStatus, type Sidecar, type Version } from '../core/storyboard/types.ts';
 import { layerNameFromPrompt, slugFromPrompt } from '../core/lib/filenames.ts';
+import { decodePngGrey } from '../core/lib/png.ts';
+import { ASPECTS, planReframe, subjectOf, type ReframePlan, type Smoothing, type SubjectFrame } from '../core/reframe/plan.ts';
 import { EffectCraftAdapter } from '../hosts/effectcraft/adapter.ts';
 import { PhotoCraftAdapter } from '../hosts/photocraft/adapter.ts';
 import type { CanvasHost, HostAdapter, HostSnapshot, TimelineHost } from '../hosts/types.ts';
 import { HostError } from '../hosts/types.ts';
+import { LEGACY_PRODUCT_DIR, LEGACY_SLUG, PRODUCT, SLUG, TAG } from '../core/brand.ts';
 import { saveSettings, type Settings } from './config.ts';
 import type { LibraryEntry, WorkflowLibrary } from './library.ts';
 
@@ -66,7 +69,7 @@ export class Engine {
   private library: WorkflowLibrary;
   private comfy: ComfyClient;
   private host: HostAdapter;
-  private sidecar: Sidecar = { schema: 1, app: 'shiftfield', host: 'effectcraft', project: null, cards: [] };
+  private sidecar: Sidecar = { schema: 1, app: SLUG, host: 'effectcraft', project: null, cards: [] };
   private sidecarPath = '';
   mediaDir = '';
   private snap: HostSnapshot | null = null;
@@ -74,7 +77,7 @@ export class Engine {
   private comfyHealth: ComfyHealth = { online: false, message: 'Not checked yet.' };
   private objectInfo: ObjectInfo | null = null;
   private markerIndex = new Map<string, number>();
-  private layerOf = new Map<string, { in: number; out: number; box?: Box | null }>();
+  private layerOf = new Map<string, { in: number; out: number; start: number; box?: Box | null }>();
   private queue: string[] = [];
   private running: { cardId: string; jobId: string | null; stop: (() => void) | null; cancelled: boolean } | null = null;
   private paused = false;
@@ -173,16 +176,23 @@ export class Engine {
    * root, the only folder it may read results from.
    */
   private locate(projectPath: string | null, docName: string | null): { sidecar: string; media: string } {
+    // A storyboard written under the project's former name stays where it is:
+    // the host project's footage points into its media folder.
+    const pick = (dir: string, stem: string) => {
+      const legacy = { sidecar: join(dir, `${stem}.${LEGACY_SLUG}.json`), media: join(dir, `${stem}.${LEGACY_SLUG}`) };
+      const current = { sidecar: join(dir, `${stem}.${SLUG}.json`), media: join(dir, `${stem}.${SLUG}`) };
+      return !existsSync(current.sidecar) && existsSync(legacy.sidecar) ? legacy : current;
+    };
     if (this.host.kind === 'canvas') {
       const stem = (projectPath ? basename(projectPath, extname(projectPath)) : (docName ?? 'Untitled')).replace(/[<>:"/\\|?*]+/g, '_');
-      return { sidecar: join(this.host.root, `${stem}.shiftfield.json`), media: join(this.host.root, `${stem}.shiftfield`) };
+      return pick(this.host.root, stem);
     }
-    if (projectPath) {
-      const stem = basename(projectPath, extname(projectPath));
-      return { sidecar: join(dirname(projectPath), `${stem}.shiftfield.json`), media: join(dirname(projectPath), `${stem}.shiftfield`) };
-    }
-    const dir = join(homedir(), 'Documents', 'Shiftfield', 'Unsaved project');
-    return { sidecar: join(dir, 'storyboard.shiftfield.json'), media: join(dir, 'media') };
+    if (projectPath) return pick(dirname(projectPath), basename(projectPath, extname(projectPath)));
+    const legacyDir = join(homedir(), 'Documents', LEGACY_PRODUCT_DIR, 'Unsaved project');
+    const legacy = { sidecar: join(legacyDir, `storyboard.${LEGACY_SLUG}.json`), media: join(legacyDir, 'media') };
+    const dir = join(homedir(), 'Documents', PRODUCT, 'Unsaved project');
+    const current = { sidecar: join(dir, `storyboard.${SLUG}.json`), media: join(dir, 'media') };
+    return !existsSync(current.sidecar) && existsSync(legacy.sidecar) ? legacy : current;
   }
 
   /** Point storage at the project the host has open; move an unsaved storyboard along when it gets a path. */
@@ -192,7 +202,7 @@ export class Engine {
     const previous = { sidecar: this.sidecarPath, media: this.mediaDir, project: this.sidecar.project, compId: this.snap?.comp?.id };
     this.flushSave();
     mkdirSync(target.media, { recursive: true });
-    const fresh = (): Sidecar => ({ schema: 1, app: 'shiftfield', host: this.host.id, project: projectPath, cards: [] });
+    const fresh = (): Sidecar => ({ schema: 1, app: SLUG, host: this.host.id, project: projectPath, cards: [] });
     if (existsSync(target.sidecar)) {
       try {
         this.sidecar = JSON.parse(readFileSync(target.sidecar, 'utf8')) as Sidecar;
@@ -353,7 +363,7 @@ export class Engine {
       const layer = snap.layers.find((l) => l.id === layerId);
       if (!layer) continue;
       claimed.add(c.id);
-      this.layerOf.set(c.id, { in: layer.in, out: layer.out, box: layer.bounds });
+      this.layerOf.set(c.id, { in: layer.in, out: layer.out, start: layer.start, box: layer.bounds });
       if (this.host.kind === 'canvas' && layer.bounds && JSON.stringify(layer.bounds) !== JSON.stringify(c.origin.box)) {
         // The user moved or resized the placeholder: its box is the shot.
         c.origin.box = layer.bounds;
@@ -472,7 +482,8 @@ export class Engine {
     const comp = this.snap?.comp ?? null;
     const canvas = this.host.kind === 'canvas';
     const cards: CardView[] = this.sidecar.cards
-      .filter((c) => !comp || c.compId === comp.id)
+      // A reframed comp shows the card it came from, so its versions stay at hand.
+      .filter((c) => !comp || c.compId === comp.id || c.versions.some((v) => v.compId === comp.id))
       .map((c) => {
         const slot = this.slotOf(c);
         const slotSeconds = slot.end !== null ? Math.max(0, slot.end - slot.start) : null;
@@ -508,6 +519,11 @@ export class Engine {
     const comp = this.snap?.comp;
     if (!entry || !comp) return {};
     const m = entry.manifest;
+    if (m.task === 'matte-video') return { sizeNote: 'a matte of the clip, set as the layer\'s luma track matte', lengthNote: 'frame for frame' };
+    if (m.task === 'reframe') {
+      const aspect = String(card.params['@aspect'] ?? '9:16');
+      return { sizeNote: `a new ${aspect} comp, the clip at 100%, framed with Position keyframes`, lengthNote: 'the whole clip' };
+    }
     if (m.input === 'video') return { sizeNote: 'from the clip', lengthNote: 'the clip\'s own length' };
     if (this.host.kind === 'canvas') {
       if (m.task === 'upscale-image') return { sizeNote: 'the layer enlarged, opened as a new document' };
@@ -599,6 +615,8 @@ export class Engine {
       if (v.layerId === undefined) throw new Error('This version opened as its own document; it has no layer to switch to.');
       for (const x of card.versions) if (x.layerId !== undefined) await this.host.setLayerVisible(x.layerId, x.n === n);
       card.placed = { itemId: 0, layerId: v.layerId };
+    } else if (v.compId !== undefined) {
+      await this.host.openComp(v.compId);
     } else if (card.placed) {
       await this.host.replaceFootage(card.placed.itemId, join(this.mediaDir, v.file), [card.placed.layerId]);
     }
@@ -617,7 +635,7 @@ export class Engine {
     const comp = this.snap?.comp;
     if (!comp) throw new Error(this.host.kind === 'canvas' ? 'Open a document in PhotoCraft first.' : 'Open a composition in EffectCraft first.');
     const n = this.sidecar.cards.filter((c) => c.origin.kind === 'placeholder').length + 1;
-    const name = `SF placeholder ${String(n).padStart(2, '0')}`;
+    const name = `${TAG} placeholder ${String(n).padStart(2, '0')}`;
     const now = new Date().toISOString();
     const base = { id: newCardId(), compId: comp.id, prompt: '', seed: null, params: {}, versions: [], activeVersion: null, status: 'idle' as const, createdAt: now, updatedAt: now };
     let card: Card;
@@ -632,7 +650,7 @@ export class Engine {
         name, width: comp.width, height: comp.height, fps: comp.fps, duration: this.settings.placeholderSeconds, time: this.snap?.time ?? 0,
       });
       card = { ...base, origin: { kind: 'placeholder', layerId, itemId, width: comp.width, height: comp.height }, workflowId: this.settings.placeholderWorkflow, placed: { itemId, layerId } };
-      await this.host.setLayerComment(layerId, `shiftfield card=${card.id}`).catch(() => undefined);
+      await this.host.setLayerComment(layerId, `${SLUG} card=${card.id}`).catch(() => undefined);
     }
     this.sidecar.cards.push(card);
     this.thumbQueue.add(card.id);
@@ -646,7 +664,7 @@ export class Engine {
     const comp = this.snap?.comp;
     if (!comp) throw new Error('Open a document in PhotoCraft first.');
     const id = newCardId();
-    const channel = `SF ${id}`;
+    const channel = `${TAG} ${id}`;
     const box = await host.saveSelection(channel);
     if (!box) throw new Error('Make a selection in PhotoCraft first: the card edits what you select.');
     const now = new Date().toISOString();
@@ -880,10 +898,11 @@ export class Engine {
   }
 
   /** Prompt, seed and the card's own knobs into a fresh copy of the graph. */
-  private fill(card: Card, entry: LibraryEntry): { api: WorkflowJson; seed: number } {
+  private fill(card: Card, entry: LibraryEntry): { api: WorkflowJson; seed: number | null } {
     const api = this.library.graph(entry.manifest.id)!;
     setRef(api, entry.manifest.bindings.prompt, card.prompt);
-    const seed = card.seed ?? Math.floor(Math.random() * 2 ** 47);
+    // A workflow without a seed (tracking, cut-outs) is the same every run: no seed to record.
+    const seed = entry.manifest.bindings.seed ? card.seed ?? Math.floor(Math.random() * 2 ** 47) : null;
     setRef(api, entry.manifest.bindings.seed, seed);
     for (const [ref, v] of Object.entries(card.params)) setRef(api, ref, v);
     return { api, seed };
@@ -891,6 +910,17 @@ export class Engine {
 
   /** Submit, follow with live phases and previews, download the primary output. Returns its bytes and name. */
   private async runJob(card: Card, api: WorkflowJson, m: WorkflowManifest): Promise<{ bytes: Uint8Array; filename: string; jobId: string }> {
+    const { outputs, jobId } = await this.execute(card, api);
+    const wanted = m.output === 'video' ? /\.(mp4|mov|webm|mkv)$/i : /\.(png|jpe?g|webp|exr|tiff?)$/i;
+    const primary = outputs.filter((o) => o.type === 'output' && wanted.test(o.filename)).pop()
+      ?? outputs.filter((o) => wanted.test(o.filename)).pop();
+    if (!primary) throw new Error(`The workflow finished without a ${m.output} file.`);
+    this.phase(card, 'Downloading');
+    return { bytes: await this.comfy.download(primary), filename: primary.filename, jobId };
+  }
+
+  /** Submit and follow a job; every file it wrote, in the order the nodes reported them. */
+  private async execute(card: Card, api: WorkflowJson): Promise<{ outputs: OutputFile[]; jobId: string }> {
     this.throwIfCancelled();
     this.phase(card, 'Queued in ComfyUI');
     const jobId = await this.comfy.submit(api, this.clientId, { previewMethod: 'auto' });
@@ -932,12 +962,7 @@ export class Engine {
       if (this.running) this.running.stop = () => { stop(); reject(new Error('Canceled.')); };
     });
     this.throwIfCancelled();
-    const wanted = m.output === 'video' ? /\.(mp4|mov|webm|mkv)$/i : /\.(png|jpe?g|webp|exr|tiff?)$/i;
-    const primary = outputs.filter((o) => o.type === 'output' && wanted.test(o.filename)).pop()
-      ?? outputs.filter((o) => wanted.test(o.filename)).pop();
-    if (!primary) throw new Error(`The workflow finished without a ${m.output} file.`);
-    this.phase(card, 'Downloading');
-    return { bytes: await this.comfy.download(primary), filename: primary.filename, jobId };
+    return { outputs, jobId };
   }
 
   /** Save a result as the card's next version (descriptive name: hosts show it), with its job record. */
@@ -1006,37 +1031,47 @@ export class Engine {
         src = await host.frameAt(slot.start, join(dir, 'input-frame.png'));
       }
       this.phase(card, 'Uploading');
-      setRef(api, m.bindings.image, await this.comfy.upload(readFileSync(src), `sf_${card.id}${extname(src)}`, 'image/png'));
+      setRef(api, m.bindings.image, await this.comfy.upload(readFileSync(src), `flow_${card.id}${extname(src)}`, 'image/png'));
     } else if (m.input === 'video') {
       const source = card.origin.kind === 'layer' ? card.origin.sourcePath : null;
       if (!source) throw new Error('This workflow needs a video: select a clip layer in EffectCraft, then press "Use selected layers".');
       this.phase(card, 'Uploading');
-      setRef(api, m.bindings.video, await this.comfy.upload(readFileSync(source), `sf_${card.id}${extname(source)}`, 'video/mp4'));
+      setRef(api, m.bindings.video, await this.comfy.upload(readFileSync(source), `flow_${card.id}${extname(source)}`, 'video/mp4'));
     }
     const models = this.checkModels(api, m);
+    if (m.task === 'reframe') return this.reframe(card, entry, api, seed, models, t0);
 
     const result = await this.runJob(card, api, m);
     const { n, rel, abs, stem } = this.saveVersion(card, m, result);
 
     // Into the project.
     this.phase(card, 'Placing in EffectCraft');
-    const comment = `shiftfield card=${card.id} v${n} · ${m.title} · seed ${seed}\n${card.prompt}`;
+    const comment = `${SLUG} card=${card.id} v${n} · ${m.title}${seed !== null ? ` · seed ${seed}` : ''}\n${card.prompt}`;
     if (card.placed) {
       await host.replaceFootage(card.placed.itemId, abs, [card.placed.layerId]);
       await host.setLayerComment(card.placed.layerId, comment).catch(() => undefined);
     } else {
       // A result made from a layer goes straight above it; anything else on top of the comp.
       const source = card.origin.kind === 'layer' ? this.snap?.layers.find((l) => l.id === (card.origin as { layerId: number }).layerId) : undefined;
+      const matte = m.task === 'matte-video';
       const placed = await host.place({
-        file: abs, time: slot.start, endTime: m.output === 'video' && slot.end !== null ? slot.end : undefined,
-        name: `SF · ${layerNameFromPrompt(card.prompt || m.title, 48)}`, comment, index: source ? source.index : 1,
+        // Clips and stills alike end where the slot ends (the next marker, or the layer's out point).
+        file: abs, time: slot.start, endTime: slot.end !== null ? slot.end : undefined,
+        // A result made from the clip itself lines up with it frame for frame.
+        sourceStart: m.input === 'video' && source ? source.start : undefined,
+        name: `${TAG}${matte ? ' matte' : ''} · ${layerNameFromPrompt(card.prompt || m.title, 48)}`, comment, index: source ? source.index : 1,
       });
       card.placed = placed;
       if (card.origin.kind === 'marker') await host.coverComp(placed.layerId, placed.itemId, comp.width, comp.height).catch(() => undefined);
       if (card.origin.kind === 'layer') {
         await host.matchLayer(placed.layerId, placed.itemId, card.origin.layerId, card.origin.itemId).catch(() => undefined);
-        // The result stands in for its source: the source is switched off, never deleted.
-        await host.setLayerVisible(card.origin.layerId, false).catch(() => undefined);
+        if (matte) {
+          // The clip keeps its pixels; the matte above decides what shows.
+          await host.setTrackMatte(card.origin.layerId, placed.layerId, 'luma');
+        } else {
+          // The result stands in for its source: the source is switched off, never deleted.
+          await host.setLayerVisible(card.origin.layerId, false).catch(() => undefined);
+        }
       }
       if (card.origin.kind === 'marker') {
         const idx = this.markerIndex.get(card.id);
@@ -1049,6 +1084,69 @@ export class Engine {
       seconds: length?.seconds, jobId: result.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0,
       remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`),
     }, stem, { comp: comp.name, at: slot.start, notes: { size: size?.note, length: length?.note } });
+    await this.setHostStatus(card, 'done');
+  }
+
+  /**
+   * The workflow tracks the subject and returns a small mask per frame; the
+   * framing is built here, on the original footage, as a new comp with
+   * Position keyframes. Nothing in the source comp changes.
+   */
+  private async reframe(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, models: ModelCheck, t0: number): Promise<void> {
+    const host = this.tl();
+    const m = entry.manifest;
+    const origin = card.origin;
+    if (origin.kind !== 'layer') throw new Error('Reframe works on a clip: select its layer in EffectCraft, then press "Use selected layers".');
+    const info = await host.itemInfo(origin.itemId);
+    if (!info?.width || !info.height) throw new Error('EffectCraft did not report the clip\'s size.');
+    const aspectName = String(card.params['@aspect'] ?? '9:16');
+    const aspect = ASPECTS[aspectName] ?? ASPECTS['9:16'];
+    const smoothing: Smoothing = card.params['@smooth'] === 'steady' || card.params['@smooth'] === 'locked' ? card.params['@smooth'] : 'gentle';
+
+    const { outputs, jobId } = await this.execute(card, api);
+    const masks = outputs.filter((o) => o.type === 'output' && /\.png$/i.test(o.filename));
+    if (masks.length === 0) throw new Error('The tracking finished without masks.');
+    const frames: SubjectFrame[] = new Array(masks.length);
+    let read = 0;
+    this.phase(card, 'Reading the track', 0, masks.length);
+    await inPool(masks, 8, async (o, i) => {
+      frames[i] = subjectOf(decodePngGrey(await this.comfy.download(o)));
+      this.phase(card, 'Reading the track', ++read, masks.length);
+    });
+    this.throwIfCancelled();
+    const fps = info.frameRate || (info.duration ? masks.length / info.duration : 24);
+    let plan: ReframePlan;
+    try {
+      plan = planReframe(frames, { width: info.width, height: info.height, fps }, aspect, smoothing);
+    } catch {
+      throw new Error(`SAM 3 did not find "${card.prompt}" in this clip. Try a plainer word (person, dog, car) or another subject.`);
+    }
+
+    const n = (card.versions.at(-1)?.n ?? 0) + 1;
+    const stem = `${slugFromPrompt(card.prompt, 20)}_${aspectName.replace(':', 'x')}_v${String(n).padStart(3, '0')}`;
+    writeFileSync(join(this.mediaDir, card.id, `${stem}.track.json`), JSON.stringify({ aspect: aspectName, smoothing, source: info, frames, plan }, null, 1));
+    this.phase(card, 'Building the comp');
+    const sourceName = this.snap?.layers.find((l) => l.id === origin.layerId)?.name ?? info.name;
+    const compName = `${sourceName.replace(/\.[a-z0-9]{2,4}$/i, '')} · ${aspectName} v${String(n).padStart(3, '0')}`;
+    const duration = info.duration || masks.length / fps;
+    const built = await host.buildReframe({
+      name: compName, width: plan.width, height: plan.height, fps, duration, itemId: origin.itemId,
+      layerName: `${TAG} reframe · ${layerNameFromPrompt(card.prompt, 32)}`, keys: plan.keys,
+      comment: `${SLUG} card=${card.id} v${n} · ${m.title} · ${aspectName} · ${smoothing}\n${card.prompt}`,
+    });
+    // The new comp is open: a frame of it is the version's picture.
+    const rel = `${card.id}/${stem}.png`;
+    await host.frameAt(duration / 2, join(this.mediaDir, rel)).catch(() => undefined);
+    const missed = plan.frames - plan.found;
+    this.notice = `Reframed to ${aspectName} in the new comp "${compName}" (${plan.width}×${plan.height}, the clip at 100%): `
+      + `${plan.keys.length} Position keyframe${plan.keys.length === 1 ? '' : 's'} follow "${card.prompt}"`
+      + (missed ? `; it was not found in ${missed} of ${plan.frames} frames, which hold the nearest framing` : '')
+      + '. Edit them like any keyframes; the original comp is unchanged.';
+    this.recordVersion(card, m, {
+      n, file: rel, kind: 'image', workflowId: m.id, prompt: card.prompt, seed,
+      width: plan.width, height: plan.height, seconds: duration, jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0,
+      remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId: built.compId,
+    }, stem, { comp: compName, aspect: aspectName, smoothing, keys: plan.keys.length, found: plan.found, frames: plan.frames });
     await this.setHostStatus(card, 'done');
   }
 
@@ -1076,7 +1174,7 @@ export class Engine {
         else await host.exportComposite(this.rootRel(abs));
       }
       this.phase(card, 'Uploading');
-      setRef(api, m.bindings.image, await this.comfy.upload(readFileSync(abs), `sf_${card.id}.png`, 'image/png'));
+      setRef(api, m.bindings.image, await this.comfy.upload(readFileSync(abs), `flow_${card.id}.png`, 'image/png'));
     }
     const models = this.checkModels(api, m);
 
@@ -1084,7 +1182,7 @@ export class Engine {
     const { n, rel, abs, stem } = this.saveVersion(card, m, result);
 
     this.phase(card, 'Placing in PhotoCraft');
-    const name = `SF · ${layerNameFromPrompt(card.prompt || m.title, 40)} v${n}`;
+    const name = `${TAG} · ${layerNameFromPrompt(card.prompt || m.title, 40)} v${n}`;
     let layerId: number | undefined;
     if (m.task === 'upscale-image') {
       // A bigger image is a new document, beside the original.
@@ -1117,8 +1215,20 @@ export class Engine {
   }
 }
 
+async function inPool<T>(items: T[], size: number, fn: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, worker));
+}
+
 /** What a node is doing, in words a card can show. */
 function friendlyPhase(classType: string): string {
+  if (/SAM3_VideoTrack|SAM3_Detect/i.test(classType)) return 'Tracking the subject';
   if (/Upsampler|Upscale|SeedVR2/i.test(classType)) return 'Upscaling';
   if (/Sampler|KSampler|Guider/i.test(classType)) return 'Sampling';
   if (/VAEEncode/i.test(classType)) return 'Encoding';
