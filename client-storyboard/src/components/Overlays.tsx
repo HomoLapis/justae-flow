@@ -1,7 +1,39 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api.ts';
 import { act, useUi } from '../store.ts';
 import { Icon, Kbd } from './ui.tsx';
+
+/** A token for a ComfyUI behind an authenticating router; it is kept in your user folder and never shown again. */
+export function CloudRows() {
+  const set = useUi((u) => u.server!.settings.comfyTokenSet);
+  const [token, setToken] = useState('');
+  const save = (value: string): void => { void act(api.settings({ comfyToken: value }), value ? 'Token saved' : 'Token removed'); setToken(''); };
+  return (
+    <Row label="Access token (cloud ComfyUI)">
+      <div className="flex gap-2">
+        <input className="field font-mono" type="password" autoComplete="off" value={token} placeholder={set ? 'set — paste a new one to replace it' : 'only for a ComfyUI behind a router'}
+          onChange={(e) => setToken(e.target.value.trim())} onBlur={() => token && save(token)} onKeyDown={(e) => e.stopPropagation()} />
+        {set && <button className="btn-ghost shrink-0" onClick={() => save('')} title="Talk to a plain ComfyUI again">Remove</button>}
+      </div>
+    </Row>
+  );
+}
+
+/** The router's GPU menu, with its price per second. */
+function GpuRow() {
+  const gpu = useUi((u) => u.server!.settings.comfyGpu);
+  const [menu, setMenu] = useState<Awaited<ReturnType<typeof api.gpus>> | null>(null);
+  useEffect(() => { void api.gpus().then(setMenu).catch(() => setMenu(null)); }, []);
+  if (!menu?.options.length) return null;
+  return (
+    <Row label="GPU for jobs">
+      <select className="field" value={gpu} onChange={(e) => act(api.settings({ comfyGpu: e.target.value }), 'GPU saved')}>
+        <option value="">The server's default ({menu.default})</option>
+        {menu.options.map((g) => <option key={g.key} value={g.key}>{g.key} · {g.vramGb} GB · ${(g.usdPerSec * 3600).toFixed(2)}/h</option>)}
+      </select>
+    </Row>
+  );
+}
 
 export function Settings() {
   const s = useUi((u) => u.server)!;
@@ -27,6 +59,8 @@ export function Settings() {
       <Row label="ComfyUI address">
         <input className="field font-mono" value={comfyUrl} onChange={(e) => setComfyUrl(e.target.value)} onBlur={() => comfyUrl !== s.settings.comfyUrl && act(api.settings({ comfyUrl }), 'Saved')} onKeyDown={stop} />
       </Row>
+      <CloudRows />
+      {s.comfy.routed && <GpuRow />}
       {canvas ? (
         <>
           <Row label="PhotoCraft control port">

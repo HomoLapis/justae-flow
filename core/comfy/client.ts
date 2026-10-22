@@ -9,6 +9,10 @@
  *   GET  /templates/{name}.json the official workflow templates the server ships
  *   WS   /ws?clientId=…         progress, previews, outputs
  *
+ * A ComfyUI behind an authenticating router (a self-hosted cloud setup) is the
+ * same protocol plus a bearer token, and optionally a GPU per job sent as
+ * `X-Comfy-GPU` with the prompt.
+ *
  * Runs in Node, so there is no CORS and no preflight to worry about.
  */
 
@@ -35,19 +39,35 @@ export interface ComfyHealth {
 /** Statuses that mean "no considered answer yet" — worth asking again. */
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
 
+export interface ComfyAuth {
+  /** Bearer token of an authenticating router in front of ComfyUI. */
+  token?: string;
+  /** GPU the router should run jobs on (its own key, e.g. "H100"). */
+  gpu?: string;
+}
+
 export class ComfyClient {
   readonly base: string;
+  private readonly auth: ComfyAuth;
   private objectInfoCache: ObjectInfo | null = null;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, auth: ComfyAuth = {}) {
     this.base = baseUrl.replace(/\/+$/, '');
+    this.auth = { token: auth.token?.trim() || undefined, gpu: auth.gpu?.trim() || undefined };
+  }
+
+  /** Behind a router the editor side may be cold, and the events of every running job are relayed. */
+  get routed(): boolean {
+    return !!this.auth.token;
   }
 
   private async req(path: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<Response> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), init.timeoutMs ?? 30_000);
+    const headers = new Headers(init.headers);
+    if (this.auth.token) headers.set('Authorization', `Bearer ${this.auth.token}`);
     try {
-      return await fetch(path.startsWith('http') ? path : `${this.base}${path}`, { ...init, signal: ctrl.signal });
+      return await fetch(path.startsWith('http') ? path : `${this.base}${path}`, { ...init, headers, signal: ctrl.signal });
     } finally {
       clearTimeout(timer);
     }
@@ -60,12 +80,29 @@ export class ComfyClient {
     return JSON.parse(text) as T;
   }
 
+  /** A router's GPU menu (its keys, price per second, VRAM), or null for a plain ComfyUI. */
+  async gpuMenu(): Promise<{ options: Array<{ key: string; usdPerSec: number; vramGb: number }>; default: string } | null> {
+    if (!this.routed) return null;
+    try {
+      const p = await this.json<{ gpu_menu?: Record<string, { usd_per_sec?: number; vram_gb?: number }>; default_gpu?: string }>(
+        '/manager/monitor/pricing', { timeoutMs: 20_000 },
+      );
+      if (!p.gpu_menu) return null;
+      return {
+        options: Object.entries(p.gpu_menu).map(([key, v]) => ({ key, usdPerSec: v.usd_per_sec ?? 0, vramGb: v.vram_gb ?? 0 })),
+        default: p.default_gpu ?? '',
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async health(): Promise<ComfyHealth> {
     try {
       const s = await this.json<{
         system?: { comfyui_version?: string };
         devices?: Array<{ name?: string; vram_free?: number }>;
-      }>('/api/system_stats', { timeoutMs: 5_000 });
+      }>('/api/system_stats', { timeoutMs: this.routed ? 60_000 : 5_000 });
       const d = s.devices?.[0];
       return {
         online: true,
@@ -137,7 +174,8 @@ export class ComfyClient {
       let r: Response;
       try {
         r = await this.req('/api/prompt', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body, timeoutMs: 120_000,
+          method: 'POST', body, timeoutMs: 120_000,
+          headers: { 'Content-Type': 'application/json', ...(this.auth.gpu ? { 'X-Comfy-GPU': this.auth.gpu } : {}) },
         });
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
@@ -191,7 +229,9 @@ export class ComfyClient {
 
     const connect = (): void => {
       if (stopped) return;
-      ws = new WebSocket(`${this.base.replace(/^http/i, 'ws')}/ws?clientId=${encodeURIComponent(clientId)}`);
+      // A WebSocket cannot carry headers: a router takes the token in the query instead.
+      const token = this.auth.token ? `&token=${encodeURIComponent(this.auth.token)}` : '';
+      ws = new WebSocket(`${this.base.replace(/^http/i, 'ws')}/ws?clientId=${encodeURIComponent(clientId)}${token}`);
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => { reconnect = 0; };
       ws.onmessage = (ev: MessageEvent) => {
@@ -224,7 +264,8 @@ export class ComfyClient {
             const len = view.getUint32(4);
             let meta: { prompt_id?: string; image_type?: string } = {};
             try { meta = JSON.parse(new TextDecoder().decode(ev.data.slice(8, 8 + len))); } catch { /* keep going */ }
-            if (meta.prompt_id && meta.prompt_id !== jobId) return;
+            // A router relays previews under the worker's own prompt id, not the job id it handed out.
+            if (meta.prompt_id && meta.prompt_id !== jobId && !this.routed) return;
             onEvent({ kind: 'preview', blob: new Blob([ev.data.slice(8 + len)], { type: meta.image_type ?? 'image/jpeg' }) });
           }
         }

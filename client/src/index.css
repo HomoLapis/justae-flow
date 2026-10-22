@@ -2,20 +2,89 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root { height: 100%; }
-body { @apply bg-ink-950 text-ink-100 font-sans antialiased; font-size: 13px; }
+@layer base {
+  :root {
+    color-scheme: dark;
+    font-feature-settings: 'cv11', 'ss03', 'ss01';
+    --ring: theme(colors.brand.DEFAULT);
+  }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #2a3037; border-radius: 6px; border: 2px solid #0b0c0e; }
-::-webkit-scrollbar-track { background: transparent; }
+  html, body, #root { height: 100%; }
+  body { background: theme(colors.bg.DEFAULT); }
+
+  /* Native scrollbar — themed via Spectrum tokens (light | dark | darkest) */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgb(var(--jae-gray-300)); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--jae-gray-400)); background-clip: padding-box; }
+
+  button { -webkit-user-select: none; user-select: none; }
+  input, textarea, select { -webkit-user-select: text; user-select: text; }
+
+  /* Disable text selection by default — native-app feel */
+  body { -webkit-user-select: none; user-select: none; }
+
+  /* Consistent focus ring across interactive elements */
+  :focus-visible { outline: none; }
+}
 
 @layer components {
-  .btn { @apply inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed select-none; }
-  .btn-primary { @apply btn bg-accent text-ink-950 hover:bg-[#93adff]; }
-  .btn-ghost { @apply btn text-ink-200 hover:bg-ink-800 hover:text-ink-100; }
-  .btn-outline { @apply btn border border-ink-700 text-ink-200 hover:border-ink-500 hover:bg-ink-850; }
-  .btn-danger { @apply btn text-st-error hover:bg-[#e04fd11a]; }
-  .field { @apply w-full rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-[12px] text-ink-100 outline-none focus:border-accent placeholder:text-ink-500; }
-  .label { @apply text-[10.5px] font-semibold uppercase tracking-wider text-ink-400; }
-  .kbd { @apply rounded border border-ink-600 bg-ink-800 px-1 py-px font-mono text-[10px] text-ink-200; }
+  /* ── Buttons ─────────────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3
+           text-sm font-medium transition-all duration-100 select-none
+           disabled:opacity-40 disabled:pointer-events-none;
+    height: 2.25rem; /* 36px — consistent control height */
+  }
+  .btn-primary {
+    @apply btn bg-brand text-white shadow-sm shadow-brand/20
+           hover:bg-brand-hover active:bg-brand-dim active:scale-[0.99];
+  }
+  .btn-ghost {
+    @apply btn bg-bg-subtle text-ink border border-line/60 hover:bg-bg-hover hover:border-line;
+  }
+  .btn-quiet {
+    @apply btn text-ink-dim hover:text-ink hover:bg-bg-subtle;
+  }
+
+  /* ── Pills & chips ───────────────────────────────────────── */
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1
+           text-xs font-medium bg-bg-subtle text-ink-dim;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5
+           text-xs font-medium bg-bg-subtle text-ink-dim border border-transparent
+           hover:bg-bg-hover hover:text-ink transition-colors cursor-pointer
+           disabled:opacity-40 disabled:pointer-events-none;
+  }
+
+  /* ── Form controls ───────────────────────────────────────── */
+  .input {
+    @apply w-full rounded-lg bg-bg-raised border border-line px-3 text-sm text-ink
+           placeholder:text-ink-mute transition-colors
+           focus:outline-none focus:border-brand/70 focus:ring-2 focus:ring-brand/25;
+    min-height: 2.25rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+  textarea.input { line-height: 1.55; }
+  select.input { cursor: pointer; }
+
+  /* ── Layout primitives ───────────────────────────────────── */
+  .card {
+    @apply rounded-xl border border-line/70 bg-bg-raised;
+  }
+  .card-pad { @apply p-3; }
+
+  .section-label {
+    @apply text-[10px] uppercase tracking-[0.08em] text-ink-mute font-semibold;
+  }
+  .field-label {
+    @apply block text-[11px] text-ink-dim mb-1;
+  }
+  .hint {
+    @apply text-[11px] text-ink-mute leading-relaxed;
+  }
+  .divider { @apply border-t border-line/70; }
 }

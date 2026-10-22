@@ -11,6 +11,10 @@ import { join } from 'node:path';
 
 export interface Settings {
   comfyUrl: string;
+  /** Token of an authenticating router in front of ComfyUI (a self-hosted cloud); empty for a plain ComfyUI. */
+  comfyToken: string;
+  /** The router's GPU key for jobs; empty = the router's default. */
+  comfyGpu: string;
   host: 'effectcraft' | 'photocraft';
   effectcraftPort: number;
   photocraftPort: number;
@@ -33,6 +37,8 @@ export interface Settings {
 
 const DEFAULTS: Settings = {
   comfyUrl: 'http://127.0.0.1:8188',
+  comfyToken: '',
+  comfyGpu: '',
   host: 'effectcraft',
   effectcraftPort: 9877,
   photocraftPort: 7878,
@@ -78,6 +84,8 @@ export function loadSettings(repoRoot: string): Settings {
   try { saved = JSON.parse(readFileSync(file, 'utf8')) as Partial<Settings>; } catch { /* first run */ }
   const s: Settings = { ...DEFAULTS, ...saved };
   if (process.env.COMFY_URL) s.comfyUrl = process.env.COMFY_URL;
+  if (process.env.COMFY_TOKEN) s.comfyToken = process.env.COMFY_TOKEN;
+  if (process.env.COMFY_GPU) s.comfyGpu = process.env.COMFY_GPU;
   if (process.env.EFFECTCRAFT_CONTROL_PORT) s.effectcraftPort = Number(process.env.EFFECTCRAFT_CONTROL_PORT);
   if (process.env.PHOTOCRAFT_CONTROL_PORT) s.photocraftPort = Number(process.env.PHOTOCRAFT_CONTROL_PORT);
   if (process.env.PHOTOCRAFT_CONTROL_TOKEN_FILE) s.photocraftTokenFile = process.env.PHOTOCRAFT_CONTROL_TOKEN_FILE;

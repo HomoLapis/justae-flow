@@ -10,11 +10,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ComfyClient } from '../core/comfy/client.ts';
 import { PRODUCT } from '../core/brand.ts';
 import { configDir, loadSettings, type Settings } from './config.ts';
-import { Engine, makeHost } from './engine.ts';
+import { comfyFor, Engine, makeHost } from './engine.ts';
 import { WorkflowLibrary } from './library.ts';
+import { allowedOrigin, handleBridge, HostBridge, openFlowWindow, withToken } from './bridge.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
@@ -22,6 +22,7 @@ const settings = loadSettings(root);
 const library = new WorkflowLibrary(join(root, 'workflows'));
 const engine = new Engine(settings, library);
 const dist = join(root, 'client', 'dist');
+const bridge = new HostBridge(settings.effectcraftPort, join(root, 'extensions', 'effectcraft', 'flow-host.jsx'));
 
 /**
  * A local page that sends the browser to the full storyboard. Host scripts may
@@ -101,7 +102,8 @@ const routes: Array<[string, RegExp, Handler]> = [
       queue: { running: s.queue.running, waiting: s.queue.pending.length, ready: s.queue.ready },
       workflows: s.workflows.map((w) => ({ id: w.id, title: w.title, options: (w.params ?? []).filter((p) => p.options?.length) })),
       cards: s.cards.map((c, i) => ({
-        id: c.id, n: i + 1, kind: c.origin.kind, at: c.at, status: c.status, prompt: c.prompt, workflowId: c.workflowId, params: c.params,
+        id: c.id, n: i + 1, kind: c.origin.kind, at: c.at, status: c.status,
+        layerId: c.origin.kind === 'layer' || c.origin.kind === 'placeholder' ? c.origin.layerId : null, prompt: c.prompt, workflowId: c.workflowId, params: c.params,
         promptless: !s.workflows.find((w) => w.id === c.workflowId)?.bindings.prompt,
         box: c.origin.kind !== 'marker' && c.origin.box ? [Math.round(c.origin.box[2]), Math.round(c.origin.box[3])] : null,
         progress: c.progress ? { phase: c.progress.phase, value: c.progress.value, max: c.progress.max } : null,
@@ -122,9 +124,11 @@ const routes: Array<[string, RegExp, Handler]> = [
     send(res, 200, engine.state().settings);
   }],
   ['POST', /^\/api\/test\/comfy$/, async (req, res) => {
-    const { url } = await json<{ url?: string }>(req);
-    send(res, 200, await new ComfyClient(url || engine.settings.comfyUrl).health());
+    const { url, token } = await json<{ url?: string; token?: string }>(req);
+    const probe = comfyFor({ comfyUrl: url || engine.settings.comfyUrl, comfyToken: token ?? engine.settings.comfyToken, comfyGpu: engine.settings.comfyGpu });
+    send(res, 200, { ...(await probe.health()), routed: probe.routed });
   }],
+  ['GET', /^\/api\/comfy\/gpus$/, async (_q, res) => send(res, 200, await comfyFor(engine.settings).gpuMenu())],
   ['POST', /^\/api\/test\/host$/, async (req, res) => {
     const body = await json<Partial<Settings>>(req);
     const probe = makeHost({ ...engine.settings, ...body });
@@ -172,6 +176,7 @@ const routes: Array<[string, RegExp, Handler]> = [
   ['POST', /^\/api\/queue\/discard$/, (_q, res) => { engine.discardRecovered(); send(res, 200, { ok: true }); }],
   ['POST', /^\/api\/placeholder$/, async (_q, res) => send(res, 200, { id: await engine.createPlaceholder() })],
   ['POST', /^\/api\/adopt$/, async (_q, res) => send(res, 200, { ids: await engine.adoptSelectedLayers() })],
+  ['POST', /^\/api\/layer-card$/, async (_q, res) => send(res, 200, { id: await engine.cardForSelectedLayer() })],
   ['POST', /^\/api\/selection$/, async (_q, res) => send(res, 200, { id: await engine.addSelectionCard() })],
   ['POST', /^\/api\/marker$/, async (req, res) => {
     const { comment } = await json<{ comment?: string }>(req);
@@ -179,12 +184,17 @@ const routes: Array<[string, RegExp, Handler]> = [
     send(res, 200, { ok: true });
   }],
   ['POST', /^\/api\/notice\/dismiss$/, (_q, res) => { engine.dismissNotice(); send(res, 200, { ok: true }); }],
+  // The panel in EffectCraft opens the full Flow window: an app window of Edge or Chrome, sized like a panel.
+  ['POST', /^\/api\/window\/open$/, (_q, res) => send(res, 200, openFlowWindow(`http://127.0.0.1:${PORT}/`, join(configDir(), 'window')))],
   ['GET', /^\/api\/media\/(.+)$/, (req, res, m) => serveFile(res, engine.mediaDir, decodeURIComponent(m[1]), req)],
 ];
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   try {
+    // A page from elsewhere may reach this port; it may not drive it.
+    if (url.pathname.startsWith('/api/') && !allowedOrigin(req.headers.origin, PORT)) return send(res, 403, { error: 'Not from this app.' });
+    if (await handleBridge(req, res, url, bridge)) return;
     for (const [method, re, handler] of routes) {
       const m = re.exec(url.pathname);
       if (m && req.method === method) return await handler(req, res, m);
@@ -193,9 +203,17 @@ const server = createServer(async (req, res) => {
     if (!existsSync(join(dist, 'index.html'))) {
       return send(res, 503, 'The UI is not built yet: run "npm run build", then reload.');
     }
+    // The PhotoCraft storyboard has a page of its own.
+    if (url.pathname === '/storyboard' || url.pathname.startsWith('/storyboard/')) {
+      const board = join(dist, 'storyboard');
+      const sub = url.pathname.slice('/storyboard/'.length);
+      return serveFile(res, board, sub && existsSync(join(board, sub)) ? sub : 'index.html', req);
+    }
     const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-    if (existsSync(join(dist, rel))) return serveFile(res, dist, rel, req);
-    return serveFile(res, dist, 'index.html', req);
+    if (rel !== 'index.html' && existsSync(join(dist, rel))) return serveFile(res, dist, rel, req);
+    // The page carries this session's token: only it can use the host, file and relay routes.
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    return void res.end(withToken(readFileSync(join(dist, 'index.html'), 'utf8')));
   } catch (e) {
     send(res, 400, { error: e instanceof Error ? e.message : String(e) });
   }

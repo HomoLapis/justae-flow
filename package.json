@@ -11,9 +11,9 @@
   "scripts": {
     "start": "node server/index.ts",
     "dev": "vite",
-    "build": "vite build",
-    "setup": "npm install && vite build && git config core.hooksPath .githooks",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "vite build && vite build --config vite.storyboard.config.ts",
+    "setup": "npm install && npm run build && git config core.hooksPath .githooks",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p client/tsconfig.json",
     "selftest": "node scripts/selftest.ts",
     "verify:workflows": "node scripts/verify-workflows.ts",
     "verify:effectcraft": "node scripts/verify-effectcraft.ts",
@@ -21,11 +21,15 @@
     "scan:secrets": "node scripts/scan-secrets.ts"
   },
   "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "hash-wasm": "^4.12.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@comfyorg/sdk": "^0.5.0",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

@@ -37,10 +37,12 @@ export interface EngineState {
     project: string | null; unsaved: boolean; comp: HostSnapshot['comp']; time: number; selectedLayers: number[];
     selection: Box | null; root?: string;
   };
-  comfy: ComfyHealth & { url: string };
+  /** routed: behind an authenticating router (a cloud), where jobs run on the chosen GPU. */
+  comfy: ComfyHealth & { url: string; routed: boolean; gpu: string };
   cards: CardView[];
   queue: { running: string | null; pending: string[]; paused: boolean; recovered: number; ready: number };
-  settings: Settings;
+  /** The settings, with the router token replaced by whether one is set: it never goes to the browser. */
+  settings: Settings & { comfyTokenSet: boolean };
   workflows: WorkflowManifest[];
   mediaDir: string;
   notice: string | null;
@@ -58,6 +60,10 @@ export interface CardView extends Card {
 }
 
 const MAX_MARKER_SLOT = 20;
+
+export function comfyFor(s: Pick<Settings, 'comfyUrl' | 'comfyToken' | 'comfyGpu'>): ComfyClient {
+  return new ComfyClient(s.comfyUrl, { token: s.comfyToken, gpu: s.comfyGpu });
+}
 
 export function makeHost(s: Settings): HostAdapter {
   return s.host === 'photocraft'
@@ -77,6 +83,7 @@ export class Engine {
   private hostError: string | undefined = 'Not connected yet.';
   private comfyHealth: ComfyHealth = { online: false, message: 'Not checked yet.' };
   private objectInfo: ObjectInfo | null = null;
+  private checking: Promise<ComfyHealth> | null = null;
   private markerIndex = new Map<string, number>();
   private layerOf = new Map<string, { in: number; out: number; start: number; box?: Box | null }>();
   private queue: string[] = [];
@@ -95,7 +102,7 @@ export class Engine {
   constructor(settings: Settings, library: WorkflowLibrary, host?: HostAdapter) {
     this.settings = settings;
     this.library = library;
-    this.comfy = new ComfyClient(settings.comfyUrl);
+    this.comfy = comfyFor(settings);
     this.host = host ?? makeHost(settings);
   }
 
@@ -139,8 +146,9 @@ export class Engine {
     const before = this.settings;
     this.settings = { ...before, ...patch };
     saveSettings(this.settings);
-    if (patch.comfyUrl && patch.comfyUrl !== before.comfyUrl) {
-      this.comfy = new ComfyClient(patch.comfyUrl);
+    const comfyKeys: Array<keyof Settings> = ['comfyUrl', 'comfyToken', 'comfyGpu'];
+    if (comfyKeys.some((k) => patch[k] !== undefined && patch[k] !== before[k])) {
+      this.comfy = comfyFor(this.settings);
       this.objectInfo = null;
       void this.checkComfy();
     }
@@ -160,7 +168,10 @@ export class Engine {
   }
 
   async checkComfy(): Promise<ComfyHealth> {
-    const h = await this.comfy.health();
+    // A cold router can take a while to answer: one check at a time.
+    if (this.checking) return this.checking;
+    this.checking = this.comfy.health().finally(() => { this.checking = null; });
+    const h = await this.checking;
     const wasOnline = this.comfyHealth.online;
     this.comfyHealth = h;
     if (h.online && (!wasOnline || !this.objectInfo)) {
@@ -501,14 +512,14 @@ export class Engine {
         time: this.snap?.time ?? 0, selectedLayers: this.snap?.selectedLayers ?? [], selection: this.snap?.selection ?? null,
         root: canvas ? this.cv().root : undefined,
       },
-      comfy: { ...this.comfyHealth, url: this.settings.comfyUrl },
+      comfy: { ...this.comfyHealth, url: this.settings.comfyUrl, routed: this.comfy.routed, gpu: this.settings.comfyGpu },
       cards,
       queue: {
         running: this.running?.cardId ?? null, pending: [...this.queue], paused: this.paused, recovered: this.recovered,
         ready: cards.filter((c) => !c.orphan && this.ready(c) && (c.versions.length === 0 || c.status === 'error')
           && c.status !== 'queued' && c.status !== 'running').length,
       },
-      settings: this.settings,
+      settings: { ...this.settings, comfyToken: '', comfyTokenSet: !!this.settings.comfyToken },
       workflows: this.library.list().filter((w) => (w.hosts ?? ['effectcraft']).includes(this.host.id)),
       mediaDir: this.mediaDir,
       notice: this.notice,
@@ -689,6 +700,17 @@ export class Engine {
   }
 
   /** Turn the selected layers into cards whose media is the input (upscale, background removal). */
+  /** The card of the (first) selected layer — the one it already has, or a new one. */
+  async cardForSelectedLayer(): Promise<string> {
+    await this.sync();
+    const layerId = this.snap?.selectedLayers[0];
+    if (layerId === undefined) throw new Error(`Select a layer in ${this.host.label} first.`);
+    const existing = this.sidecar.cards.find((c) => (c.origin.kind === 'placeholder' || c.origin.kind === 'layer') && c.origin.layerId === layerId);
+    if (existing) return existing.id;
+    const [id] = await this.adoptSelectedLayers();
+    return id;
+  }
+
   async adoptSelectedLayers(): Promise<string[]> {
     const comp = this.snap?.comp;
     if (!comp) throw new Error('Open a composition or document first.');

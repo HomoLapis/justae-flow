@@ -11,6 +11,8 @@
 import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
+import { ComfyClient } from '../core/comfy/client.ts';
+import { allowedOrigin, SESSION_TOKEN, withToken } from '../server/bridge.ts';
 import { decodePngGrey } from '../core/lib/png.ts';
 import { ASPECTS, planReframe, simplify, subjectOf } from '../core/reframe/plan.ts';
 import { tmpdir } from 'node:os';
@@ -152,6 +154,7 @@ function maskPng(w: number, h: number, block: [number, number, number, number] |
 }
 
 /* ─── Fake ComfyUI ─────────────────────────────────────────────────── */
+const seenHeaders: Array<{ path: string; auth: string | undefined; gpu: string | undefined }> = [];
 const submits: Array<{ prompt: Record<string, { inputs: Record<string, unknown> }>; extra_data?: { preview_method?: string } }> = [];
 const history: Record<string, unknown> = {};
 // The fake server has every model the bundled workflows name — the LTX transformer only as nvfp4,
@@ -176,6 +179,7 @@ const fake = createServer(async (req, res) => {
   if (url.pathname === '/api/object_info') return json(objectInfo);
   if (url.pathname === '/api/upload/image') return json({ name: 'uploaded.png', subfolder: '' });
   if (url.pathname === '/api/queue') return json({ queue_running: [], queue_pending: [] });
+  seenHeaders.push({ path: url.pathname, auth: req.headers.authorization, gpu: req.headers['x-comfy-gpu'] as string | undefined });
   if (url.pathname === '/api/prompt') {
     const p = JSON.parse(body);
     submits.push(p);
@@ -202,6 +206,26 @@ const fake = createServer(async (req, res) => {
 });
 await new Promise<void>((r) => fake.listen(0, '127.0.0.1', () => r()));
 const comfyUrl = `http://127.0.0.1:${(fake.address() as { port: number }).port}`;
+
+console.log('page bridge');
+{
+  check('only this app\'s own page may drive the server', allowedOrigin('http://127.0.0.1:5199', 5199) && allowedOrigin(undefined, 5199)
+    && !allowedOrigin('https://example.com', 5199) && !allowedOrigin('http://127.0.0.1:9999', 5199));
+  const page = withToken('<head><meta name="flow-token" content="" /></head>');
+  check('the page carries the session token, and only the page', page.includes(`content="${SESSION_TOKEN}"`) && SESSION_TOKEN.length === 32);
+}
+
+console.log('cloud router');
+{
+  const routed = new ComfyClient(comfyUrl, { token: 't0k', gpu: 'H100' });
+  await routed.submit({ 1: { class_type: 'SaveImage', inputs: {} } }, 'c');
+  const sent = seenHeaders.filter((h) => h.path === '/api/prompt').at(-1);
+  check('a ComfyUI behind a router gets the token and the chosen GPU with the job', sent?.auth === 'Bearer t0k' && sent.gpu === 'H100');
+  await new ComfyClient(comfyUrl).submit({ 1: { class_type: 'SaveImage', inputs: {} } }, 'c');
+  const plain = seenHeaders.filter((h) => h.path === '/api/prompt').at(-1);
+  check('a plain ComfyUI gets neither', plain?.auth === undefined && plain?.gpu === undefined);
+  submits.length = 0;
+}
 
 /* ─── Fake host ────────────────────────────────────────────────────── */
 const projectDir = mkdtempSync(join(tmpdir(), 'sf-selftest-'));
@@ -267,10 +291,15 @@ class FakeHost implements TimelineHost {
 console.log('storyboard sync');
 const host = new FakeHost();
 const settings: Settings = {
-  comfyUrl, host: 'effectcraft', effectcraftPort: 0, photocraftPort: 0, photocraftTokenFile: '', photocraftRoot: projectDir,
+  comfyUrl, comfyToken: '', comfyGpu: '', host: 'effectcraft', effectcraftPort: 0, photocraftPort: 0, photocraftTokenFile: '', photocraftRoot: projectDir,
   canvasPlaceholderWorkflow: 'zimage-t2i', selectionWorkflow: 'qwen-edit',
   markerWorkflow: 'ltx25-t2v', placeholderWorkflow: 'ltx25-t2v', placeholderSeconds: 4, pollSeconds: 60, setupDone: true,
 };
+{
+  const secret = new Engine({ ...settings, comfyToken: 's3cret' }, library, new FakeHost());
+  const st = secret.state();
+  check('the router token never reaches the browser', !JSON.stringify(st).includes('s3cret') && st.settings.comfyTokenSet && st.comfy.routed);
+}
 const engine = new Engine(settings, library, host);
 await engine.checkComfy();
 await host.addMarker(1, 'a paper plane over a desk');

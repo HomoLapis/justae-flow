@@ -1,103 +1,140 @@
-import { useEffect, useRef } from 'react';
-import { api, subscribe } from './api.ts';
-import { act, useUi } from './store.ts';
-import { Banners } from './components/Banners.tsx';
-import { BulkBar } from './components/BulkBar.tsx';
-import { CardDetail } from './components/CardDetail.tsx';
-import { Header, Toolbar } from './components/Header.tsx';
-import { Help, Settings, Toasts } from './components/Overlays.tsx';
-import { Storyboard } from './components/Storyboard.tsx';
-import { Wizard } from './components/Wizard.tsx';
+import { useEffect } from 'react';
+import { useApp, type Tab } from './state/store';
+import { ProviderPill, ProviderBanner } from './components/ProviderPill';
+import { WorkflowTab } from './components/WorkflowTab';
+import { ShotMode } from './modes/ShotMode';
+import { SettingsDrawer } from './components/SettingsDrawer';
+import { HistoryDrawer } from './components/HistoryDrawer';
+import { ae } from './bridge/extendscript';
+import { isInCEP } from './bridge/csInterface';
 
-export function App() {
-  const server = useUi((u) => u.server);
-  const serverUp = useUi((u) => u.serverUp);
-  const ui = useUi();
-  useEffect(() => subscribe(useUi.getState().setServer, useUi.getState().setServerUp), []);
-  useShortcuts();
+const TABS: Array<{ id: Tab; label: string; hint: string }> = [
+  { id: 'workflow', label: 'Workflow', hint: 'Pick, edit and save ComfyUI workflows' },
+  { id: 'marker', label: 'Marker', hint: 'Fill the gaps between pairs of comp markers' },
+  { id: 'storyboard', label: 'Storyboard', hint: 'Fill the empty adjustment-layer placeholders' },
+];
 
-  if (!server) {
-    return <div className="flex h-full items-center justify-center text-ink-400">{serverUp ? 'Loading…' : 'Connecting to the JustAE Flow server…'}</div>;
-  }
+export function App(): JSX.Element {
+  const tab = useApp((s) => s.tab);
+  const setTab = useApp((s) => s.setTab);
+  const openSettings = useApp((s) => s.setSettingsOpen);
+  const openHistory = useApp((s) => s.setHistoryOpen);
+  const historyCount = useApp((s) => s.history.length);
+  const activeName = useApp((s) => s.active?.name ?? null);
+
+  useEffect(() => {
+    if (!isInCEP()) return;
+    void ae.checkReady();
+    // The Flow window drives EffectCraft; set to PhotoCraft, the server's storyboard page is the one that applies.
+    void fetch('/api/panel').then((r) => r.json()).then((s: { host?: { app?: string } }) => {
+      if (s.host?.app === 'PhotoCraft') window.location.replace('/storyboard/');
+    }).catch(() => undefined);
+  }, []);
+
   return (
-    <div className="flex h-full flex-col">
-      <Header />
-      <Toolbar />
-      <Banners />
-      {!serverUp && <div className="bg-st-error/20 px-3 py-1.5 text-[12px]">Lost the JustAE Flow server — reconnecting…</div>}
-      <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1 overflow-y-auto" onClick={(e) => { if (e.target === e.currentTarget) ui.clearSelection(); }}>
-          <Storyboard />
-        </main>
-        <CardDetail />
-      </div>
-      <BulkBar />
-      {ui.settingsOpen && <Settings />}
-      {ui.wizardOpen && <Wizard />}
-      {ui.helpOpen && <Help />}
-      <Toasts />
+    <div className="relative flex h-full flex-col bg-bg text-ink">
+      <header className="flex h-12 items-center justify-between gap-2 border-b border-line bg-bg px-3.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <img
+            src="justae-logo-white.svg"
+            className="jae-logo jae-logo-white"
+            alt="JustAE"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).src = 'justae-logo-white.png'; }}
+          />
+          <img
+            src="justae-logo.svg"
+            className="jae-logo jae-logo-color"
+            alt="JustAE"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).src = 'justae-logo.png'; }}
+          />
+          <span className="jae-badge jae-badge-accent">FLOW</span>
+          {activeName && (
+            <span className="hidden truncate text-[10px] leading-tight text-ink-mute md:inline" title={activeName}>
+              {activeName}
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <ProviderPill />
+          <IconButton label="History" onClick={() => openHistory(true)} badge={historyCount}>
+            <ClockIcon />
+          </IconButton>
+          <IconButton label="Settings" onClick={() => openSettings(true)}>
+            <GearIcon />
+          </IconButton>
+        </div>
+      </header>
+
+      <nav className="flex gap-1 px-3.5 pt-3">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            title={t.hint}
+            onClick={() => setTab(t.id)}
+            className={'flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors '
+              + (tab === t.id
+                ? 'bg-brand text-white'
+                : 'bg-bg-subtle text-ink-dim hover:text-ink')}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      <ProviderBanner />
+
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        {tab === 'workflow' && <WorkflowTab />}
+        {tab === 'marker' && <ShotMode source="marker" />}
+        {tab === 'storyboard' && <ShotMode source="placeholder" />}
+      </main>
+
+      <SettingsDrawer />
+      <HistoryDrawer />
     </div>
   );
 }
 
-function useShortcuts(): void {
-  const previous = useRef(new Map<string, number>());
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      const st = useUi.getState();
-      const s = st.server;
-      if (!s) return;
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
-      if (st.wizardOpen) return;
-      const card = s.cards.find((c) => c.id === st.active);
-      const ctrl = e.ctrlKey || e.metaKey;
-      const k = e.key.toLowerCase();
+function IconButton({
+  label, onClick, children, badge,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  badge?: number;
+}): JSX.Element {
+  return (
+    <button
+      className="relative grid h-8 w-8 place-items-center rounded-lg text-ink-dim transition-colors hover:bg-bg-subtle hover:text-ink"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+    >
+      {children}
+      {badge !== undefined && badge > 0 && (
+        <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[9px] font-semibold text-white">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </button>
+  );
+}
 
-      if (ctrl && k === 'g') {
-        e.preventDefault();
-        void act(api.generate(st.selected.length > 1 ? st.selected : undefined));
-      } else if (ctrl && k === 'a') {
-        e.preventDefault();
-        st.selectAll();
-      } else if (ctrl && e.key === ',') {
-        e.preventDefault();
-        st.set({ settingsOpen: true });
-      } else if (e.key === 'Escape') {
-        if (st.helpOpen || st.settingsOpen) return st.set({ helpOpen: false, settingsOpen: false });
-        const busy = card && (card.status === 'running' || card.status === 'queued') ? card : s.cards.find((c) => c.id === s.queue.running);
-        if (busy) void act(api.cancel(busy.id), 'Canceled');
-        else if (st.selected.length) st.clearSelection();
-        else st.open(null);
-      } else if (ctrl) {
-        return;
-      } else if (k === 'g' && card && !card.orphan) {
-        void act(api.generate([card.id]));
-      } else if (k === 'v' && card && !card.orphan && card.versions.length) {
-        void (async () => { await act(api.update(card.id, { seed: null })); await act(api.generate([card.id])); })();
-      } else if (e.key === 'Tab' && card && card.versions.length > 1) {
-        e.preventDefault();
-        const prev = previous.current.get(card.id) ?? card.versions.filter((v) => v.n !== card.activeVersion).at(-1)?.n;
-        if (prev !== undefined && card.activeVersion !== null) {
-          previous.current.set(card.id, card.activeVersion);
-          void act(api.version(card.id, prev), `v${prev} in the comp`);
-        }
-      } else if (k === 'm' && s.host.comp) {
-        void act(api.placeholder(), 'Placeholder added');
-      } else if (k === 's' && s.host.kind === 'canvas' && s.host.selection) {
-        void act(api.selectionCard(), 'Selection saved as a card');
-      } else if (/^[1-9]$/.test(e.key)) {
-        const c = s.cards[Number(e.key) - 1];
-        if (c) st.select(c.id, 'only');
-      } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        const i = s.cards.findIndex((c) => c.id === st.active);
-        const c = s.cards[Math.max(0, Math.min(s.cards.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)))];
-        if (c) st.select(c.id, 'only');
-      } else if (e.key === '?') {
-        st.set({ helpOpen: true });
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+function ClockIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+function GearIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
 }

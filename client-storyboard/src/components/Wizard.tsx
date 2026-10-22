@@ -139,23 +139,26 @@ function StepEffectCraft({ port }: { port: number }) {
 
 function StepComfy({ url }: { url: string }) {
   const [u, setU] = useState(url);
+  const [token, setToken] = useState('');
   const [r, setR] = useState<Awaited<ReturnType<typeof api.testComfy>> | null>(null);
   const [busy, setBusy] = useState(false);
   const test = async (): Promise<void> => {
     setBusy(true);
-    setR(await api.testComfy(u).catch((e) => ({ online: false, message: String(e) })));
+    setR(await api.testComfy(u, token || undefined).catch((e) => ({ online: false, message: String(e) })));
     setBusy(false);
   };
   useEffect(() => { void test(); }, []);
   return (
     <div className="space-y-4">
       <h2 className="text-[17px] font-semibold">Connect ComfyUI</h2>
-      <p className="text-ink-300">Your own ComfyUI — on this machine, on your network, or behind <code className="font-mono">comfy-api-proxy</code>. The bundled workflows are official ComfyUI templates with open weights.</p>
+      <p className="text-ink-300">Your own ComfyUI — on this machine, on your network, or in your own cloud behind a router that asks for a token. The bundled workflows are official ComfyUI templates with open weights.</p>
       <div className="flex gap-2">
         <input className="field font-mono" value={u} onChange={(e) => setU(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
         <button className="btn-outline" disabled={busy} onClick={test}>{busy ? 'Testing…' : 'Test'}</button>
-        <button className="btn-primary" disabled={!r?.online} onClick={() => act(api.settings({ comfyUrl: u }), 'ComfyUI saved')}>Use</button>
+        <button className="btn-primary" disabled={!r?.online} onClick={() => act(api.settings({ comfyUrl: u, ...(token ? { comfyToken: token } : {}) }), 'ComfyUI saved')}>Use</button>
       </div>
+      <input className="field font-mono" type="password" autoComplete="off" value={token} placeholder="Access token — only for a ComfyUI behind a router (kept in your user folder)"
+        onChange={(e) => setToken(e.target.value.trim())} onKeyDown={(e) => e.stopPropagation()} />
       <div className="flex items-center gap-2 rounded-md border border-ink-700 bg-ink-850 px-3 py-2.5">
         <Dot ok={!!r?.online} />
         {r?.online ? <span>ComfyUI <b>{r.version}</b> · {r.device}</span> : <span className="text-ink-300">{r?.message ?? 'Not tested yet.'}</span>}

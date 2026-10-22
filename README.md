@@ -24,31 +24,39 @@ workflow and lands back in the project at its place, as a new version — never 
 
 ## What it does
 
-| In EffectCraft you… | JustAE Flow… |
+JustAE Flow is **JustAE Flow 2** — the After Effects panel that runs any ComfyUI workflow against the timeline —
+brought to EffectCraft. The interface is Flow 2's own: a **Flow window** with three tabs, opened from a panel docked in
+EffectCraft.
+
+| Tab | What you do in EffectCraft | What Flow does |
+|---|---|---|
+| **Workflow** | — | lists the workflows on your ComfyUI (its workflow folder, searchable), reads each graph and builds a form from it; the comp fills canvas size, length and frame rate into the fields that take them. *Edit in ComfyUI* opens the editor in its own window with that workflow on the canvas; Ctrl+S there saves back to the same file. The *Pipeline* lists the stages of a production (draft or final presets, lossless output profiles) and whether their nodes are installed |
+| **Marker** | add comp markers in **pairs** around each gap to fill | one shot per pair, in time order; the clip comes out exactly as long as the gap. Or one clip at the playhead |
+| **Storyboard** | block the cut out with **adjustment layers** (eye on) | one shot per placeholder: its in and out points are the slot, its label colour comes back on the generated clip, and its eye is switched off once the clip is placed |
+
+Every shot row has its own workflow dropdown and, opened, its own prompt and that workflow's inputs: a frame or the
+work area from the comp, an attached file. Shots run in series with live progress and previews; each generation gets
+its own folder next to the project (`<Project>_JustAE-Flow/<Comp>/shot_001_…/`) with its inputs, its output, the
+workflow that ran and a `job.json` of every value used. *Save setup / Load setup* keep a shot list as a file; the
+history lists every run.
+
+The panel in EffectCraft (**Window ▸ JustAE Flow**) opens the Flow window, shows what it will work on (marker shots and
+placeholders in the active comp), adds a marker pair or a placeholder at the playhead, and runs the **layer tools** on
+the selected clip:
+
+| Layer tool | What it does |
 |---|---|
-| add a **marker** and type the shot as its comment | makes it a card; generates a clip sized to the comp and timed to the next marker; places it at the marker |
-| add a **placeholder** (button or <kbd>M</kbd>) and move/scale/trim it | uses its box and length as the shot; fills the placeholder in place — the layer keeps its transform, timing and name |
-| select a **clip** and press *Use selected layers*, then name a subject | **cuts the subject out** (SAM 3 tracking): a matte layer above the clip becomes its luma track matte — the clip's pixels are untouched |
-| the same, with *Wan VACE · Reframe*, an aspect (9:16, 4:5, 1:1, 16:9) and a description of the scene | **reframes** it generatively: a new comp in that aspect where the space the clip does not cover (above and below, or at the sides) is generated around it, and your clip sits on top, untouched, with a soft edge. Clips longer than one run go through in runs that carry on from each other |
-| the same, with *SAM 3 · Auto Crop* and a subject | **crops** to the new aspect instead: the clip at 100% in a new comp, with Position keyframes that follow the subject — ordinary keyframes you can edit |
-| select **footage layers** for other workflows | upscales a clip (SeedVR2 ×2) or cuts out a still (BiRefNet), laid exactly over the source, which is switched off — not deleted |
-| select several cards | changes workflow / seed / length on all of them at once; <kbd>Ctrl G</kbd> generates them in series |
+| Cut out a subject (SAM 3) | tracks what you name through the clip; a matte layer above becomes the clip's luma track matte — the clip's pixels are untouched |
+| Reframe, generate the new space (Wan VACE 14B, or the 1.3B draft) | a new comp in 9:16, 4:5, 1:1 or 16:9 where the space the clip does not cover is generated around it, and the clip sits on top, untouched, with a soft edge. Clips longer than one run go through in runs that carry on from each other |
+| Auto crop (SAM 3) | crops to the new aspect instead: the clip at 100% in a new comp, with Position keyframes that follow the subject |
+| Upscale ×2 (SeedVR2) | laid exactly over the source, which is switched off — not deleted |
 
-| In PhotoCraft you… | JustAE Flow… |
-|---|---|
-| select an area and press *Card from selection* (<kbd>S</kbd>) | saves the selection in the document (an alpha channel), edits the image as the prompt says (Qwen-Image-Edit 2511) and puts the result on a new layer above, masked to the selection with a soft edge |
-| add a **placeholder** (<kbd>M</kbd>) and move/resize it | generates an image for that box (Z-Image-Turbo) on a new layer that fills it; the placeholder is hidden, not deleted |
-| select **layers** and press *Use selected layers* | cuts the layer out (BiRefNet) onto a new layer above it, or upscales it (SeedVR2) into a new document beside |
+**Where workflows run** (Settings): your **local ComfyUI**; **ComfyCloud** (cloud.comfy.org, an API key from
+platform.comfy.org); or the **Comfy API v2** of Comfy's Developer Platform — Comfy Cloud, a serverless deployment, or
+`comfy-api-proxy` in front of your own ComfyUI.
 
-Always:
-
-- **Non-destructive.** Every run is a numbered version on disk; switch versions any time (<kbd>Tab</kbd> swaps the last two). In PhotoCraft every version is its own layer, the earlier ones hidden; a reframe version is its own comp.
-- **State in the project.** Markers and layers turn yellow (queued), cyan / seafoam (running), green (done), fuchsia (error) — the same colours as the cards.
-- **Two-way sync.** Move a marker or edit its text in EffectCraft and the card follows; edit the prompt in the card and the marker text follows.
-- **Saved with the project.** The storyboard is `<project>.justae-flow.json` next to the `.ecproj`, generated media in `<project>.justae-flow/`, with a `.job.json` per version (workflow, template, prompt, seed, models, timings).
-- **Live.** Progress per card (frame by frame while SAM 3 tracks), latent previews while sampling, cancel at any time, resume after an error or a restart.
-- **Inside the app, or in the browser.** A dockable panel in EffectCraft (Window ▸ JustAE Flow) for the everyday loop; the full storyboard at http://127.0.0.1:5199 for bulk edits, previews and settings.
-- **Guided first run.** Connect EffectCraft, connect ComfyUI, generate a test image.
+PhotoCraft keeps its own storyboard (selections and placeholder layers, at http://127.0.0.1:5199/storyboard/, where the Flow
+window goes by itself when Settings ▸ App is PhotoCraft); a Flow window for PhotoCraft is not in this version.
 
 ## Workflows
 
@@ -102,7 +110,19 @@ npm run verify:workflows -- http://127.0.0.1:8188   # what your server can run, 
   `photocraft --control 7878 --control-token-file <token file> --automation-read-root <folder> --automation-write-root <folder>`
   (the setup guide prints the exact line; the token file is created by PhotoCraft and read by JustAE Flow).
 - **ComfyUI 0.38 or newer** with the official templates package (it ships with ComfyUI), reachable over HTTP —
-  local, on your network, or behind `comfy-api-proxy`. The LTX-2.5 workflows need a GPU with 16 GB or more.
+  local, on your network, or in your own cloud. The LTX-2.5 workflows need a GPU with 16 GB or more; the Wan VACE
+  14B reframe is meant for a cloud GPU with 48 GB or more (on a 16 GB card it runs offloaded, at 6 to 12 minutes
+  per step for 125 frames).
+
+### ComfyUI in your own cloud
+
+A ComfyUI behind a router that asks for a bearer token (for example a self-hosted deployment on Modal, where a GPU
+worker starts for each job and scales back to zero when idle) works as it is: put its address in **Settings ▸
+ComfyUI address** and its token in **Access token**. The token is sent as `Authorization: Bearer …` (and as
+`token=` on the WebSocket, which cannot carry headers); it is kept in your user folder and never sent to the browser.
+If the router publishes a GPU menu (`/manager/monitor/pricing`), **GPU for jobs** lists it with prices, and the
+choice goes with every job as `X-Comfy-GPU`. Model files the router does not have are reported on the card with
+their download URLs, like on a local ComfyUI.
 
 ## Install and run
 
@@ -121,34 +141,16 @@ Settings are stored in your user folder (`%APPDATA%\JustAE Flow`, `~/Library/App
 1. In EffectCraft: **Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network**
    (the panel talks to the JustAE Flow server on 127.0.0.1).
 2. **File ▸ Scripts ▸ Install ScriptUI Panel…** and pick `extensions/effectcraft/JustAE Flow.jsx`.
-3. **Window ▸ JustAE Flow** opens it; dock it wherever you like.
-
-The panel lists the cards of the open comp, and has the prompt, workflow, the workflow's choices (aspect and
-smoothing for a reframe), versions, progress and the buttons to add a marker or a placeholder, use the selected
-layers, generate, stop. **↗** opens the full storyboard in the browser.
+3. **Window ▸ JustAE Flow** opens it; dock it wherever you like. **Open JustAE Flow** there opens the Flow window
+   (an app window of Edge or Chrome, or your default browser).
 
 ## Using it
 
-1. In EffectCraft open a composition. Add markers (type the shot in the marker comment) or press **Placeholder**.
-2. The storyboard lists them in time order. Click a card: prompt, workflow, length, seed, start image, versions.
-3. **Generate all** (<kbd>Ctrl G</kbd>) runs every card that has a prompt and no result yet; select cards to (re)run only those.
-4. Results land at their place; generate again for a new version; pick any version to put it back in the comp.
-5. To cut out a subject: select the clip's layer, **Use selected layers**, pick *SAM 3 · Subject Matte* and write the
-   subject in a word or two (`woman`, `dog`, `red car`).
-6. To reframe: the same, with *Wan VACE 14B · Reframe* (or the 1.3B draft first), an aspect, and a description of the
-   whole scene, including what the new space should show. The new comp opens when it is done.
-
-| Key | Action |
-|---|---|
-| <kbd>G</kbd> | generate the open card |
-| <kbd>Ctrl G</kbd> | generate all / the selected cards |
-| <kbd>V</kbd> | new version with a fresh seed |
-| <kbd>Tab</kbd> | swap the previous and the active version in the comp |
-| <kbd>Esc</kbd> | cancel the running card |
-| <kbd>M</kbd> | placeholder at the playhead |
-| <kbd>1</kbd>–<kbd>9</kbd>, <kbd>←</kbd> <kbd>→</kbd> | open a card |
-| <kbd>Ctrl A</kbd> / <kbd>Ctrl</kbd>-click / <kbd>Shift</kbd>-click | select |
-| <kbd>Ctrl Enter</kbd> | in the prompt: save and generate |
+1. In EffectCraft open a composition. For the **Marker** tab add markers in pairs around each gap (or press
+   *+ Marker pair* in the panel); for the **Storyboard** tab add adjustment layers (*+ Placeholder*), move and trim them.
+2. In the Flow window pick a workflow in the **Workflow** tab — or per shot, in its row.
+3. Open a row: the prompt, and that workflow's inputs. Fields the comp can fill say *from comp*.
+4. **Generate clip** runs the ticked shots in series and places each clip at its slot.
 
 ## How it works
 
@@ -157,40 +159,36 @@ layers, generate, stop. **↗** opens the full storyboard in the browser.
    └ JustAE Flow panel (ScriptUI) ──(HTTP)──┐                 │
                                             │                 │
                          JustAE Flow server (Node, 127.0.0.1:5199)
-                         · storyboard engine: sync, queue, versions, sidecar
-                         · ComfyUI client: /prompt (idempotent), /ws, /history, /view, /upload/image
+                         · host bridge: Flow 2's host functions run inside EffectCraft (script.run)
+                         · files, HTTP and WebSocket relays for the Flow window (session token)
+                         · layer tools and the PhotoCraft storyboard: engine, queue, versions
                                                                │
- Browser UI (React) ──(REST + server-sent events)──────────────┘──(HTTP/WS)── ComfyUI
+ Flow window (React, Flow 2's interface) ──(HTTP + SSE)────────┘──(HTTP/WS)── ComfyUI, ComfyCloud, Comfy API v2
 ```
 
+Flow 2 ran inside After Effects as a CEP panel: CEP gave it Node (files, HTTP without CORS) and ExtendScript (the
+host). Here the same interface runs in a window and the server stands in for both:
+
+- **The host.** EffectCraft's scripting follows After Effects scripting, so Flow 2's host file
+  (`extensions/effectcraft/flow-host.jsx`) runs inside EffectCraft as it is, through the control channel's
+  `script.run`: markers, adjustment layers, import at a time with the label colour, frame capture
+  (`saveFrameToPng`), work-area render, trims, the native Save/Open dialogs. Two changes: the project name
+  (`.ecproj`) and the temp folder, which EffectCraft's scripting does not expose and the server provides.
+- **Files** go through the server, limited to your user folder and the temp folder; **HTTP** to ComfyUI or a cloud
+  API goes through a relay, so no CORS and no token in a browser request; the ComfyUI **WebSocket** is relayed as
+  server-sent events. Every one of these routes wants the session token the server writes into the page, and a request
+  that names another origin is refused: any web page can reach 127.0.0.1, none other can read the token.
+- **Lossless masters** (ProRes 4444, PNG 16-bit) are made by the server with ffmpeg, which must be on the PATH.
+
 ```
-core/        host-independent: ComfyUI client, workflow conversion/inspection, manifests, storyboard types,
-             reframe planning (outpaint frame, padding and chained runs; subject per frame → smoothed keyframes)
-hosts/       one adapter per host app (effectcraft: a timeline, photocraft: a canvas) behind hosts/types.ts
-server/      engine (sync, queue, generation pipeline), settings, HTTP API
-client/      the browser UI
-extensions/  the EffectCraft panel
-workflows/   bundled workflows: <id>.json manifest + <id>.api.json graph
+client/      the Flow window (Flow 2's interface; bridge/ and lib/ are the parts that talk to the server)
+extensions/  the EffectCraft panel and the host file
+core/        host-independent: ComfyUI client, workflow conversion, manifests, storyboard types, reframe planning
+hosts/       one adapter per host app for the engine (effectcraft: a timeline, photocraft: a canvas)
+server/      the host bridge and relays, the engine (layer tools, PhotoCraft storyboard), settings, HTTP API
+workflows/   bundled workflows for the layer tools and PhotoCraft: <id>.json manifest + <id>.api.json graph
 scripts/     build-workflows, verify-workflows, verify-effectcraft, selftest, scan-secrets
 ```
-
-EffectCraft commands used (all documented by the app — `effectcraft-cli commands --json` — and checked live on 0.11.1):
-`project.summary`, `comp.info`, `markers.list`, `markers.set` (comment, label, cue point), `comp.addMarker`,
-`file.import`, `layer.addItem`, `layer.timing`, `layer.rename`, `layer.setComment`, `edit.label`,
-`file.importPlaceholder`, `file.replaceFootage`, `layer.revealSource`, `item.metadata`, `project.setComment`,
-`prop.get`, `prop.set`, `prop.addKey`, `layer.setSwitch`, `layer.setTrackMatte`, `layer.addMask`, `layer.mask.set`,
-`comp.new`, `comp.open`,
-`footage.relink`, `app.capabilities`, plus the control method `render.frame`. A marker's card id is kept in the
-marker's cue point, so a marker can move and be edited freely.
-
-PhotoCraft commands used (checked against the running app at every connection with `engine.commands`, and live on
-0.12.0): `document.inspect`, `layer.list`, `layer.new.layer`, `edit.fill`, `select.rect`, `select.saveSelection`,
-`select.loadSelection`, `select.deselect`, `layer.copyToDocument`, `layer.duplicate`, `file.close`,
-`document.activate`, `edit.transform`, `layer.layerMask.revealSelection`, `layer.layerMask.edit`,
-`layer.setLabelColor`, `layer.hideLayers`, `layer.showLayers`, `layer.renameLayer`, `layer.select`, plus the control
-methods `auth`, `app.open`, `app.save`, `ui.inspect`. PhotoCraft's channel refuses commands that take a file path
-(`file.placeEmbedded` included), so a result comes in by opening it from the automation folder and copying its layer
-into the document.
 
 ## Privacy and network
 

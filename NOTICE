@@ -45,9 +45,18 @@ and the licence of the weights:
   Gemma 4 encoders   see the model card of the files the template downloads
 Read each licence before using the outputs commercially.
 
-npm dependencies (installed, not vendored): react, react-dom, zustand (MIT);
-vite, @vitejs/plugin-react, tailwindcss, postcss, autoprefixer, typescript
-(MIT / Apache-2.0) — see their own licence files under node_modules.
+client/ (the Flow window) and extensions/effectcraft/flow-host.jsx
+  JustAE Flow 2 for After Effects, by the author of this project, brought to
+  EffectCraft: the parts that talked to CEP and Node (client/src/bridge,
+  client/src/lib/fs.ts, httpNode.ts, master.ts, external.ts) now talk to the
+  JustAE Flow server; the prompt assistant and the self-hosted cloud provider
+  are not included.
+
+npm dependencies (installed, not vendored): react, react-dom, zustand,
+hash-wasm (MIT); @fontsource/dm-sans and @fontsource/jetbrains-mono (fonts
+under the SIL Open Font License 1.1); vite, @vitejs/plugin-react, tailwindcss,
+postcss, autoprefixer, typescript, @comfyorg/sdk (types only) (MIT /
+Apache-2.0) — see their own licence files under node_modules.
 
 EffectCraft and PhotoCraft are products of the ArtCraft Team. JustAE Flow is an
 independent project that talks to them through their documented control

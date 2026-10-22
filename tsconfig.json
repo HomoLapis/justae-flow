@@ -3,7 +3,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
@@ -12,9 +16,17 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noUnusedLocals": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["core", "hosts", "server", "client/src", "scripts"]
+  "include": [
+    "core",
+    "hosts",
+    "server",
+    "scripts",
+    "client-storyboard/src"
+  ]
 }
