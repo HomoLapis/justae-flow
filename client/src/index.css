@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+body { @apply bg-ink-950 text-ink-100 font-sans antialiased; font-size: 13px; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #2a3037; border-radius: 6px; border: 2px solid #0b0c0e; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@layer components {
+  .btn { @apply inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed select-none; }
+  .btn-primary { @apply btn bg-accent text-ink-950 hover:bg-[#93adff]; }
+  .btn-ghost { @apply btn text-ink-200 hover:bg-ink-800 hover:text-ink-100; }
+  .btn-outline { @apply btn border border-ink-700 text-ink-200 hover:border-ink-500 hover:bg-ink-850; }
+  .btn-danger { @apply btn text-st-error hover:bg-[#e04fd11a]; }
+  .field { @apply w-full rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-[12px] text-ink-100 outline-none focus:border-accent placeholder:text-ink-500; }
+  .label { @apply text-[10.5px] font-semibold uppercase tracking-wider text-ink-400; }
+  .kbd { @apply rounded border border-ink-600 bg-ink-800 px-1 py-px font-mono text-[10px] text-ink-200; }
+}

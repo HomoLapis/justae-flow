@@ -1,0 +1,640 @@
+{
+  "75": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "405:370",
+        0
+      ],
+      "filename_prefix": "shiftfield/ltx25_t2v",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "SaveVideo"
+    }
+  },
+  "409": {
+    "class_type": "ResolutionSelector",
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "megapixels": 0.9,
+      "multiple": 32
+    },
+    "_meta": {
+      "title": "ResolutionSelector"
+    }
+  },
+  "405:370": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "405:374",
+        0
+      ],
+      "fps": [
+        "405:359",
+        0
+      ],
+      "audio": [
+        "405:358",
+        0
+      ],
+      "bit_depth": 8
+    },
+    "_meta": {
+      "title": "CreateVideo"
+    }
+  },
+  "405:340": {
+    "class_type": "LTXVConcatAVLatent",
+    "inputs": {
+      "video_latent": [
+        "405:348",
+        0
+      ],
+      "audio_latent": [
+        "405:367",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "405:395": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "0.85, 0.7250, 0.4219, 0.0"
+    },
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "405:348": {
+    "class_type": "LTXVLatentUpsampler",
+    "inputs": {
+      "samples": [
+        "405:367",
+        0
+      ],
+      "upscale_model": [
+        "405:371",
+        0
+      ],
+      "vae": [
+        "405:385",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LTXVLatentUpsampler"
+    }
+  },
+  "405:358": {
+    "class_type": "LTXVAudioVAEDecode",
+    "inputs": {
+      "samples": [
+        "405:369",
+        1
+      ],
+      "audio_vae": [
+        "405:386",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LTXVAudioVAEDecode"
+    }
+  },
+  "405:341": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler_ancestral"
+    },
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "405:391": {
+    "class_type": "LTXVDualCFGGuider",
+    "inputs": {
+      "model": [
+        "405:384",
+        0
+      ],
+      "positive": [
+        "405:365",
+        0
+      ],
+      "negative": [
+        "405:365",
+        1
+      ],
+      "video_cfg": 1,
+      "audio_cfg": 1
+    },
+    "_meta": {
+      "title": "LTXVDualCFGGuider"
+    }
+  },
+  "405:368": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "405:338",
+        0
+      ],
+      "guider": [
+        "405:391",
+        0
+      ],
+      "sampler": [
+        "405:341",
+        0
+      ],
+      "sigmas": [
+        "405:395",
+        0
+      ],
+      "latent_image": [
+        "405:340",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "405:338": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    },
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "405:367": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "405:344",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "405:369": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "405:368",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "405:374": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": [
+        "405:369",
+        0
+      ],
+      "vae": [
+        "405:385",
+        0
+      ],
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 16
+    },
+    "_meta": {
+      "title": "VAEDecodeTiled"
+    }
+  },
+  "405:344": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "405:339",
+        0
+      ],
+      "guider": [
+        "405:388",
+        0
+      ],
+      "sampler": [
+        "405:352",
+        0
+      ],
+      "sigmas": [
+        "405:404",
+        0
+      ],
+      "latent_image": [
+        "405:377",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "405:404": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "405:388": {
+    "class_type": "LTXVDualCFGGuider",
+    "inputs": {
+      "model": [
+        "405:384",
+        0
+      ],
+      "positive": [
+        "405:365",
+        0
+      ],
+      "negative": [
+        "405:365",
+        1
+      ],
+      "video_cfg": 1,
+      "audio_cfg": 1
+    },
+    "_meta": {
+      "title": "LTXVDualCFGGuider"
+    }
+  },
+  "405:352": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler_ancestral"
+    },
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "405:339": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 558811532553686
+    },
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "405:365": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": [
+        "405:364",
+        0
+      ],
+      "negative": [
+        "405:373",
+        0
+      ],
+      "frame_rate": [
+        "405:359",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LTXVConditioning"
+    }
+  },
+  "405:377": {
+    "class_type": "LTXVConcatAVLatent",
+    "inputs": {
+      "video_latent": [
+        "405:356",
+        0
+      ],
+      "audio_latent": [
+        "405:366",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "405:364": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": [
+        "405:382",
+        0
+      ],
+      "clip": [
+        "405:387",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "CLIPTextEncode"
+    }
+  },
+  "405:373": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "pc game, console game, video game, cartoon, childish, ugly",
+      "clip": [
+        "405:387",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "CLIPTextEncode"
+    }
+  },
+  "405:356": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": [
+        "405:353",
+        1
+      ],
+      "height": [
+        "405:355",
+        1
+      ],
+      "length": [
+        "405:378",
+        1
+      ],
+      "batch_size": 1
+    },
+    "_meta": {
+      "title": "EmptyLTXVLatentVideo"
+    }
+  },
+  "405:366": {
+    "class_type": "LTXVEmptyLatentAudio",
+    "inputs": {
+      "frames_number": [
+        "405:378",
+        1
+      ],
+      "frame_rate": [
+        "405:359",
+        1
+      ],
+      "batch_size": 1,
+      "audio_vae": [
+        "405:386",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LTXVEmptyLatentAudio"
+    }
+  },
+  "405:381": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "405:382",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "PreviewAny"
+    }
+  },
+  "405:382": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "405:383",
+        0
+      ],
+      "on_false": [
+        "405:376",
+        0
+      ],
+      "on_true": [
+        "405:380",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "ComfySwitchNode"
+    }
+  },
+  "405:371": {
+    "class_type": "LatentUpscaleModelLoader",
+    "inputs": {
+      "model_name": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+    },
+    "_meta": {
+      "title": "LatentUpscaleModelLoader"
+    }
+  },
+  "405:384": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "405:385": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ltx-2.5-video-vae-bf16.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "405:386": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ltx-2.5-audio-vae-bf16.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "405:387": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "type": "ltxv",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "405:380": {
+    "class_type": "TextGenerateLTX2Prompt",
+    "inputs": {
+      "clip": [
+        "405:393",
+        0
+      ],
+      "prompt": [
+        "405:376",
+        0
+      ],
+      "max_length": 600,
+      "sampling_mode": "on",
+      "sampling_mode.temperature": 0.7,
+      "sampling_mode.top_k": 64,
+      "sampling_mode.top_p": 0.95,
+      "sampling_mode.min_p": 0.05,
+      "sampling_mode.repetition_penalty": 1.15,
+      "sampling_mode.seed": 0,
+      "sampling_mode.presence_penalty": 0,
+      "thinking": false,
+      "use_default_template": true
+    },
+    "_meta": {
+      "title": "TextGenerateLTX2Prompt"
+    }
+  },
+  "405:378": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "expression": "a * b + 1",
+      "values.a": [
+        "405:362",
+        0
+      ],
+      "values.b": [
+        "405:361",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Math Expression (length)"
+    }
+  },
+  "405:353": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "expression": "a/2",
+      "values.a": [
+        "405:372",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "ComfyMathExpression"
+    }
+  },
+  "405:355": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "expression": "a/2",
+      "values.a": [
+        "405:360",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "ComfyMathExpression"
+    }
+  },
+  "405:359": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "expression": "a",
+      "values.a": [
+        "405:361",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Math Expression (fps)"
+    }
+  },
+  "405:360": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": [
+        "409",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "405:361": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 24
+    },
+    "_meta": {
+      "title": "Frame Rate"
+    }
+  },
+  "405:362": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 5
+    },
+    "_meta": {
+      "title": "Duration"
+    }
+  },
+  "405:372": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": [
+        "409",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "405:376": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "value": "A close-up of an Arctic hunter's face, his eyes fixed straight ahead, narrowed and locked on something in the far distance directly in front of him, frost dusting his dark beard, one hand slowly reaching toward the rifle slung on his back, his breath quick and shallow, the tension in his jaw visible even through the scarf. The camera slowly pulls back, revealing him crouched at the edge of an ice floe, and ahead of him, in the exact direction of his gaze, a polar bear moves slowly along a distant ice ridge, its pale coat blending into the white haze, facing toward him. The pull-back continues, the hunter in the foreground and the bear far ahead, the two facing each other across the dark lead of water, the ice field and grey sea stretching around them, seabirds wheeling overhead. Midway through the shot, the complete title \"LTX-2.5\" fades in large and centered, plain white sans-serif letters with wide spacing, no glow, no shadow, no ornament, the lettering large enough to dominate the center of the frame, emerging slowly from the mist, resting still and blending into the snowscape, with the hunter and the bear still visible below on either side of the title, staying through the end of the scene. The wind carries the distant sound of shifting ice, a single low growl rolling across the water."
+    },
+    "_meta": {
+      "title": "Prompt"
+    }
+  },
+  "405:393": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "gemma4_e2b_it_int8_convrot.safetensors",
+      "type": "ltxv",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "405:383": {
+    "class_type": "PrimitiveBoolean",
+    "inputs": {
+      "value": false
+    },
+    "_meta": {
+      "title": "Boolean (Enable Prompt Enhance)"
+    }
+  }
+}

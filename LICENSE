@@ -1,0 +1,11 @@
+LICENSE TO BE CHOSEN BY THE AUTHOR BEFORE PUBLICATION.
+
+Options under consideration (see the project plan):
+  - MIT OR Apache-2.0 (dual), like EffectCraft and PhotoCraft — allows
+    contributing code upstream to the Craft apps; Apache-2.0 requires keeping
+    the NOTICE file.
+  - GPL-3.0 — keeps derivatives open, but cannot be accepted upstream under
+    the Craft apps' clean-room rules.
+
+Replace this file with the full licence text (or LICENSE-MIT + LICENSE-APACHE)
+before the repository is made public.

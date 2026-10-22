@@ -1,0 +1,77 @@
+/**
+ * Per-user settings, kept in the user's own config folder — never in the
+ * repository and never in the project. `.env` / environment variables override
+ * the file, so a headless setup needs no UI at all.
+ */
+
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+export interface Settings {
+  comfyUrl: string;
+  host: 'effectcraft' | 'photocraft';
+  effectcraftPort: number;
+  photocraftPort: number;
+  photocraftTokenFile: string;
+  /** Workflow a new marker card starts with. */
+  markerWorkflow: string;
+  /** Workflow a new placeholder card starts with. */
+  placeholderWorkflow: string;
+  /** Default length of a placeholder, seconds. */
+  placeholderSeconds: number;
+  /** Seconds of host polling. */
+  pollSeconds: number;
+  setupDone: boolean;
+}
+
+const DEFAULTS: Settings = {
+  comfyUrl: 'http://127.0.0.1:8188',
+  host: 'effectcraft',
+  effectcraftPort: 9877,
+  photocraftPort: 7878,
+  photocraftTokenFile: '',
+  markerWorkflow: 'ltx25-i2v',
+  placeholderWorkflow: 'ltx25-t2v',
+  placeholderSeconds: 4,
+  pollSeconds: 1.5,
+  setupDone: false,
+};
+
+export function configDir(): string {
+  const base = process.platform === 'win32'
+    ? (process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'))
+    : process.platform === 'darwin'
+      ? join(homedir(), 'Library', 'Application Support')
+      : (process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'));
+  const dir = join(base, 'Shiftfield');
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function loadDotEnv(file: string): void {
+  if (!existsSync(file)) return;
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  }
+}
+
+export function loadSettings(repoRoot: string): Settings {
+  loadDotEnv(join(repoRoot, '.env'));
+  const file = join(configDir(), 'settings.json');
+  let saved: Partial<Settings> = {};
+  try { saved = JSON.parse(readFileSync(file, 'utf8')) as Partial<Settings>; } catch { /* first run */ }
+  const s: Settings = { ...DEFAULTS, ...saved };
+  if (process.env.COMFY_URL) s.comfyUrl = process.env.COMFY_URL;
+  if (process.env.EFFECTCRAFT_CONTROL_PORT) s.effectcraftPort = Number(process.env.EFFECTCRAFT_CONTROL_PORT);
+  if (process.env.PHOTOCRAFT_CONTROL_PORT) s.photocraftPort = Number(process.env.PHOTOCRAFT_CONTROL_PORT);
+  if (process.env.PHOTOCRAFT_CONTROL_TOKEN_FILE) s.photocraftTokenFile = process.env.PHOTOCRAFT_CONTROL_TOKEN_FILE;
+  return s;
+}
+
+export function saveSettings(s: Settings): void {
+  const file = join(configDir(), 'settings.json');
+  writeFileSync(file + '.tmp', JSON.stringify(s, null, 2));
+  renameSync(file + '.tmp', file);
+}

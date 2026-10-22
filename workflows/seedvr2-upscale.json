@@ -1,0 +1,40 @@
+{
+  "id": "seedvr2-upscale",
+  "title": "SeedVR2 · Video Upscale ×2",
+  "description": "Restores and doubles the resolution of the clip in the slot.",
+  "task": "upscale-video",
+  "output": "video",
+  "input": "video",
+  "bindings": {
+    "video": "73.file",
+    "seed": "66:54.seed"
+  },
+  "params": [
+    {
+      "ref": "66:57.resize_type.multiplier",
+      "label": "Scale"
+    }
+  ],
+  "license": {
+    "weights": "Apache-2.0 (ByteDance Seed SeedVR2)",
+    "openWeights": true
+  },
+  "api": "seedvr2-upscale.api.json",
+  "models": [
+    {
+      "name": "seedvr2_ema_vae_fp16.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/SeedVR2/resolve/main/vae/seedvr2_ema_vae_fp16.safetensors"
+    },
+    {
+      "name": "seedvr2_3b_int8_convrot.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/SeedVR2/resolve/main/diffusion_models/seedvr2_3b_int8_convrot.safetensors"
+    }
+  ],
+  "source": {
+    "template": "utility_seedvr2_3b_int8_upscale_video",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

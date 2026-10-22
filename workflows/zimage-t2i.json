@@ -1,0 +1,46 @@
+{
+  "id": "zimage-t2i",
+  "title": "Z-Image-Turbo · Text to Image",
+  "description": "A still in a few seconds: backgrounds, plates, title cards, keyframes.",
+  "task": "t2i",
+  "output": "image",
+  "bindings": {
+    "prompt": "57:27.text",
+    "seed": "57:3.seed",
+    "width": "57:13.width",
+    "height": "57:13.height"
+  },
+  "sizeMultiple": 32,
+  "maxLongSide": 2048,
+  "defaults": {
+    "width": 1024,
+    "height": 1024
+  },
+  "license": {
+    "weights": "Apache-2.0 (Tongyi-MAI Z-Image-Turbo)",
+    "openWeights": true
+  },
+  "api": "zimage-t2i.api.json",
+  "models": [
+    {
+      "name": "qwen_3_4b.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors"
+    },
+    {
+      "name": "ae.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors"
+    },
+    {
+      "name": "z_image_turbo_bf16.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors"
+    }
+  ],
+  "source": {
+    "template": "image_z_image_turbo",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

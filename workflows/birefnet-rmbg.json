@@ -1,0 +1,28 @@
+{
+  "id": "birefnet-rmbg",
+  "title": "BiRefNet · Remove Background",
+  "description": "Cuts the subject out of a still, with a clean alpha channel.",
+  "task": "remove-bg",
+  "output": "image",
+  "input": "image",
+  "bindings": {
+    "image": "17.image"
+  },
+  "license": {
+    "weights": "MIT (BiRefNet)",
+    "openWeights": true
+  },
+  "api": "birefnet-rmbg.api.json",
+  "models": [
+    {
+      "name": "birefnet.safetensors",
+      "directory": "background_removal",
+      "url": "https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors"
+    }
+  ],
+  "source": {
+    "template": "utility_birefnet_remove_background",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "id": "ltx25-i2v",
+  "title": "LTX-2.5 · Image to Video",
+  "description": "Animates the frame under the marker (or an image you attach) into a clip with sound.",
+  "task": "i2v",
+  "output": "video",
+  "input": "image",
+  "bindings": {
+    "prompt": "398:376.value",
+    "negative": "398:373.text",
+    "image": "395.image",
+    "seed": "398:339.noise_seed",
+    "width": "398:372.value",
+    "height": "398:360.value",
+    "seconds": "398:362.value",
+    "fps": "398:361.value"
+  },
+  "sizeMultiple": 64,
+  "maxLongSide": 1536,
+  "defaults": {
+    "seconds": 5,
+    "width": 1280,
+    "height": 704
+  },
+  "params": [
+    {
+      "ref": "398:383.value",
+      "label": "Prompt enhancer (Gemma)"
+    }
+  ],
+  "license": {
+    "weights": "LTX-2 Community License (Lightricks) — free below USD 10M annual revenue; read it before commercial use",
+    "openWeights": true
+  },
+  "api": "ltx25-i2v.api.json",
+  "models": [
+    {
+      "name": "gemma4_e2b_it_int8_convrot.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/gemma-4/resolve/main/text_encoders/gemma4_e2b_it_int8_convrot.safetensors"
+    },
+    {
+      "name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+    },
+    {
+      "name": "ltx-2.5-video-vae-bf16.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-video-vae-bf16.safetensors"
+    },
+    {
+      "name": "ltx-2.5-audio-vae-bf16.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-audio-vae-bf16.safetensors"
+    },
+    {
+      "name": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"
+    },
+    {
+      "name": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+      "directory": "latent_upscale_models",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+    }
+  ],
+  "source": {
+    "template": "video_ltx2_5_i2v",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

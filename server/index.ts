@@ -1,0 +1,185 @@
+/**
+ * Shiftfield's local server: the storyboard engine plus a small HTTP API for
+ * the UI. Listens on loopback only; nothing here talks to anything the user
+ * did not configure (their host app, their ComfyUI).
+ *
+ *   node server/index.ts            → http://127.0.0.1:5199
+ */
+
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ComfyClient } from '../core/comfy/client.ts';
+import { EffectCraftAdapter } from '../hosts/effectcraft/adapter.ts';
+import { loadSettings, type Settings } from './config.ts';
+import { Engine } from './engine.ts';
+import { WorkflowLibrary } from './library.ts';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const PORT = Number(process.env.SHIFTFIELD_PORT ?? 5199);
+const settings = loadSettings(root);
+const library = new WorkflowLibrary(join(root, 'workflows'));
+const engine = new Engine(settings, library);
+const dist = join(root, 'client', 'dist');
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.mp4': 'video/mp4',
+  '.webm': 'video/webm', '.mov': 'video/quicktime', '.json': 'application/json', '.ico': 'image/x-icon',
+};
+
+function send(res: ServerResponse, status: number, body: unknown): void {
+  const data = typeof body === 'string' ? body : JSON.stringify(body);
+  res.writeHead(status, { 'Content-Type': typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json', 'Cache-Control': 'no-store' });
+  res.end(data);
+}
+
+async function readBody(req: IncomingMessage, limit = 64 * 1024 * 1024): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > limit) throw new Error('Request too large.');
+    chunks.push(c as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function json<T>(req: IncomingMessage): Promise<T> {
+  const b = await readBody(req, 1024 * 1024);
+  return (b.length ? JSON.parse(b.toString('utf8')) : {}) as T;
+}
+
+/** Serves a file under `base` only — a path that climbs out is refused. */
+function serveFile(res: ServerResponse, base: string, rel: string, req: IncomingMessage): void {
+  const abs = resolve(base, normalize(rel));
+  if (!abs.startsWith(resolve(base) + sep) && abs !== resolve(base)) return send(res, 403, 'Forbidden');
+  if (!existsSync(abs) || !statSync(abs).isFile()) return send(res, 404, 'Not found');
+  const type = MIME[extname(abs).toLowerCase()] ?? 'application/octet-stream';
+  const size = statSync(abs).size;
+  const range = req.headers.range && /bytes=(\d*)-(\d*)/.exec(req.headers.range);
+  if (range && type.startsWith('video/')) {
+    const start = range[1] ? Number(range[1]) : 0;
+    const end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1 });
+    res.end(readFileSync(abs).subarray(start, end + 1));
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Cache-Control': 'no-cache', 'Accept-Ranges': 'bytes' });
+  res.end(readFileSync(abs));
+}
+
+const sseClients = new Set<ServerResponse>();
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+engine.onChange(() => {
+  if (pushTimer) return;
+  pushTimer = setTimeout(() => {
+    pushTimer = null;
+    const payload = `event: state\ndata: ${JSON.stringify(engine.state())}\n\n`;
+    for (const c of sseClients) c.write(payload);
+  }, 120);
+});
+
+type Handler = (req: IncomingMessage, res: ServerResponse, m: RegExpExecArray) => Promise<void> | void;
+const routes: Array<[string, RegExp, Handler]> = [
+  ['GET', /^\/api\/state$/, (_q, res) => send(res, 200, engine.state())],
+  ['GET', /^\/api\/events$/, (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+    res.write(`event: state\ndata: ${JSON.stringify(engine.state())}\n\n`);
+    sseClients.add(res);
+    const ping = setInterval(() => res.write(': ping\n\n'), 15_000);
+    req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+  }],
+  ['POST', /^\/api\/settings$/, async (req, res) => {
+    engine.applySettings(await json<Partial<Settings>>(req));
+    send(res, 200, engine.state().settings);
+  }],
+  ['POST', /^\/api\/test\/comfy$/, async (req, res) => {
+    const { url } = await json<{ url?: string }>(req);
+    send(res, 200, await new ComfyClient(url || engine.settings.comfyUrl).health());
+  }],
+  ['POST', /^\/api\/test\/host$/, async (req, res) => {
+    const { port } = await json<{ port?: number }>(req);
+    const probe = new EffectCraftAdapter(port || engine.settings.effectcraftPort);
+    try {
+      const s = await probe.snapshot();
+      send(res, 200, { ok: true, version: s.version, project: s.project.path, comp: s.comp?.name ?? null, markers: s.markers.length });
+    } catch (e) {
+      send(res, 200, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      probe.close();
+    }
+  }],
+  ['POST', /^\/api\/test\/generate$/, async (_q, res) => send(res, 200, await engine.testGenerate())],
+  ['POST', /^\/api\/cards\/bulk$/, async (req, res) => {
+    const { ids, patch } = await json<{ ids: string[]; patch: Record<string, unknown> }>(req);
+    await engine.updateCards(ids, patch);
+    send(res, 200, { ok: true });
+  }],
+  ['POST', /^\/api\/cards\/([\w-]+)$/, async (req, res, m) => {
+    await engine.updateCards([m[1]], await json(req));
+    send(res, 200, { ok: true });
+  }],
+  ['POST', /^\/api\/cards\/([\w-]+)\/version$/, async (req, res, m) => {
+    const { n } = await json<{ n: number }>(req);
+    await engine.selectVersion(m[1], n);
+    send(res, 200, { ok: true });
+  }],
+  ['POST', /^\/api\/cards\/([\w-]+)\/attach$/, async (req, res, m) => {
+    const name = decodeURIComponent(String(req.headers['x-filename'] ?? 'image.png'));
+    await engine.attach(m[1], new Uint8Array(await readBody(req)), name);
+    send(res, 200, { ok: true });
+  }],
+  ['DELETE', /^\/api\/cards\/([\w-]+)\/attach$/, (_q, res, m) => { engine.detach(m[1]); send(res, 200, { ok: true }); }],
+  ['DELETE', /^\/api\/cards\/([\w-]+)$/, (_q, res, m) => { engine.removeCard(m[1]); send(res, 200, { ok: true }); }],
+  ['POST', /^\/api\/generate$/, async (req, res) => {
+    const { ids } = await json<{ ids?: string[] }>(req);
+    send(res, 200, { queued: engine.enqueue(ids) });
+  }],
+  ['POST', /^\/api\/cancel$/, async (req, res) => {
+    const { id } = await json<{ id?: string }>(req);
+    await engine.cancel(id);
+    send(res, 200, { ok: true });
+  }],
+  ['POST', /^\/api\/queue\/resume$/, (_q, res) => { engine.resume(); send(res, 200, { ok: true }); }],
+  ['POST', /^\/api\/queue\/discard$/, (_q, res) => { engine.discardRecovered(); send(res, 200, { ok: true }); }],
+  ['POST', /^\/api\/placeholder$/, async (_q, res) => send(res, 200, { id: await engine.createPlaceholder() })],
+  ['POST', /^\/api\/adopt$/, async (_q, res) => send(res, 200, { ids: await engine.adoptSelectedLayers() })],
+  ['POST', /^\/api\/marker$/, async (req, res) => {
+    const { comment } = await json<{ comment?: string }>(req);
+    await engine.addMarkerAtPlayhead(comment ?? '');
+    send(res, 200, { ok: true });
+  }],
+  ['POST', /^\/api\/notice\/dismiss$/, (_q, res) => { engine.dismissNotice(); send(res, 200, { ok: true }); }],
+  ['GET', /^\/api\/media\/(.+)$/, (req, res, m) => serveFile(res, engine.mediaDir, decodeURIComponent(m[1]), req)],
+];
+
+const server = createServer(async (req, res) => {
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  try {
+    for (const [method, re, handler] of routes) {
+      const m = re.exec(url.pathname);
+      if (m && req.method === method) return await handler(req, res, m);
+    }
+    if (url.pathname.startsWith('/api/')) return send(res, 404, { error: 'No such endpoint.' });
+    if (!existsSync(join(dist, 'index.html'))) {
+      return send(res, 503, 'The UI is not built yet: run "npm run build", then reload.');
+    }
+    const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+    if (existsSync(join(dist, rel))) return serveFile(res, dist, rel, req);
+    return serveFile(res, dist, 'index.html', req);
+  } catch (e) {
+    send(res, 400, { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`Shiftfield  →  http://127.0.0.1:${PORT}`);
+  console.log(`  host: EffectCraft on 127.0.0.1:${settings.effectcraftPort} · ComfyUI: ${settings.comfyUrl}`);
+  engine.start();
+});
+
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => { engine.stop(); process.exit(0); });
+}

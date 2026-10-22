@@ -1,0 +1,38 @@
+{
+  "name": "shiftfield",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generative AI inside open-source compositing and image apps (EffectCraft, PhotoCraft), on your own ComfyUI.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node server/index.ts",
+    "dev": "vite",
+    "build": "vite build",
+    "setup": "npm install && vite build && git config core.hooksPath .githooks",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "selftest": "node scripts/selftest.ts",
+    "verify:workflows": "node scripts/verify-workflows.ts",
+    "verify:effectcraft": "node scripts/verify-effectcraft.ts",
+    "workflows:build": "node scripts/build-workflows.ts",
+    "scan:secrets": "node scripts/scan-secrets.ts"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

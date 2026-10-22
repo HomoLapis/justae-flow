@@ -1,0 +1,6 @@
+#!/bin/sh
+# Refuse a commit that carries a secret or a private string.
+node scripts/scan-secrets.ts || {
+  echo "pre-commit: secret scan failed — nothing was committed." >&2
+  exit 1
+}
