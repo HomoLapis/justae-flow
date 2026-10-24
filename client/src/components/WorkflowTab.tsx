@@ -257,7 +257,7 @@ export function WorkflowTab(): JSX.Element {
             <button className="chip" onClick={() => void openEditor()} disabled={busy}>
               {active ? 'Open this workflow' : 'Open editor'}
             </button>
-          ) : (
+          ) : settings.provider !== 'comfy-v2' && (
             <button className="chip" onClick={() => openSettings(true)}>Set a provider…</button>
           )}
         </div>
@@ -283,6 +283,12 @@ export function WorkflowTab(): JSX.Element {
               </p>
             )}
           </div>
+        ) : settings.provider === 'comfy-v2' ? (
+          <p className="text-[11px] leading-snug text-ink-mute">
+            Comfy API v2 has no editor of its own. Build the workflow in a ComfyUI — the one behind
+            your deployment&rsquo;s build, or your own — export it in API format, and bring it in
+            with &ldquo;Import file…&rdquo; above.
+          </p>
         ) : (
           <p className="text-[11px] leading-snug text-ink-mute">
             Add the server's address in Settings to open its editor.

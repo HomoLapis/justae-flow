@@ -6,7 +6,7 @@
 
 import { create } from 'zustand';
 import { lsGet, lsSet } from './persistence';
-import type { ProviderId } from '../providers/types';
+import type { ProviderId, V2Target } from '../providers/types';
 import type { WorkflowPreset, WorkflowRecord, WorkflowSummary } from '../workflows/library';
 import { deriveStoryboardSegments, type Segment } from './segments';
 import type { AdjustmentLayerInfo } from '../bridge/extendscript';
@@ -130,9 +130,13 @@ export interface Settings {
   provider: ProviderId;
   comfyCloudApiKey: string;
   localComfyUrl: string;
-  /** Comfy API v2 endpoint — Comfy Cloud, a deployment, or comfy-api-proxy. */
+  /** Comfy API v2: which surface, its endpoint, and the key for it. */
+  comfyV2Target: V2Target;
   comfyV2Url: string;
+  /** The platform API key — Comfy Cloud and deployments share it. */
   comfyV2Token: string;
+  /** comfy-api-proxy's `--token`; empty when it was started without one. */
+  comfyV2ProxyToken: string;
   outputDir: string;
   defaults: {
     seedMode: 'random' | 'fixed';
@@ -161,8 +165,10 @@ const DEFAULT_SETTINGS: Settings = {
   provider: 'local-comfy',
   comfyCloudApiKey: '',
   localComfyUrl: 'http://127.0.0.1:8188',
+  comfyV2Target: 'deployment',
   comfyV2Url: '',
   comfyV2Token: '',
+  comfyV2ProxyToken: '',
   outputDir: '',
   defaults: {
     seedMode: 'random',
@@ -191,6 +197,13 @@ function hydrateSettings(): Settings {
     defaults: { ...DEFAULT_SETTINGS.defaults, ...(raw.defaults ?? {}) },
     pipeline: { ...DEFAULT_SETTINGS.pipeline, ...((raw as Partial<Settings>).pipeline ?? {}) },
   };
+
+  // Saved before there was a target: read it off the URL that was saved.
+  if (!raw.comfyV2Target && merged.comfyV2Url) {
+    merged.comfyV2Target = merged.comfyV2Url === 'https://cloud.comfy.org' ? 'cloud'
+      : /^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(merged.comfyV2Url) ? 'proxy'
+      : 'deployment';
+  }
 
   return merged;
 }

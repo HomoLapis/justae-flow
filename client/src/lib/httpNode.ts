@@ -46,7 +46,7 @@ export async function nodeRequest(url: string, opts: NodeRequestOptions = {}): P
  * the providers use (method, headers, a string / bytes / Blob / FormData body),
  * and a real Response back. The signal is honoured on our side only.
  */
-export async function relayFetch(url: string, init: RequestInit = {}): Promise<Response> {
+export async function relayFetch(url: string, init: RequestInit = {}, timeoutMs = 300_000): Promise<Response> {
   const headers: Record<string, string> = {};
   new Headers(init.headers).forEach((v, k) => { headers[k] = v; });
   let body: Uint8Array | string | undefined;
@@ -66,7 +66,7 @@ export async function relayFetch(url: string, init: RequestInit = {}): Promise<R
     headers['content-type'] = mp.contentType;
   }
   if (init.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  const r = await nodeRequest(url, { method: init.method ?? 'GET', headers, body, timeoutMs: 300_000 });
+  const r = await nodeRequest(url, { method: init.method ?? 'GET', headers, body, timeoutMs });
   const noBody = r.status === 204 || r.status === 205 || r.status === 304;
   return new Response(noBody ? null : new Uint8Array(r.bytes), { status: r.status, headers: r.headers });
 }

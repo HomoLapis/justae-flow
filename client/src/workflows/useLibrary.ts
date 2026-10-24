@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '../state/store';
-import { buildProvider } from '../providers/registry';
+import { buildProvider, providerConfig } from '../providers/registry';
 import type { ObjectInfo, VideoProvider } from '../providers/types';
 import { HttpError } from '../providers/ComfyHttpProvider';
 import {
@@ -78,17 +78,13 @@ export function useLibrary(): LibraryApi {
 
   const providerKey = [
     settings.provider, settings.localComfyUrl, settings.comfyCloudApiKey,
-    settings.comfyV2Url, settings.comfyV2Token,
+    settings.comfyV2Target, settings.comfyV2Url, settings.comfyV2Token, settings.comfyV2ProxyToken,
   ].join('|');
 
   const { provider, providerError } = useMemo(() => {
     try {
       return {
-        provider: buildProvider(settings.provider, {
-          comfyCloud: { apiKey: settings.comfyCloudApiKey },
-          localComfy: { url: settings.localComfyUrl },
-          comfyV2: { url: settings.comfyV2Url, token: settings.comfyV2Token },
-        }),
+        provider: buildProvider(settings.provider, providerConfig(settings)),
         providerError: null as string | null,
       };
     } catch (e) {

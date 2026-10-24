@@ -12,26 +12,18 @@
  *
  * Why this is hand-written when an official SDK exists
  * ---------------------------------------------------
- * `@comfyorg/sdk` was installed and tried first. It cannot run in this panel,
- * for reasons that are properties of CEP rather than opinions:
+ * `@comfyorg/sdk` is a Node package (`node:fs`, `node:stream`, `openAsBlob`,
+ * `engines: node >= 22`) with no browser build, and this provider runs in the
+ * Flow window, a browser page. Its requests go out through the JustAE Flow
+ * server's relay (`relayFetch` → `/api/http`), so CORS never applies and the
+ * key never meets a browser's cross-origin rules.
  *
- *   - it is a Node package — `node:crypto`, `node:fs`, `node:fs/promises`,
- *     `node:path`, `node:stream`, `node:stream/promises` — with no browser
- *     export condition;
- *   - its upload path calls `openAsBlob`, which is Node 19.8+. CEP 12 ships
- *     Node 17.7.1;
- *   - it calls `AbortSignal.timeout`, which is Chrome 103+. CEP 12 renders in
- *     Chromium 99, where that does not return undefined, it THROWS;
- *   - `engines: node >= 22`.
- *
- * The one thing the SDK offers that our own code did not — content-addressed
- * upload with dedup — is precisely the path that needs `openAsBlob`. So the
- * package stays, as a devDependency, in the only role it can usefully play
- * here: the SPECIFICATION. Every wire type below is imported from
- * `@comfyorg/sdk/low`, which re-exports the types generated from Comfy's own
- * OpenAPI document. Those imports are type-only and erased at build time, so
- * this file ships none of the SDK's code while still failing to compile if the
- * contract moves under it.
+ * The package stays, as a devDependency, as the SPECIFICATION: every wire type
+ * below is imported from `@comfyorg/sdk/low`, which re-exports the types
+ * generated from Comfy's own OpenAPI document. Those imports are type-only and
+ * erased at build time, so this file ships none of the SDK's code while still
+ * failing to compile if the contract moves under it. Checked against
+ * comfy-api-proxy 0.1.6, whose routes are the ones used here.
  */
 
 import type { Asset, Job, Output as V2Output } from '@comfyorg/sdk/low';
@@ -71,6 +63,17 @@ export function assetReference(asset: Asset): unknown {
   return { __type: 'core/ASSET', info };
 }
 
+/** What to do about the error codes the v2 contract documents (`ErrorEnvelope`). */
+const V2_HINTS: Record<string, string> = {
+  workflow_format_ui: 'This is an editor-format file. Export the workflow from ComfyUI in API format and import that.',
+  deployment_stopped: 'The deployment is stopped. `comfy deploy start` resumes it — and its billing.',
+  deployment_not_ready: 'The deployment is still starting a worker. Try again in a moment.',
+  queue_full: 'The queue is full. Try again in a moment.',
+  insufficient_credits: 'The account behind this key is out of credits.',
+  unauthorized: 'The key was not accepted. Check it under Settings.',
+  missing_asset: 'An input the workflow names is not on this server. Run it from the panel so the inputs are uploaded.',
+};
+
 /** Map a v2 output's MIME type onto the buckets the rest of the panel knows. */
 function bucketFor(contentType: string): string {
   if (contentType.startsWith('video/')) return 'video';
@@ -100,42 +103,38 @@ export class ComfyV2Provider implements VideoProvider {
     };
   }
 
-  /**
-   * One request, with a deadline that does not use `AbortSignal.timeout`.
-   *
-   * Chromium 99 throws on that method rather than returning undefined, and a
-   * throw inside a helper like this one reads downstream as "the server is
-   * unreachable" — a diagnosis that sends the user to check their network
-   * while the panel is the thing at fault.
-   */
+  /** One request through the server relay, which enforces the deadline. */
   private async req(path: string, init: RequestInit = {}, timeoutMs = 60_000): Promise<Response> {
-    const control = new AbortController();
-    const timer = setTimeout(() => control.abort(), timeoutMs);
-    try {
-      return await relayFetch(this.base + path, {
-        ...init,
-        headers: this.headers(init.headers as Record<string, string> | undefined),
-        signal: control.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
+    return await relayFetch(this.base + path, {
+      ...init,
+      headers: this.headers(init.headers as Record<string, string> | undefined),
+    }, timeoutMs);
   }
 
   private async json<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
     const r = await this.req(path, init, timeoutMs);
-    if (!r.ok) {
-      // v2 answers failures with an error envelope carrying a machine-readable
-      // `code`. Surfacing that beats a bare status: `workflow_format_ui` and
-      // `insufficient_credits` need different things from the user.
-      let detail = '';
-      try {
-        const body = await r.json() as { error?: { code?: string; message?: string } };
-        detail = [body.error?.code, body.error?.message].filter(Boolean).join(': ');
-      } catch { /* not an envelope — the status will have to do */ }
-      throw new HttpError(`${this.label}: HTTP ${r.status}${detail ? ` — ${detail}` : ''}`, r.status);
-    }
+    if (!r.ok) throw await this.failure(r);
     return await r.json() as T;
+  }
+
+  /**
+   * v2 answers failures with an error envelope carrying a machine-readable
+   * `code`. Surfacing that beats a bare status: `workflow_format_ui` and
+   * `insufficient_credits` need different things from the user.
+   */
+  private async failure(r: Response): Promise<HttpError> {
+    let code = '';
+    let detail = '';
+    try {
+      const body = await r.json() as { error?: { code?: string; message?: string } };
+      code = body.error?.code ?? '';
+      detail = [code, body.error?.message].filter(Boolean).join(': ');
+    } catch { /* not an envelope — the status will have to do */ }
+    const hint = V2_HINTS[code];
+    return new HttpError(
+      `${this.label}: HTTP ${r.status}${detail ? ` — ${detail}` : ''}${hint ? `\n${hint}` : ''}`,
+      r.status,
+    );
   }
 
   async health(): Promise<ProviderHealth> {
@@ -216,19 +215,34 @@ export class ComfyV2Provider implements VideoProvider {
     return { name: filename, reference: assetReference(asset) };
   }
 
+  /**
+   * Submit, waiting out a 429.
+   *
+   * One key per Generate, and the server rejects a repeat rather than
+   * replaying it. A 429 (`queue_full`, or `deployment_not_ready` while a
+   * deployment brings a worker up) creates no job and releases the key, so
+   * trying again under the same key is safe — the docs say so, and the same
+   * key means a submit that did land can never become a second billed job.
+   * Anything else, including a dropped connection, is not retried.
+   */
   async submit(workflow: WorkflowJson, ctx: SubmitCtx): Promise<{ jobId: string }> {
-    const job = await this.json<Job>('/api/v2/jobs', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // Single-use, and the server rejects a repeat rather than replaying it.
-        // A fresh one per submit is what makes each Generate its own job.
-        'Idempotency-Key': crypto.randomUUID(),
-      },
-      body: JSON.stringify({ workflow }),
-    });
     void ctx;
-    return { jobId: job.id };
+    const key = crypto.randomUUID();
+    const giveUpAt = Date.now() + 10 * 60_000;
+    for (;;) {
+      const r = await this.req('/api/v2/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({ workflow }),
+      });
+      if (r.status === 429 && Date.now() < giveUpAt) {
+        const after = Number(r.headers.get('Retry-After'));
+        await new Promise((res) => setTimeout(res, Math.min(Number.isFinite(after) && after > 0 ? after : 5, 30) * 1000));
+        continue;
+      }
+      if (!r.ok) throw await this.failure(r);
+      return { jobId: (await r.json() as Job).id };
+    }
   }
 
   /**
@@ -323,7 +337,7 @@ export class ComfyV2Provider implements VideoProvider {
         if (r.ok) return await r.blob();
       } catch { /* expired or unreachable — fall through to the asset route */ }
     }
-    const r = await this.req(`/api/v2/assets/${encodeURIComponent(out.filename)}/content`, {}, 600_000);
+    const r = await this.req(`/api/v2/assets/${encodeURIComponent(out.assetId ?? out.filename)}/content`, {}, 600_000);
     if (!r.ok) throw new HttpError(`Download failed: HTTP ${r.status}`, r.status);
     return await r.blob();
   }
@@ -354,9 +368,10 @@ export class ComfyV2Provider implements VideoProvider {
 
 export function toOutputFile(o: V2Output): OutputFile {
   return {
-    // The asset UUID travels as the filename: it is what `download` needs when
-    // the signed URL has expired, and nothing downstream parses this field.
-    filename: o.id,
+    // The server's file name, which the panel reads the extension from; the
+    // asset id rides alongside for when the signed URL has expired.
+    filename: o.name || o.id,
+    assetId: o.id,
     subfolder: '',
     type: 'output',
     bucket: bucketFor(o.content_type),

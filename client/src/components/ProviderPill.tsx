@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../state/store';
-import { buildProvider, PROVIDERS } from '../providers/registry';
+import { buildProvider, providerConfig, PROVIDERS } from '../providers/registry';
 
 interface ProbeState {
   status: 'unknown' | 'online' | 'offline';
@@ -60,6 +60,12 @@ export function ProviderBanner(): JSX.Element | null {
             opens in a browser, then come back.
           </p>
         )}
+        {provider === 'comfy-v2' && (
+          <p className="mt-0.5 text-ink-mute">
+            For a deployment, <span className="font-mono text-ink">comfy deploy status</span> shows whether it is
+            running. For your own ComfyUI, check that <span className="font-mono text-ink">comfy-api-proxy</span> is running.
+          </p>
+        )}
       </div>
       <button className="btn-quiet h-6 px-2 text-xs" onClick={() => openSettings(true)}>Settings</button>
     </div>
@@ -96,8 +102,10 @@ function useProviderProbe(): ProbeState {
   const provider = useApp((s) => s.settings.provider);
   const apiKey = useApp((s) => s.settings.comfyCloudApiKey);
   const localUrl = useApp((s) => s.settings.localComfyUrl);
+  const v2Target = useApp((s) => s.settings.comfyV2Target);
   const v2Url = useApp((s) => s.settings.comfyV2Url);
   const v2Token = useApp((s) => s.settings.comfyV2Token);
+  const v2ProxyToken = useApp((s) => s.settings.comfyV2ProxyToken);
   const [, force] = useState(0);
 
   // Re-render this component whenever the shared verdict changes.
@@ -120,18 +128,15 @@ function useProviderProbe(): ProbeState {
       const probe = async (): Promise<void> => {
         const missing =
           provider === 'comfy-cloud' && !apiKey ? 'No API key set'
-          : provider === 'comfy-v2' && !v2Url ? 'No base URL set'
+          : provider === 'comfy-v2' && !v2Url ? 'No endpoint URL set'
+          : provider === 'comfy-v2' && v2Target !== 'proxy' && !v2Token ? 'No API key set'
           : null;
 
         if (missing) {
           if (!cancelled) publish({ status: 'offline', message: missing });
         } else {
           try {
-            const p = buildProvider(provider, {
-              comfyCloud: { apiKey },
-              localComfy: { url: localUrl },
-              comfyV2: { url: v2Url, token: v2Token },
-            });
+            const p = buildProvider(provider, providerConfig(useApp.getState().settings));
             const h = await p.health();
             if (!cancelled) publish({ status: h.online ? 'online' : 'offline', message: h.message ?? '' });
           } catch (e) {
@@ -163,7 +168,7 @@ function useProviderProbe(): ProbeState {
       subscribers--;
       if (subscribers === 0 && stopProbe) { stopProbe(); stopProbe = null; }
     };
-  }, [provider, apiKey, localUrl, v2Url, v2Token]);
+  }, [provider, apiKey, localUrl, v2Target, v2Url, v2Token, v2ProxyToken]);
 
   return shared;
 }

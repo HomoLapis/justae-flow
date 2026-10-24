@@ -51,9 +51,10 @@ the selected clip:
 | Auto crop (SAM 3) | crops to the new aspect instead: the clip at 100% in a new comp, with Position keyframes that follow the subject |
 | Upscale ×2 (SeedVR2) | laid exactly over the source, which is switched off — not deleted |
 
-**Where workflows run** (Settings): your **local ComfyUI**; **ComfyCloud** (cloud.comfy.org, an API key from
-platform.comfy.org); or the **Comfy API v2** of Comfy's Developer Platform — Comfy Cloud, a serverless deployment, or
-`comfy-api-proxy` in front of your own ComfyUI.
+**Where workflows run** (Flow window ▸ Settings): your **local ComfyUI**, or the **Comfy Developer Platform** —
+Comfy API v2 on your own deployment, on Comfy Cloud, or on your ComfyUI behind `comfy-api-proxy` (see
+[Comfy Developer Platform](#comfy-developer-platform-comfy-api-v2)). ComfyCloud's older v1 API is still offered;
+Comfy has deprecated it in favour of v2.
 
 PhotoCraft keeps its own storyboard (selections and placeholder layers, at http://127.0.0.1:5199/storyboard/, where the Flow
 window goes by itself when Settings ▸ App is PhotoCraft); a Flow window for PhotoCraft is not in this version.
@@ -124,6 +125,43 @@ If the router publishes a GPU menu (`/manager/monitor/pricing`), **GPU for jobs*
 choice goes with every job as `X-Comfy-GPU`. Model files the router does not have are reported on the card with
 their download URLs, like on a local ComfyUI.
 
+### Comfy Developer Platform (Comfy API v2)
+
+The Flow window can run its workflows on Comfy API v2, the API of Comfy's
+[Developer Platform](https://docs.comfy.org/development/overview), instead of a ComfyUI address. In the Flow window:
+**Settings ▸ Where workflows run ▸ Comfy Developer Platform**, then one of three targets:
+
+| Target | Endpoint URL | Key |
+|---|---|---|
+| Your deployment | `https://<deployment>.run.comfy.app` — `comfy deploy status` prints it as `endpointUrl` | an API key from [platform.comfy.org ▸ API Keys](https://platform.comfy.org/profile/api-keys) |
+| Comfy Cloud | `https://cloud.comfy.org` | the same API key; jobs draw on your Comfy Cloud credits |
+| Your ComfyUI | `http://127.0.0.1:8189`, served by [`comfy-api-proxy`](https://docs.comfy.org/development/comfyui-server/api-proxy) in front of the ComfyUI on :8188 | none, or the proxy's `--token` |
+
+**Check connection** lists one job, which tests the URL and the key and runs nothing. JustAE Flow does not build,
+release, deploy, start, scale or stop anything on the platform: it talks to an endpoint you already have. Builds and
+deployments are made with comfy-cli (`comfy build …`, `comfy deploy …`; see Comfy's
+[quickstart](https://docs.comfy.org/development/serverless/quickstart)). A deployment bills for as long as it runs,
+not per job: started with `--min 0` it scales to zero between jobs (the next job waits for a worker), and
+`comfy deploy stop` ends the charge and keeps the endpoint URL.
+
+What is different on v2:
+
+- **Workflows in API format.** v2 has no workflow folder and no node catalogue, so the Workflow tab lists the
+  workflows kept next to the project: bring one in with **Import file…** as an API-format export. A deployment runs
+  only the nodes and models of the build it was released from.
+- **Inputs are uploaded once.** Comp frames and images go up as assets addressed by their blake3 hash; bytes the server
+  already has are not sent again.
+- **No live previews**; progress is polled every 2 seconds.
+- **No double billing.** Each Generate is one submission with one `Idempotency-Key`. A submit refused with 429 (queue
+  full, or a deployment still bringing a worker up) is retried under the same key for up to 10 minutes; nothing else
+  is retried.
+- **The key goes over https only**, or over plain http to this machine (the proxy). It is kept in the Flow window's
+  local storage.
+- The **layer tools** of the EffectCraft panel still run on the ComfyUI address in the server's settings.
+
+To try it for free, run `pip install comfy-api-proxy` and then `comfy-api-proxy` next to your ComfyUI. The proxy
+speaks the same protocol as a deployment, so a workflow that runs there moves to a deployment by changing the target.
+
 ## Install and run
 
 ```bash
@@ -193,7 +231,8 @@ scripts/     build-workflows, verify-workflows, verify-effectcraft, selftest, sc
 ## Privacy and network
 
 JustAE Flow listens on 127.0.0.1 only. It talks to two things, both of your choosing: your EffectCraft or PhotoCraft
-(loopback; PhotoCraft also with its token) and your ComfyUI. No telemetry, no account, no other network access.
+(loopback; PhotoCraft also with its token) and the backend you set — your ComfyUI, or a Comfy API v2 endpoint. No
+telemetry, no account of its own, no other network access.
 
 ## Development
 

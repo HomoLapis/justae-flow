@@ -29,7 +29,7 @@ import { applyPreset } from '../pipeline/apply';
 import { makeProRes4444, makePng16Sequence } from '../lib/master';
 import { addLosslessSave, LOSSLESS_EXT } from '../pipeline/losslessSave';
 import type { Segment } from '../state/segments';
-import { buildProvider } from '../providers/registry';
+import { buildProvider, providerConfig } from '../providers/registry';
 import type { OutputFile, VideoProvider } from '../providers/types';
 import {
   applyFormValues, computeAutoFill, promptFieldOf, shotPlan, type AeContext,
@@ -126,11 +126,7 @@ export function useGenerate(): UseGenerate {
 
     let provider: VideoProvider;
     try {
-      provider = buildProvider(state.settings.provider, {
-        comfyCloud: { apiKey: state.settings.comfyCloudApiKey },
-        localComfy: { url: state.settings.localComfyUrl },
-        comfyV2: { url: state.settings.comfyV2Url, token: state.settings.comfyV2Token },
-      });
+      provider = buildProvider(state.settings.provider, providerConfig(state.settings));
     } catch (e) {
       setJob({ phase: 'error', error: e instanceof Error ? e.message : String(e) });
       return;

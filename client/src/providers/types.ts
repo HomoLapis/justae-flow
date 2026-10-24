@@ -11,6 +11,9 @@
 
 export type ProviderId = 'comfy-cloud' | 'local-comfy' | 'comfy-v2';
 
+/** Where Comfy API v2 is served: a Developer Platform deployment, Comfy Cloud, or comfy-api-proxy. */
+export type V2Target = 'deployment' | 'cloud' | 'proxy';
+
 /** ComfyUI API-format workflow: flat object keyed by node id. */
 export type WorkflowJson = Record<string, ComfyNode>;
 
@@ -70,6 +73,8 @@ export interface OutputFile {
    * UUID; `/api/view?filename=…` does not exist there.
    */
   url?: string;
+  /** Comfy API v2's asset id: what `/api/v2/assets/{id}/content` takes once `url` has expired. */
+  assetId?: string;
 }
 
 export type ProviderEvent =
