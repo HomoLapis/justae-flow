@@ -14,7 +14,8 @@ import { PRODUCT } from '../core/brand.ts';
 import { configDir, loadSettings, type Settings } from './config.ts';
 import { comfyFor, Engine, makeHost } from './engine.ts';
 import { WorkflowLibrary } from './library.ts';
-import { allowedOrigin, handleBridge, HostBridge, openFlowWindow, withToken } from './bridge.ts';
+import { allowedOrigin, handleBridge, HostBridge, withToken } from './bridge.ts';
+import { openFlowWindow } from './dock.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
@@ -184,8 +185,14 @@ const routes: Array<[string, RegExp, Handler]> = [
     send(res, 200, { ok: true });
   }],
   ['POST', /^\/api\/notice\/dismiss$/, (_q, res) => { engine.dismissNotice(); send(res, 200, { ok: true }); }],
-  // The panel in EffectCraft opens the full Flow window: an app window of Edge or Chrome, sized like a panel.
-  ['POST', /^\/api\/window\/open$/, (_q, res) => send(res, 200, openFlowWindow(`http://127.0.0.1:${PORT}/`, join(configDir(), 'window')))],
+  // The panel in EffectCraft opens the Flow window, docked at EffectCraft's right edge (server/dock.ts).
+  // The ScriptUI panel asks with wait: false — its socket would hold EffectCraft's UI while the window docks.
+  ['POST', /^\/api\/window\/open$/, async (req, res) => {
+    const { wait } = await json<{ wait?: boolean }>(req);
+    const opening = openFlowWindow(`http://127.0.0.1:${PORT}/`, join(configDir(), 'window'));
+    if (wait === false) { opening.catch(() => undefined); return send(res, 200, { ok: true, how: 'opening' }); }
+    send(res, 200, await opening);
+  }],
   ['GET', /^\/api\/media\/(.+)$/, (req, res, m) => serveFile(res, engine.mediaDir, decodeURIComponent(m[1]), req)],
 ];
 

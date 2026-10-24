@@ -45,7 +45,10 @@ export class JsonLinesClient {
         this.connecting = null;
         reject(new HostError(
           `${this.label} is not answering on ${this.host}:${this.port} (${(e as NodeJS.ErrnoException).code ?? e.message}). `
-          + `Start it with its control channel enabled.`, true));
+          + (this.label === 'EffectCraft'
+            ? `Start it with the JustAE Flow launcher, which opens its control channel (effectcraft --control ${this.port}); `
+              + 'an EffectCraft already open without it has to be saved and closed first.'
+            : 'Start it with its control channel enabled.'), true));
       };
       s.once('error', fail);
       s.once('connect', async () => {

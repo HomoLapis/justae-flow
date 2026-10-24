@@ -7,9 +7,9 @@
  * as a placeholder — and runs the layer tools on the selected clip.
  *
  * Install: File ▸ Scripts ▸ Install ScriptUI Panel… and pick this file, then open it from the
- * Window menu. It talks to the JustAE Flow server (npm start, http://127.0.0.1:5199) over a
- * socket, so EffectCraft needs Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write
- * Files and Access Network turned on.
+ * Window menu. It talks to the JustAE Flow server (the JustAE Flow launcher starts it, with
+ * EffectCraft and its control channel; http://127.0.0.1:5199) over a socket, so EffectCraft
+ * needs Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network.
  *
  * Part of JustAE Flow, GPL-3.0.
  */
@@ -49,12 +49,18 @@ var JustAEFlowPanel = (function (thisObj) {
       return { error: 'Turn on Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network.' };
     }
     s.timeout = 5;
-    if (!s.open(HOST, 'UTF-8')) return { error: 'JustAE Flow is not running — start it with “npm start”.' };
+    if (!s.open(HOST, 'UTF-8')) return { error: 'JustAE Flow is not running — start it with the JustAE Flow launcher.' };
     var payload = body === undefined ? '' : JSON.stringify(body);
-    s.write(method + ' ' + path + ' HTTP/1.0' + CRLF + 'Host: 127.0.0.1' + CRLF + 'Content-Type: application/json' + CRLF
-      + 'Content-Length: ' + byteLength(payload) + CRLF + CRLF + payload);
-    var raw = s.read();
-    s.close();
+    var raw;
+    try {
+      s.write(method + ' ' + path + ' HTTP/1.0' + CRLF + 'Host: 127.0.0.1' + CRLF + 'Content-Type: application/json' + CRLF
+        + 'Content-Length: ' + byteLength(payload) + CRLF + CRLF + payload);
+      raw = s.read();
+    } catch (e) {
+      raw = '';
+    }
+    try { s.close(); } catch (e) {}
+    if (!raw) return { error: 'JustAE Flow stopped answering — start it again with the JustAE Flow launcher.' };
     var cut = raw.indexOf(CRLF + CRLF);
     var code = parseInt(raw.split(' ')[1], 10);
     var data = {};
@@ -95,8 +101,9 @@ var JustAEFlowPanel = (function (thisObj) {
   };
   head.add('statictext', undefined, 'JustAE Flow');
 
-  var serverLine = win.add('statictext', undefined, 'Connecting…');
+  var serverLine = win.add('statictext', undefined, 'Connecting…', { multiline: true });
   serverLine.alignment = ['fill', 'top'];
+  serverLine.preferredSize = [250, 30];
   var compLine = win.add('statictext', undefined, '');
   compLine.alignment = ['fill', 'top'];
 
@@ -164,6 +171,11 @@ var JustAEFlowPanel = (function (thisObj) {
     var r = request('GET', '/api/panel');
     if (r.error) { serverLine.text = '✖ ' + r.error; return; }
     var s = r.data;
+    // The server is up, but it reaches this EffectCraft only through its control channel.
+    if (s.host && s.host.app === 'EffectCraft' && !s.host.ok) {
+      serverLine.text = '✖ EffectCraft was started without its control channel. Save, close EffectCraft and start it with the JustAE Flow launcher.';
+      return;
+    }
     serverLine.text = (s.comfy.online ? '● ComfyUI ' + (s.comfy.version || '') : '✖ ComfyUI offline') + (s.queue.running ? '   · running' : '');
     if (running) {
       var c = null;
@@ -181,8 +193,10 @@ var JustAEFlowPanel = (function (thisObj) {
   /* ─── Events ─────────────────────────────────────────────────────── */
 
   bOpen.onClick = function () {
-    var r = request('POST', '/api/window/open', {});
+    // Docked at EffectCraft's right edge; the server does it after answering.
+    var r = request('POST', '/api/window/open', { wait: false });
     if (r.error) serverLine.text = '✖ ' + r.error;
+    else refresh();
   };
 
   bPair.onClick = function () {
@@ -237,5 +251,6 @@ var JustAEFlowPanel = (function (thisObj) {
   var task = app.scheduleTask('JustAEFlowPanel.tick()', 1500, true);
   win.onClose = function () { app.cancelTask(task); };
 
-  return { tick: function () { refresh(); } };
+  // A repeating task that throws once is cancelled for good, and the panel would stop updating.
+  return { tick: function () { try { refresh(); } catch (e) { serverLine.text = '✖ ' + e; } } };
 })(this);

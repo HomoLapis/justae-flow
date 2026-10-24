@@ -167,20 +167,32 @@ speaks the same protocol as a deployment, so a workflow that runs there moves to
 ```bash
 git clone <REPO_URL> justae-flow && cd justae-flow
 npm run setup        # npm install + build the UI + enable the pre-commit secret scan
-npm start            # → http://127.0.0.1:5199
+npm run launch       # the server, EffectCraft with its control channel, and the Flow window docked beside it
 ```
 
-Open http://127.0.0.1:5199 — the setup guide connects EffectCraft and ComfyUI and runs a test image.
+On Windows, double-click **JustAE Flow.cmd** instead; `node scripts/launch.ts --shortcut` puts a shortcut to it on
+the desktop. EffectCraft opens its control channel only when it is started with `--control 9877`, so the launcher
+starts it that way. An EffectCraft that is already open without it cannot be joined: the launcher says so and leaves
+it alone — save your work, close it, and launch again. `npm start` runs the server alone (http://127.0.0.1:5199);
+the PhotoCraft storyboard at `/storyboard/` has a setup guide that connects the app and ComfyUI and runs a test image.
 Settings are stored in your user folder (`%APPDATA%\JustAE Flow`, `~/Library/Application Support/JustAE Flow`,
 `~/.config/JustAE Flow`), never in the project or the repository. `.env.example` lists the variables that override them.
+
+### The Flow window, docked
+
+EffectCraft docks only ScriptUI panels — it has no web panels like After Effects' CEP — so Flow 2's interface runs in
+an app window of Edge or Chrome. On Windows it opens at EffectCraft's right edge, at full height, with EffectCraft
+narrowed to make room, and it follows EffectCraft when EffectCraft is moved, resized, minimized or restored. Drag it
+away to undock it; **Open JustAE Flow** in the panel docks it again, and never opens a second one. On macOS and Linux
+it opens as a window of its own, next to which you place EffectCraft yourself.
 
 ### The panel inside EffectCraft
 
 1. In EffectCraft: **Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network**
    (the panel talks to the JustAE Flow server on 127.0.0.1).
 2. **File ▸ Scripts ▸ Install ScriptUI Panel…** and pick `extensions/effectcraft/JustAE Flow.jsx`.
-3. **Window ▸ JustAE Flow** opens it; dock it wherever you like. **Open JustAE Flow** there opens the Flow window
-   (an app window of Edge or Chrome, or your default browser).
+3. **Window ▸ JustAE Flow** opens it; dock it wherever you like. It shows whether the server and EffectCraft's control
+   channel are up, opens the Flow window, adds marker pairs and placeholders, and runs the layer tools.
 
 ## Using it
 
@@ -223,9 +235,9 @@ client/      the Flow window (Flow 2's interface; bridge/ and lib/ are the parts
 extensions/  the EffectCraft panel and the host file
 core/        host-independent: ComfyUI client, workflow conversion, manifests, storyboard types, reframe planning
 hosts/       one adapter per host app for the engine (effectcraft: a timeline, photocraft: a canvas)
-server/      the host bridge and relays, the engine (layer tools, PhotoCraft storyboard), settings, HTTP API
+server/      the host bridge and relays, the window dock, the engine (layer tools, PhotoCraft storyboard), settings, HTTP API
 workflows/   bundled workflows for the layer tools and PhotoCraft: <id>.json manifest + <id>.api.json graph
-scripts/     build-workflows, verify-workflows, verify-effectcraft, selftest, scan-secrets
+scripts/     launch, build-workflows, verify-workflows, verify-effectcraft, selftest, scan-secrets
 ```
 
 ## Privacy and network

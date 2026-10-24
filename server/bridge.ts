@@ -213,8 +213,8 @@ async function fsRoute(op: string, req: IncomingMessage, res: ServerResponse, ur
   }
 }
 
-/** Where the browsers live; the first one found opens the ComfyUI editor as an app window. */
-const BROWSERS = [
+/** Where the browsers live; the first one found opens the ComfyUI editor and the Flow window as app windows. */
+export const BROWSERS = [
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -245,25 +245,6 @@ function launchEditor(a: Record<string, unknown>): { ok: boolean; reason?: strin
     `--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check', '--window-size=1600,1000',
   ], { detached: true, stdio: 'ignore' }).unref();
   return { ok: true };
-}
-
-/**
- * The Flow window: this app's page as an app window (no address bar), with a
- * profile of its own so it remembers its size and the page's settings. Falls
- * back to the default browser when neither Edge nor Chrome is installed.
- */
-export function openFlowWindow(url: string, profileDir: string): { ok: boolean; how: string } {
-  const exe = BROWSERS.find((p) => existsSync(p));
-  if (exe) {
-    mkdirSync(profileDir, { recursive: true });
-    spawn(exe, [`--app=${url}`, `--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check', '--disable-features=Translate', '--window-size=560,980'],
-      { detached: true, stdio: 'ignore' }).unref();
-    return { ok: true, how: 'app window' };
-  }
-  const opener = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] as const
-    : process.platform === 'darwin' ? ['open', [url]] as const : ['xdg-open', [url]] as const;
-  spawn(opener[0], [...opener[1]], { detached: true, stdio: 'ignore' }).unref();
-  return { ok: true, how: 'default browser' };
 }
 
 /**
