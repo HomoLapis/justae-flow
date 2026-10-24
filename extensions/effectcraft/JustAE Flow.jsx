@@ -166,7 +166,10 @@ var JustAEFlowPanel = (function (thisObj) {
     return comp.name + ' · ' + pairs + ' marker shot' + (pairs === 1 ? '' : 's') + ' · ' + placeholders + ' placeholder' + (placeholders === 1 ? '' : 's');
   }
 
+  var lastRefresh = 0;
+
   function refresh() {
+    lastRefresh = new Date().getTime();
     compLine.text = compSummary();
     var r = request('GET', '/api/panel');
     if (r.error) { serverLine.text = '✖ ' + r.error; return; }
@@ -247,10 +250,20 @@ var JustAEFlowPanel = (function (thisObj) {
   showTool();
   if (win instanceof Window) { win.center(); win.show(); } else { win.layout.layout(true); }
 
-  refresh();
+  // A refresh that throws must not take the panel down with it: a repeating task that throws is
+  // cancelled for good.
+  function safeRefresh() { try { refresh(); } catch (e) { serverLine.text = '✖ ' + e; } }
+
+  // EffectCraft 0.11.1 did not run app.scheduleTask's repeating tasks in a test (a counter stayed
+  // at 0), so the panel also refreshes when the pointer moves over it, at most once a second, as
+  // well as after each of its buttons.
+  function refreshOnPointer() { if (new Date().getTime() - lastRefresh >= 1000) safeRefresh(); }
+  win.addEventListener('mouseover', refreshOnPointer);
+  win.addEventListener('mousemove', refreshOnPointer);
+
+  safeRefresh();
   var task = app.scheduleTask('JustAEFlowPanel.tick()', 1500, true);
   win.onClose = function () { app.cancelTask(task); };
 
-  // A repeating task that throws once is cancelled for good, and the panel would stop updating.
-  return { tick: function () { try { refresh(); } catch (e) { serverLine.text = '✖ ' + e; } } };
+  return { tick: safeRefresh };
 })(this);
