@@ -48,6 +48,7 @@ import {
   type JobManifest, type ShotFolders,
 } from '../lib/assets';
 import { ae, isErr, type CompInfo, type FitMode } from '../bridge/extendscript';
+import { serverHeaders } from '../bridge/server';
 
 interface UseGenerate {
   generate: () => Promise<void>;
@@ -628,6 +629,25 @@ function runShot(ctx: RunCtx): Promise<void> {
             }
           }
 
+          /*
+           * "Final" (the Featured section): a second job on this result before it is placed — MiniMax H3, then
+           * SeedVR2 ×2 — on the same resource, as the Comp tab's ×4 feeds its second pass with the first's result.
+           * The draft stays in the shot folder beside it.
+           */
+          const chain = useApp.getState().chains[record.id];
+          let chainNote: string | null = null;
+          if (chain && primary.isVideo) {
+            try {
+              const up = await runChained(provider, chain, primary.path, shot.output, (m) => setJ({ message: `${tag}${m}` }), {
+                ...wsCtx, meta: { workflowId: chain.then, slotSeconds, scaleWithSlot: true },
+              });
+              primary = { ...primary, path: up.path };
+              chainNote = `Final: ${chain.then} ×${chain.scale} on the draft (job ${up.jobId}); the draft is ${basename(saved.find((x) => x.isVideo)?.path ?? '')}.`;
+            } catch (e) {
+              chainNote = `Final: the second step (${chain.then}) failed — placed the draft. ${describe(e)}`;
+            }
+          }
+
           setJ({ resultPath: primary.path, resultIsVideo: primary.isVideo, message: `${tag}Saved · placing…` });
 
           if (s.defaults.autoImport) {
@@ -694,8 +714,8 @@ function runShot(ctx: RunCtx): Promise<void> {
               seconds: Math.round((Date.now() - submittedAt) / 100) / 10,
             },
             jobId,
-            notes: record.problems.length > 0 || masterNote
-              ? [...record.problems, ...(masterNote ? [masterNote] : [])]
+            notes: record.problems.length > 0 || masterNote || chainNote
+              ? [...record.problems, ...(masterNote ? [masterNote] : []), ...(chainNote ? [chainNote] : [])]
               : undefined,
             outputProfile: profile.id !== 'as-workflow' ? profile.id : undefined,
             tier: state.settings.pipeline.tier,
@@ -808,6 +828,48 @@ async function place(
     try { await ae.disableAdjustmentLayer(spec.segment.layerName, spec.segment.startTime, compId); } catch { /* non-fatal */ }
   }
   return null;
+}
+
+/* ─── The Final step of a Featured workflow ─────────────────────────── */
+
+/**
+ * SeedVR2 ×N on a result, as a job of its own: the server's bundled graph (official template
+ * utility_seedvr2_3b_int8_upscale_video), the result uploaded as its video, the colours kept with SeedVR2's own
+ * "wavelet" correction (measured closest to the original, core/comp/tools.ts KEEP_COLOUR_DEFAULT), 8-bit output
+ * (EffectCraft decodes 8-bit H.264 only). Written beside the draft as "<name>_x2.mp4".
+ */
+async function runChained(
+  provider: VideoProvider, chain: { then: string; scale: number }, file: string, dir: string,
+  say: (m: string) => void, ctx: { clientId: string; meta: { workflowId: string; slotSeconds: number | null; scaleWithSlot: boolean } },
+): Promise<{ path: string; jobId: string }> {
+  const r = await fetch(`/api/featured/${encodeURIComponent(chain.then)}/graph`, { headers: serverHeaders() });
+  if (!r.ok) throw new Error(`the server has no "${chain.then}" graph (HTTP ${r.status})`);
+  const graph = await r.json() as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  say(`Final: uploading the draft for ${chain.then} ×${chain.scale}…`);
+  const up = await provider.uploadInput(readFileAsBlob(file, mimeForPath(file)), basename(file));
+  for (const n of Object.values(graph)) {
+    if (n.class_type === 'LoadVideo') n.inputs.file = up.reference ?? up.name;
+    if (n.class_type === 'ResizeImageMaskNode' && 'resize_type.multiplier' in n.inputs) n.inputs['resize_type.multiplier'] = chain.scale;
+    if (n.class_type === 'SeedVR2PostProcessing') n.inputs.color_correction_method = 'wavelet';
+    if (n.class_type === 'CreateVideo') n.inputs.bit_depth = 8;
+  }
+  const { jobId } = await provider.submit(graph as never, ctx);
+  say(`Final: ${chain.then} ×${chain.scale} queued…`);
+  const outputs = await new Promise<OutputFile[]>((resolve, reject) => {
+    let got: OutputFile[] = [];
+    const stop = provider.watch(jobId, ctx, (ev) => {
+      if (ev.kind === 'progress') say(`Final: ${chain.then} ×${chain.scale} · ${Math.round(ev.value)}/${Math.round(ev.max)}`);
+      if (ev.kind === 'output') got = got.concat(ev.outputs);
+      if (ev.kind === 'done') { stop(); resolve(got); }
+      if (ev.kind === 'error') { stop(); reject(new Error(ev.message)); }
+    });
+  });
+  const all = outputs.length ? outputs : await provider.fetchOutputs(jobId);
+  const out = all.filter((o) => isVideoFile(o.filename)).pop();
+  if (!out) throw new Error(`${chain.then} finished without a video`);
+  const path = pathJoin(dir, basename(file).replace(/\.[^.]+$/, '') + `_x${chain.scale}.${out.filename.split('.').pop() ?? 'mp4'}`);
+  await writeBlobToFile(await provider.download(out), path);
+  return { path, jobId };
 }
 
 /* ─── small helpers ─────────────────────────────────────────────────── */

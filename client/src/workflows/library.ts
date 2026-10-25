@@ -10,6 +10,8 @@
  *   project  `<project>/JustAE-Flow/workflows/` next to the .aep, so a project
  *            handed to someone else carries the workflows that made it.
  *   builtin  the one bundled round-trip test.
+ *   bundled  the Featured workflows the JustAE Flow server ships (workflows/*.json),
+ *            built from official ComfyUI templates; read from GET /api/featured.
  *
  * Whatever the source, a record ends up holding both formats: the editor graph
  * (what you can reopen and edit) and the API graph (what /prompt accepts),
@@ -23,8 +25,9 @@ import { inspectWorkflow, type InspectedWorkflow } from './inspector';
 import { buildForm, type WorkflowForm } from './form';
 import { loadCapturedApi } from './capture';
 import { listFiles, readTextFile, writeTextFile, deleteFile, pathJoin, nodeAvailable } from '../lib/fs';
+import { serverHeaders } from '../bridge/server';
 
-export type WorkflowOrigin = 'server' | 'project' | 'builtin';
+export type WorkflowOrigin = 'server' | 'project' | 'builtin' | 'bundled';
 
 /** What the picker lists — cheap, no parsing. */
 export interface WorkflowSummary {
@@ -90,6 +93,14 @@ export async function listServerWorkflows(provider: VideoProvider): Promise<Work
   }));
 }
 
+/** The server's Featured workflows, as library entries ("★ LTX-2.5 · image to video"). */
+export async function listBundledWorkflows(): Promise<WorkflowSummary[]> {
+  const r = await fetch('/api/featured', { headers: serverHeaders() });
+  if (!r.ok) return [];
+  const { entries } = await r.json() as { entries: Array<{ id: string; name: string }> };
+  return entries.map((e) => ({ id: summaryId('bundled', e.id), name: `★ ${e.name}`, origin: 'bundled' as const, ref: e.id }));
+}
+
 export function projectWorkflowDir(projectAssetsDir: string): string {
   return pathJoin(projectAssetsDir, 'workflows');
 }
@@ -116,6 +127,11 @@ async function readRaw(summary: WorkflowSummary, provider: VideoProvider | null)
   }
   if (summary.origin === 'project') {
     return JSON.parse(readTextFile(summary.ref)) as unknown;
+  }
+  if (summary.origin === 'bundled') {
+    const r = await fetch(`/api/featured/${encodeURIComponent(summary.ref)}/graph`, { headers: serverHeaders() });
+    if (!r.ok) throw new Error(`The JustAE Flow server did not give "${summary.name}" (HTTP ${r.status}).`);
+    return await r.json() as unknown;
   }
   throw new Error(`Unknown workflow source: ${summary.origin}`);
 }

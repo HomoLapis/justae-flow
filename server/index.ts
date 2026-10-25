@@ -20,6 +20,7 @@ import { makeServices } from './services.ts';
 import { taskOf } from './resources.ts';
 import { activeResource, resourceRoutes } from './api-resources.ts';
 import { compRoutes } from './api-comp.ts';
+import { featuredRoutes } from './api-featured.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
@@ -231,6 +232,7 @@ const routes: Array<[string, RegExp, Handler]> = [
   ['GET', /^\/api\/media\/(.+)$/, (req, res, m) => serveFile(res, engine.mediaDir, decodeURIComponent(m[1]), req)],
   ...resourceRoutes(services, engine),
   ...compRoutes(engine),
+  ...featuredRoutes(services, library),
 ];
 
 const server = createServer(async (req, res) => {

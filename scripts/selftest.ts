@@ -26,6 +26,7 @@ import type { Box, CanvasHost, CanvasPlaceRequest, CompRequest, HostMarker, Host
 import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, SEAM_GUARD, vaceGenSize } from '../core/reframe/outpaint.ts';
 import { KEEP_COLOUR_DEFAULT, ltxExtendFrames, toolById } from '../core/comp/tools.ts';
 import { compRoutes } from '../server/api-comp.ts';
+import { FEATURED, featuredRoutes, featuredView } from '../server/api-featured.ts';
 import type { Settings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
@@ -788,8 +789,8 @@ console.log('comp tab');
   const ups = members.filter((c) => c.tool?.id === 'upscale');
   check('a Social pack queues one reframe per format (2), one after the other', queued === 2 && reframes.length === 2 && reframes.every((c) => c.status === 'done'), members.map((c) => `${c.tool?.id} ${c.status} ${c.error ?? ''}`).join('; '));
   check('…and each reframe\'s result comp is upscaled ×2 after it, in the same group', ups.length === 2 && ups.every((u) => u.status === 'done' && reframes.some((r) => r.versions.at(-1)?.compId === u.compId))
-    && submits.slice(sub0).filter((x) => Object.values(x.prompt).some((n) => (n as { class_type: string }).class_type === 'SeedVR2PostProcessing')).length === 2,
-    `${ups.map((u) => `${u.status} ${u.compId} ${u.progress?.phase ?? ''} ${u.error ?? ''}`).join('; ')} | ${reframes.map((r) => r.versions.at(-1)?.compId).join(',')} | ${submits.length - sub0} ${submits.slice(sub0).map((x) => Object.values(x.prompt).map((n) => (n as { class_type: string }).class_type).filter((c) => /Vace|SeedVR2Post|LoadVideo/.test(c)).join('+')).join(' / ')}`);
+    && submits.slice(sub0).filter((x) => Object.values(x.prompt).some((n) => (n as unknown as { class_type: string }).class_type === 'SeedVR2PostProcessing')).length === 2,
+    `${ups.map((u) => `${u.status} ${u.compId} ${u.progress?.phase ?? ''} ${u.error ?? ''}`).join('; ')} | ${reframes.map((r) => r.versions.at(-1)?.compId).join(',')} | ${submits.length - sub0} ${submits.slice(sub0).map((x) => Object.values(x.prompt).map((n) => (n as unknown as { class_type: string }).class_type).filter((c) => /Vace|SeedVR2Post|LoadVideo/.test(c)).join('+')).join(' / ')}`);
   const gv = await engine.compView();
   check('the Comp tab shows the pack\'s four runs together (the upscales belong to other comps)', gv.runs.filter((r) => r.group?.id === gId).length === 4);
   // A pack's master: EffectCraft renders the last comp, ffmpeg writes ProRes 4444 (only with ffmpeg on the PATH).
@@ -855,6 +856,36 @@ console.log('comp routes');
   srv.close();
   await host.openComp(1);
   await engine.sync();
+}
+
+console.log('featured workflows');
+{
+  await services.caps.get('local', true);
+  const entries = featuredView(services, library);
+  const h3 = entries.find((e) => e.id === 'h3-flf');
+  check('Featured lists the eight entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 8 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
+  check('…from the probes: Local ✓ where the local ComfyUI has every node and model', entries.find((e) => e.id === 'ltx25-i2v')?.runsOn.find((r) => r.resource === 'local')?.status === 'ok' && entries.every((e) => e.runnable === e.runsOn.some((r) => r.status === 'ok' || r.status === 'proven')));
+  check('MiniMax H3 first + last frame: Draft / Final (Final = SeedVR2 ×2 after it) and its licence note',
+    h3?.tiers?.final.then === 'seedvr2-upscale' && h3.tiers.final.scale === 2 && /MiniMax commercial licence/.test(h3.licenceNote ?? '') && /DA VERIFICARE/.test(h3.licenceNote ?? ''));
+  const h3g = library.graph('h3-flf')!;
+  check('the H3 graph takes a first and a last frame, on the base model (no turbo LoRA left in it)',
+    JSON.stringify(h3g['105:104'].inputs.first_frame) === '["114",0]' && JSON.stringify(h3g['105:104'].inputs.last_frame) === '["130",0]' && !Object.values(h3g).some((n) => n.class_type === 'LoraLoaderModelOnly'));
+  const routes = featuredRoutes(services, library);
+  const { createServer: mk } = await import('node:http');
+  const srv = mk(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    for (const [method, re, h] of routes) { const m = re.exec(url.pathname); if (m && req.method === method) return void (await h(req, res, m, url)); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  const g = await fetch(`${base}/api/featured/ltx25-i2v/graph`);
+  const graph = await g.json() as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  const remaps = JSON.parse(decodeURIComponent(g.headers.get('x-flow-remaps') ?? '[]')) as string[];
+  check('GET /api/featured/:id/graph: the bundled graph with the local precision swapped in (int8 → nvfp4 here)',
+    g.ok && Object.values(graph).some((n) => n.inputs.unet_name === 'ltx-2.5-22b-distilled-transformer-nvfp4.safetensors') && remaps.some((r) => /nvfp4/.test(r)));
+  check('…and only for Featured entries', (await fetch(`${base}/api/featured/sam3-reframe/graph`)).status === 404);
+  srv.close();
 }
 
 const sidecar = JSON.parse(readFileSync(join(projectDir, 'p.justae-flow.json'), 'utf8')) as { cards: unknown[] };

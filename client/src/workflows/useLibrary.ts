@@ -14,7 +14,7 @@ import { useResources } from '../lib/resources';
 import type { ObjectInfo, VideoProvider } from '../providers/types';
 import { HttpError } from '../providers/ComfyHttpProvider';
 import {
-  listProjectWorkflows, listServerWorkflows, materialize, initialValues,
+  listBundledWorkflows, listProjectWorkflows, listServerWorkflows, materialize, initialValues,
   type WorkflowRecord, type WorkflowSummary,
 } from './library';
 import { watchWorkflowFolder } from './watch';
@@ -140,6 +140,8 @@ export function useLibrary(): LibraryApi {
         // No saved project yet — the project folder simply has nothing to offer.
       }
     }
+    // The server's Featured workflows (official templates it ships), so "Use it" can select them like any other.
+    try { found.push(...(await listBundledWorkflows())); } catch { /* an older server has none */ }
 
     setLibrary(dedupe(found));
     setLibraryError(problem);

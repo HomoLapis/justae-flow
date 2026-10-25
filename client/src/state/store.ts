@@ -381,6 +381,13 @@ interface AppState {
   promptTargets: Record<string, string>;
   setPromptTarget: (workflowId: string, fieldId: string) => void;
 
+  /**
+   * A second step run on a workflow's result before it is placed, per workflow (the Featured section's "Final":
+   * MiniMax H3, then SeedVR2 ×2). Absent = the workflow's own result. Persisted, like the prompt target.
+   */
+  chains: Record<string, { then: string; scale: number }>;
+  setChain: (workflowId: string, chain: { then: string; scale: number } | null) => void;
+
   /** Saved per-workflow values, reused the next time it's picked. */
   presets: Record<string, WorkflowPreset>;
   savePreset: (workflowId: string, preset: WorkflowPreset) => void;
@@ -585,6 +592,14 @@ export const useApp = create<AppState>((set) => ({
     const next = { ...s.promptTargets, [workflowId]: fieldId };
     lsSet('promptTargets', next);
     return { promptTargets: next };
+  }),
+
+  chains: lsGet<Record<string, { then: string; scale: number }>>('chains', {}),
+  setChain: (workflowId, chain) => set((s) => {
+    const next = { ...s.chains };
+    if (chain) next[workflowId] = chain; else delete next[workflowId];
+    lsSet('chains', next);
+    return { chains: next };
   }),
 
   presets: lsGet<Record<string, WorkflowPreset>>('presets', {}),

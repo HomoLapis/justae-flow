@@ -141,7 +141,7 @@ export function WorkflowSearch({
         </span>
         {active && (
           <span className="shrink-0 text-[10px] text-ink-mute">
-            {active.origin === 'server' ? serverLabel : 'project'}
+            {active.origin === 'server' ? serverLabel : active.origin === 'bundled' ? 'JustAE Flow' : 'project'}
           </span>
         )}
         <span className={'shrink-0 text-[9px] text-ink-mute transition-transform ' + (showList ? 'rotate-180' : '')}>
@@ -208,7 +208,7 @@ export function WorkflowSearch({
               {/* Where it lives decides whether the editor can open it, so it
                   travels with the name rather than being a separate section. */}
               <span className="shrink-0 text-[10px] text-ink-mute">
-                {item.summary.origin === 'server' ? (item.folder || serverLabel) : 'project'}
+                {item.summary.origin === 'server' ? (item.folder || serverLabel) : item.summary.origin === 'bundled' ? 'JustAE Flow' : 'project'}
               </span>
             </button>
           ))}

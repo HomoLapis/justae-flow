@@ -32,6 +32,7 @@ import { openInBrowser } from '../bridge/csInterface';
 import { loadIntoWindow, openEditorWindow } from '../workflows/editorWindow';
 import { CaptureCard } from './CaptureCard';
 import { WorkflowSearch } from './WorkflowSearch';
+import { FeaturedSection } from './FeaturedSection';
 
 export function WorkflowTab(): JSX.Element {
   const library = useApp((s) => s.library);
@@ -192,6 +193,9 @@ export function WorkflowTab(): JSX.Element {
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto px-3.5 pb-8 pt-3.5">
+      {/* ── Featured: bundled workflows, with where each runs ── */}
+      <FeaturedSection onUse={async (id) => { setNotice(null); if (!library.some((w) => w.id === id)) await refresh(); await select(id); }} />
+
       {/* ── The library ────────────────────────────────────── */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
@@ -241,7 +245,8 @@ export function WorkflowTab(): JSX.Element {
             <button className="chip" onClick={() => void copyToProject()} disabled={busy}>
               Copy next to project
             </button>
-            <button className="chip" onClick={() => void remove()} disabled={busy}>Delete</button>
+            {/* A Featured workflow ships with JustAE Flow: there is no file of the user's to delete. */}
+            {active.origin !== 'bundled' && <button className="chip" onClick={() => void remove()} disabled={busy}>Delete</button>}
           </div>
         )}
       </section>
