@@ -24,7 +24,7 @@ import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import type { CardStatus } from '../core/storyboard/types.ts';
 import type { Box, CanvasHost, CanvasPlaceRequest, CompRequest, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, RenderRequest, RenderResult, TimelineHost } from '../hosts/types.ts';
 import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, SEAM_GUARD, vaceGenSize } from '../core/reframe/outpaint.ts';
-import { KEEP_COLOUR_DEFAULT, ltxExtendFrames, toolById } from '../core/comp/tools.ts';
+import { extendGuide, KEEP_COLOUR_DEFAULT, ltxExtendFrames, ltxGuidedFrames, toolById } from '../core/comp/tools.ts';
 import { compRoutes } from '../server/api-comp.ts';
 import { FEATURED, featuredRoutes, featuredView } from '../server/api-featured.ts';
 import type { Settings } from '../server/config.ts';
@@ -75,7 +75,13 @@ for (const m of library.list()) {
   const broken = Object.entries(m.bindings).filter(([, ref]) => getRef(api, ref) === undefined);
   check(`${m.id}: every binding points at a real input`, broken.length === 0, broken.map(([k]) => k).join(', '));
   check(`${m.id}: open weights, licence named`, m.license.openWeights && m.license.weights.length > 3);
-  check(`${m.id}: has a Save node with a justae-flow prefix`, Object.values(api).some((n) => /^Save/.test(n.class_type) && String(n.inputs.filename_prefix ?? '').startsWith('justae-flow/')));
+  if (m.id.startsWith('ltx')) {
+    check(`${m.id}: the LTX-2.x Community License as the README states it, with its link`,
+      m.license.weights.startsWith('LTX-2.x Community License (11 Aug 2026): commercial use permitted for entities under USD 10M annual revenue (affiliates counted together), outputs belong to the user, published machine-generated content must be disclosed as such')
+      && m.license.weights.includes('https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x'));
+  }
+  if (m.output === 'text') check(`${m.id}: answers in words, through its PreviewAny node`, api[m.text?.node ?? '']?.class_type === 'PreviewAny');
+  else check(`${m.id}: has a Save node with a justae-flow prefix`, Object.values(api).some((n) => /^Save/.test(n.class_type) && String(n.inputs.filename_prefix ?? '').startsWith('justae-flow/')));
   check(`${m.id}: no partner/API nodes`, !Object.values(api).some((n) => /Api|API/.test(n.class_type)));
 }
 {
@@ -196,6 +202,13 @@ const fake = createServer(async (req, res) => {
     submits.push(p);
     const classes = Object.values(p.prompt as Record<string, { class_type: string }>).map((n) => n.class_type);
     const isVideo = classes.includes('SaveVideo');
+    // Describe the clip: TextGenerate → PreviewAny shows words, no file.
+    if (classes.includes('TextGenerate')) {
+      setTimeout(() => {
+        history[p.prompt_id] = { status: { status_str: 'success' }, outputs: { 7: { text: ['<think>frames</think>Description: A small sailboat glides to the right on a calm lake at dawn.'] } } };
+      }, 150);
+      return json({ prompt_id: p.prompt_id });
+    }
     // The tracking workflow saves one small mask per frame.
     const track = classes.includes('SAM3_VideoTrack') && !isVideo;
     const files = track
@@ -271,7 +284,15 @@ class FakeHost implements TimelineHost {
       selectedLayers: this.selected, time: 0,
     };
   }
-  async frameAt(t: number, out: string): Promise<string> { this.frames.push({ time: t, out }); (await import('node:fs')).writeFileSync(out, 'png'); return out; }
+  /** frameAt writes a real (tiny) PNG, for the ffmpeg routes (Extend's guide, Describe the clip). */
+  realFrames = false;
+  kinds = new Map<number, string>();
+  async frameAt(t: number, out: string): Promise<string> {
+    this.frames.push({ time: t, out });
+    if (this.realFrames) (await import('node:child_process')).spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=gray:size=64x36', '-frames:v', '1', out]);
+    else (await import('node:fs')).writeFileSync(out, 'png');
+    return out;
+  }
   async setCompDuration(s: number): Promise<void> { this.duration = s; }
   async tagMarker(i: number, id: string): Promise<void> { this.markers[i].cardId = id; }
   async setMarkerComment(i: number, c: string): Promise<void> { this.markers[i].comment = c; }
@@ -290,6 +311,7 @@ class FakeHost implements TimelineHost {
   async buildOutpaint(r: OutpaintRequest): Promise<{ compId: number; fillLayer: number; fillItem: number; clipLayer: number }> { this.outpaints.push(r); this.compId = this.nextId++; return { compId: this.compId, fillLayer: this.nextId++, fillItem: this.nextId++, clipLayer: this.nextId++ }; }
   async replaceFootage(itemId: number, file: string): Promise<void> { const it = this.items.get(itemId); if (it) it.path = file; }
   async coverComp(): Promise<void> {}
+  async fitComp(): Promise<void> {}
   async matchLayer(): Promise<void> {}
   async createPlaceholder(r: { name: string; width: number; height: number; duration: number; time: number }): Promise<{ itemId: number; layerId: number }> {
     const itemId = this.nextId++; const layerId = this.nextId++;
@@ -298,7 +320,7 @@ class FakeHost implements TimelineHost {
     return { itemId, layerId };
   }
   async sourceOfLayer(id: number): Promise<number | null> { return this.layers.find((l) => l.id === id)?.item ?? null; }
-  async itemInfo(id: number): Promise<ItemInfo | null> { const it = this.items.get(id); return it ? { id, name: 'x', path: it.path, kind: 'video', width: it.width, height: it.height, duration: it.duration ?? 4, frameRate: 24, comment: '' } : null; }
+  async itemInfo(id: number): Promise<ItemInfo | null> { const it = this.items.get(id); return it ? { id, name: 'x', path: it.path, kind: this.kinds.get(id) ?? 'video', width: it.width, height: it.height, duration: it.duration ?? 4, frameRate: 24, comment: '' } : null; }
   /** A render that is a real (tiny) movie, for the ffmpeg masters. */
   realRender = false;
   async renderRange(r: RenderRequest): Promise<RenderResult> {
@@ -720,36 +742,103 @@ console.log('comp tab');
     keep.params['66:59.color_correction_method'] === KEEP_COLOUR_DEFAULT && KEEP_COLOUR_DEFAULT === 'wavelet' && model.params['66:59.color_correction_method'] === 'none' && !keep.choices?.method.includes('none'));
 
   // Extend.
-  check('LTX extend frames: 8k + 1, one more than shown (24 fps 2 s → 49, 25 fps → 57, 30 fps → 65, 5 s → 121)',
+  check('LTX extend frames from one frame: 8k + 1, one more than shown (24 fps 2 s → 49, 25 fps → 57, 30 fps → 65, 5 s → 121)',
     ltxExtendFrames(2, 24) === 49 && ltxExtendFrames(2, 25) === 57 && ltxExtendFrames(2, 30) === 65 && ltxExtendFrames(5, 24) === 121);
+  check('LTX extend frames with a video guide: the guide (8n + 1) then a multiple of 8 (17 + 48 = 65, 17 + 56 = 73, 17 + 64 = 81, 17 + 120 = 137, 9 + 48 = 57)',
+    ltxGuidedFrames(2, 24, 17) === 65 && ltxGuidedFrames(2, 25, 17) === 73 && ltxGuidedFrames(2, 30, 17) === 81 && ltxGuidedFrames(5, 24, 17) === 137 && ltxGuidedFrames(2, 24, 9) === 57
+    && [65, 73, 81, 137, 57].every((n) => (n - 1) % 8 === 0));
+  check('the guide is the longest 8n + 1 the source has: 17, else 9, else none', extendGuide(400, [17, 9]) === 17 && extendGuide(16, [17, 9]) === 9 && extendGuide(8, [17, 9]) === undefined);
+  const extM = library.get('ltx25-extend')!.manifest;
+  const extG = library.graph('ltx25-extend')!;
+  check('the Extend workflow comes from the official LTX-2.5 FLF2V template: LTXVAddGuide at frame 0, strength 1, LTXVCropGuides before the decode, no last-frame guide',
+    extM.source.template === 'video_ltx2_5_flf2v' && extM.task === 'extend-video' && JSON.stringify(extM.guide?.frames) === '[17,9]'
+    && Object.values(extG).filter((n) => n.class_type === 'LTXVAddGuide').length === 1 && extG['251:206'].inputs.frame_idx === 0 && extG['251:206'].inputs.strength === 1
+    && JSON.stringify(extG['251:219'].inputs.samples) === '["251:200",2]' && extG['251:200'].class_type === 'LTXVCropGuides' && extG['251:213'].inputs['resize_type.crop'] === 'disabled'
+    && !extG['39'] && extG['300'].class_type === 'LoadVideo' && extG['302'].class_type === 'ImageFromBatch');
   const extPlan = toolById('extend')!.plan({ ...compSrc, kind: 'comp', span: [0, 12], compSeconds: 12, compFps: 24 }, { seconds: 2 }, man);
-  check('the Extend plan: LTX-2.5 i2v, a layer at the out point, the comp lengthened, the frame it starts from',
-    extPlan.ok && extPlan.workflowId === 'ltx25-i2v' && /new layer at 12\.0 s/.test(extPlan.makes) && extPlan.notes.some((n) => /12\.0 s → 14\.0 s/.test(n)) && extPlan.output?.height === 704);
+  check('the Extend plan from footage: the video-guided workflow, "continues the last 0.7 s of motion", 65 frames, a layer at the out point, the comp lengthened',
+    extPlan.ok && extPlan.workflowId === 'ltx25-extend' && extPlan.motion?.frames === 17 && Math.abs(extPlan.motion.seconds - 17 / 24) < 1e-9
+    && /continues the last 0\.7 s of motion/.test(extPlan.makes) && /new layer at 12\.0 s/.test(extPlan.makes) && extPlan.notes.some((n) => /65 frames/.test(n))
+    && extPlan.notes.some((n) => /12\.0 s → 14\.0 s/.test(n)) && extPlan.output?.height === 736 && extPlan.params['@guide'] === 17 && extPlan.variant === '+2·g17');
+  const stillPlan = toolById('extend')!.plan({ ...compSrc, kind: 'layer', media: 'image', span: [0, 4], compSeconds: 12, compFps: 24 }, { seconds: 2 }, man);
+  check('from a still: the single-frame path (LTX-2.5 i2v), said on the card', stillPlan.ok && stillPlan.workflowId === 'ltx25-i2v' && !stillPlan.motion && stillPlan.notes.some((n) => /A still/.test(n)) && stillPlan.variant === '+2');
+  const shortPlan = toolById('extend')!.plan({ ...compSrc, kind: 'layer', span: [0, 0.3], compSeconds: 12, compFps: 24 }, { seconds: 2 }, man);
+  check('from a source shorter than 9 frames: the single frame too, and why', shortPlan.ok && shortPlan.workflowId === 'ltx25-i2v' && shortPlan.notes.some((n) => /fewer than the 9/.test(n)));
+  const ffOk = (await import('node:child_process')).spawnSync('ffmpeg', ['-version']).status === 0;
   host.workArea = [1, 4];
   await engine.sync();
   const extWa = await engine.planComp({ tool: 'extend', source: 'workArea', options: { seconds: 2 }, cap: 1 });
-  check('Extend takes only a frame: the render cap is not warned about', extWa.ok && !extWa.warnings.some((w) => /render stops/.test(w)));
-  const beforeFrames = host.frames.length;
-  const { id: exId } = await engine.runCompTool({ tool: 'extend', source: 'workArea', options: { seconds: 2 }, cap: 8, prompt: 'the boat sails on' });
-  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === exId)?.status ?? ''));
-  const exc = engine.state().cards.find((c) => c.id === exId)!;
-  const exSent = submits.at(-1)!.prompt as never;
-  const ltxM = library.get('ltx25-i2v')!.manifest;
-  const exLayer = host.layers.find((l) => l.id === exc.placed?.layerId);
-  const lengthExpr = Object.values(exSent as Record<string, { class_type: string; inputs: Record<string, unknown> }>).find((n) => n.class_type === 'ComfyMathExpression' && Array.isArray(n.inputs['values.a']) && (n.inputs['values.a'] as unknown[])[0] === '398:362');
-  check('an Extend run finishes', exc.status === 'done' && exc.versions.length === 1, exc.error);
-  check('…from the work area\'s last frame (4 s − 1 frame), nothing rendered', host.frames.slice(beforeFrames).some((f) => Math.abs(f.time - (4 - 1 / 24)) < 1e-9) && host.renders.every((r) => !r.dir.endsWith(exId)));
-  check('…LTX-2.5 asked for exactly 49 frames at 24 fps, 1280×704, from the uploaded frame',
-    lengthExpr?.inputs.expression === '49' && getRef(exSent, ltxM.bindings.fps) === 24 && getRef(exSent, ltxM.bindings.width) === 1280 && getRef(exSent, ltxM.bindings.height) === 704 && getRef(exSent, ltxM.bindings.image) === 'uploaded.png');
-  check('…a new layer from the out point, its first frame (the repeat) trimmed off, 2 s long',
-    !!exLayer && exLayer.in === 4 && exLayer.out === 6 && Math.abs(exLayer.start - (4 - 1 / 24)) < 1e-9 && exc.versions[0].compare?.result[0][0] === exLayer.id);
+  check('Extend renders nothing: the render cap is not warned about', extWa.ok && !extWa.warnings.some((w) => /render stops/.test(w)));
+  if (ffOk) {
+    host.realFrames = true;
+    const beforeFrames = host.frames.length;
+    const { id: exId } = await engine.runCompTool({ tool: 'extend', source: 'workArea', options: { seconds: 2 }, cap: 8, prompt: 'the boat sails on' });
+    await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === exId)?.status ?? ''));
+    const exc = engine.state().cards.find((c) => c.id === exId)!;
+    const exSent = submits.at(-1)!.prompt as never;
+    const exLayer = host.layers.find((l) => l.id === exc.placed?.layerId);
+    const lengthExpr = Object.values(exSent as Record<string, { class_type: string; inputs: Record<string, unknown> }>).find((n) => n.class_type === 'ComfyMathExpression' && Array.isArray(n.inputs['values.a']) && (n.inputs['values.a'] as unknown[])[0] === '251:198');
+    // The 17 frames of the guide (the result's picture is taken after them).
+    const taken = host.frames.slice(beforeFrames, beforeFrames + 17);
+    check('a guided Extend run finishes', exc.status === 'done' && exc.versions.length === 1 && exc.workflowId === 'ltx25-extend', exc.error);
+    check('…from the work area\'s last 17 frames (frames 79–95 of the comp, each a tenth of a frame in), nothing rendered',
+      taken.length === 17 && Math.abs(taken[0].time - 79.1 / 24) < 1e-9 && Math.abs(taken[16].time - 95.1 / 24) < 1e-9 && host.renders.every((r) => !r.dir.endsWith(exId)), taken.map((f) => f.time.toFixed(3)).join(' '));
+    check('…LTX-2.5 asked for 65 frames at 24 fps, 1280×736, the last 17 frames of the uploaded clip as the guide',
+      lengthExpr?.inputs.expression === '65' && getRef(exSent, extM.bindings.fps) === 24 && getRef(exSent, extM.bindings.width) === 1280 && getRef(exSent, extM.bindings.height) === 736
+      && getRef(exSent, extM.guide!.start) === -17 && getRef(exSent, extM.guide!.take) === 17 && getRef(exSent, extM.bindings.video) === 'uploaded.png');
+    check('…a new layer from the out point, the 17 guide frames trimmed off, 2 s long',
+      !!exLayer && exLayer.in === 4 && exLayer.out === 6 && Math.abs(exLayer.start - (4 - 17 / 24)) < 1e-9 && exc.versions[0].compare?.result[0][0] === exLayer.id);
+    host.realFrames = false;
+  } else {
+    console.log('  · ffmpeg is not on the PATH: the guided Extend run is not checked here');
+  }
+  // The single-frame path still runs end to end (a layer that is a still).
   host.workArea = undefined;
+  const stillItem = host.nextId++;
+  host.items.set(stillItem, { path: join(projectDir, 'still.png'), width: 1280, height: 720 });
+  (await import('node:fs')).writeFileSync(join(projectDir, 'still.png'), 'png');
+  host.layers.push({ id: 960, index: host.layers.length + 1, name: 'still.png', in: 0, out: 3, start: 0, label: 'None', type: 'Footage', item: stillItem, visible: true });
+  host.kinds.set(stillItem, 'still');
+  host.selected = [960];
+  await engine.sync();
+  const { id: exS } = await engine.runCompTool({ tool: 'extend', source: 'layer', layerId: 960, options: { seconds: 2 }, cap: 8, prompt: 'the boat sails on' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === exS)?.status ?? ''));
+  const exsc = engine.state().cards.find((c) => c.id === exS)!;
+  const exsSent = submits.at(-1)!.prompt as never;
+  const ltxM = library.get('ltx25-i2v')!.manifest;
+  const exsLayer = host.layers.find((l) => l.id === exsc.placed?.layerId);
+  check('Extend from a still runs the single-frame path: LTX-2.5 i2v, 49 frames, the still uploaded, the repeat trimmed',
+    exsc.status === 'done' && exsc.workflowId === 'ltx25-i2v' && getRef(exsSent, ltxM.bindings.image) === 'uploaded.png' && !!exsLayer && exsLayer.in === 3 && Math.abs(exsLayer.start - (3 - 1 / 24)) < 1e-9, exsc.error);
+  host.layers = host.layers.filter((l) => l.id !== 960 && l.id !== exsc.placed?.layerId);
+  host.selected = [];
   await engine.sync();
   const { id: ex2 } = await engine.runCompTool({ tool: 'extend', source: 'comp', options: { seconds: 4 }, cap: 8, prompt: 'the boat sails on' });
-  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === ex2)?.status ?? ''));
-  check('Extend from the whole comp lengthens it: 12 s → 16 s, the layer at 12 s', host.duration === 16 && host.layers.some((l) => l.id === engine.state().cards.find((c) => c.id === ex2)?.placed?.layerId && l.in === 12 && l.out === 16));
+  if (ffOk) {
+    host.realFrames = true;
+    await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === ex2)?.status ?? ''));
+    host.realFrames = false;
+    check('Extend from the whole comp lengthens it: 12 s → 16 s, the layer at 12 s', host.duration === 16 && host.layers.some((l) => l.id === engine.state().cards.find((c) => c.id === ex2)?.placed?.layerId && l.in === 12 && l.out === 16));
+  } else {
+    await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === ex2)?.status ?? ''));
+    check('without ffmpeg, a guided Extend says what it needs', /ffmpeg/.test(engine.state().cards.find((c) => c.id === ex2)?.error ?? ''));
+  }
   host.duration = 12;
   await engine.sync();
+
+  // Describe the clip: Qwen3-VL on the local ComfyUI (the official template llm_qwen3vl_text_gen), into the prompt.
+  const dM = library.get('describe-clip')!.manifest;
+  check('the describe workflow: the official Qwen3-VL text template, several frames in, Apache-2.0, not offered to the panel',
+    dM.source.template === 'llm_qwen3vl_text_gen' && dM.output === 'text' && dM.text?.node === '7' && /Apache-2\.0/.test(dM.license.weights)
+    && library.graph('describe-clip')!['6'].inputs.image?.toString() === '10,0' && !engine.state().workflows.some((w) => w.id === 'describe-clip'));
+  const dv = await engine.compView();
+  check('the Comp tab offers Describe the clip when the local ComfyUI has the node and the model', dv.describe.available && dv.describe.model === 'qwen3vl_4b_fp8_scaled.safetensors', JSON.stringify(dv.describe));
+  if (ffOk) {
+    host.realFrames = true;
+    const d = await engine.describeClip({ source: 'comp', focus: 'end' });
+    host.realFrames = false;
+    const dSent = submits.at(-1)!.prompt as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    check('…it reads four frames of the last 3 s and returns the text, cleaned', d.text === 'A small sailboat glides to the right on a calm lake at dawn.' && d.frames === 4 && Math.abs(d.times[3] - (12 - 1 / 24)) < 1e-9 && /last seconds/.test(String(dSent['6'].inputs.prompt)), JSON.stringify(d));
+  }
 
   // Slow motion / fps.
   const sp = toolById('slowmo')!.plan({ ...compSrc, seconds: 2 }, { mode: 'slow2', engine: 'rife' }, man);
@@ -757,10 +846,10 @@ console.log('comp tab');
     sp.ok && sp.workflowId === 'interp-rife' && /95 frames/.test(sp.makes) && sp.output?.fps === 24 && Math.abs(sp.output.seconds - 95 / 24) < 1e-9 && sp.params['@audio'] === false && sp.params['16:9.value'] === 2 && sp.params['16:13.value'] === false);
   const fp2 = toolById('slowmo')!.plan({ ...compSrc, fps: 25, seconds: 2 }, { mode: 'fps2', engine: 'film' }, man);
   check('25 → 50 fps plan: the same length, sound kept, FILM is the template as it ships', fp2.ok && fp2.output?.fps === 50 && fp2.workflowId === 'interp-film' && fp2.params['16:13.value'] === true && fp2.params['@audio'] === true);
-  check('GIMM-VFI says its licence is non-commercial', toolById('slowmo')!.plan(compSrc, { engine: 'gimm' }, man).warnings.some((w) => /non-commercial/.test(w)));
-  check('the interpolation manifests: the official template, RIFE and GIMM-VFI in place of its interpolator',
-    ['interp-rife', 'interp-film', 'interp-gimm'].every((id) => library.get(id)?.manifest.source.template === 'utility_video_frame_interpolation')
-    && library.graph('interp-rife')!['16:2'].class_type === 'RIFE VFI' && library.graph('interp-gimm')!['16:2'].class_type === 'GIMMVFI_interpolate' && library.graph('interp-film')!['16:2'].class_type === 'FrameInterpolate');
+  check('GIMM-VFI is not offered (S-Lab 1.0, non-commercial): asked for, the card falls back to RIFE', toolById('slowmo')!.plan(compSrc, { engine: 'gimm' }, man).workflowId === 'interp-rife' && !library.get('interp-gimm'));
+  check('the interpolation manifests: the official template, RIFE in place of its interpolator, FILM as it ships',
+    ['interp-rife', 'interp-film'].every((id) => library.get(id)?.manifest.source.template === 'utility_video_frame_interpolation')
+    && library.graph('interp-rife')!['16:2'].class_type === 'RIFE VFI' && library.graph('interp-film')!['16:2'].class_type === 'FrameInterpolate');
   const { id: smId } = await engine.runCompTool({ tool: 'slowmo', source: 'comp', options: { mode: 'slow2', engine: 'rife' }, cap: 8 });
   await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === smId)?.status ?? ''));
   const smc = engine.state().cards.find((c) => c.id === smId)!;
@@ -771,6 +860,21 @@ console.log('comp tab');
   await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === fpsId)?.status ?? ''));
   const fpsSent = submits.at(-1)!.prompt as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
   check('24 → 48 fps: a comp "Comp · 48 fps" at 48 fps, the sound kept', host.comps.at(-1)?.name === 'Comp · 48 fps' && host.comps.at(-1)?.fps === 48 && fpsSent['16:13'].inputs.value === true && 'audio' in fpsSent['16:5'].inputs);
+
+  // A queued run does not take the user's comp away (decided 26 Oct): two runs queued from comp 1; the first one's
+  // result opens (the user was on comp 1), the second one's does not — its comp is offered in Results.
+  await host.openComp(1);
+  await engine.sync();
+  const sideCards = (): import('../core/storyboard/types.ts').Card[] => (engine as unknown as { sidecar: { cards: import('../core/storyboard/types.ts').Card[] } }).sidecar.cards;
+  const { id: q1 } = await engine.runCompTool({ tool: 'slowmo', source: 'comp', options: { mode: 'slow4', engine: 'rife' }, cap: 8 });
+  const { id: q2 } = await engine.runCompTool({ tool: 'slowmo', source: 'comp', options: { mode: 'fps2', engine: 'film' }, cap: 8 });
+  await until(() => [q1, q2].every((id) => ['done', 'error'].includes(sideCards().find((c) => c.id === id)?.status ?? '')), 30000);
+  const r1 = sideCards().find((c) => c.id === q1)!.versions.at(-1)?.compId;
+  const r2 = sideCards().find((c) => c.id === q2)!.versions.at(-1)?.compId;
+  check('a queued run leaves the comp the user is on in front, and says where its result is',
+    r1 !== undefined && r2 !== undefined && r1 !== r2 && host.compId === r1 && /ready — Open comp in Results/.test(engine.state().notice ?? ''), `front ${host.compId}, r1 ${r1}, r2 ${r2}, ${engine.state().notice}`);
+  await host.openComp(1);
+  await engine.sync();
 
   // Social pack: the reframes in series, each one's upscale queued after it, one group.
   const pack = toolById('social')!.plan(compSrc, { formats: '9:16,1:1,16:9', quality: 'draft', upscale: true }, man);
@@ -866,7 +970,7 @@ console.log('featured workflows');
   check('Featured lists the eight entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 8 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
   check('…from the probes: Local ✓ where the local ComfyUI has every node and model', entries.find((e) => e.id === 'ltx25-i2v')?.runsOn.find((r) => r.resource === 'local')?.status === 'ok' && entries.every((e) => e.runnable === e.runsOn.some((r) => r.status === 'ok' || r.status === 'proven')));
   check('MiniMax H3 first + last frame: Draft / Final (Final = SeedVR2 ×2 after it) and its licence note',
-    h3?.tiers?.final.then === 'seedvr2-upscale' && h3.tiers.final.scale === 2 && /MiniMax commercial licence/.test(h3.licenceNote ?? '') && /DA VERIFICARE/.test(h3.licenceNote ?? ''));
+    h3?.tiers?.final.then === 'seedvr2-upscale' && h3.tiers.final.scale === 2 && /MiniMax commercial licence/.test(h3.licenceNote ?? '') && /to be verified/.test(h3.licenceNote ?? ''));
   const h3g = library.graph('h3-flf')!;
   check('the H3 graph takes a first and a last frame, on the base model (no turbo LoRA left in it)',
     JSON.stringify(h3g['105:104'].inputs.first_frame) === '["114",0]' && JSON.stringify(h3g['105:104'].inputs.last_frame) === '["130",0]' && !Object.values(h3g).some((n) => n.class_type === 'LoraLoaderModelOnly'));
