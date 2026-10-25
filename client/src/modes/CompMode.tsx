@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../state/store';
 import { formatCredits, useResources } from '../lib/resources';
 import {
-  clockTime, compApi, draftOf, effectiveSource, mediaUrl, seconds, useComp,
+  clockTime, compApi, draftOf, effectiveSource, mediaUrl, pickedLayer, seconds, useComp,
   type CompRun, type CompState, type CompToolInfo, type SourceKind, type ToolDraft, type ToolOptions, type ToolPlan,
 } from '../lib/comp';
 import { ResourceChooser } from '../components/ResourceChooser';
@@ -35,6 +35,7 @@ export function CompMode(): JSX.Element {
   const openTool = useComp((s) => s.openTool);
   const setOpenTool = useComp((s) => s.setOpenTool);
   const pick = useComp((s) => s.source);
+  const layerPick = useComp((s) => s.layerPick);
   const cap = useApp((s) => s.settings.defaults.workAreaMaxDuration);
 
   // Follow the host while the tab is open: once a second, and at once after every action.
@@ -75,7 +76,7 @@ export function CompMode(): JSX.Element {
     );
   }
 
-  const source = effectiveSource(state, pick);
+  const source = effectiveSource(state, pick, layerPick);
   return (
     <div className="flex h-full flex-col gap-3 px-3.5 pb-10 pt-3.5" data-testid="comp-tab">
       <CompHeader state={state} />
@@ -128,17 +129,22 @@ function CompHeader({ state }: { state: CompState }): JSX.Element {
 
 function SourcePicker({ state, source, cap }: { state: CompState; source: SourceKind; cap: number }): JSX.Element {
   const setSource = useComp((s) => s.setSource);
+  const layerPick = useComp((s) => s.layerPick);
+  const pickLayer = useComp((s) => s.pickLayer);
   const openSettings = useApp((s) => s.setSettingsOpen);
   const c = state.comp!;
   const wa = c.workArea ?? [0, c.duration];
-  const span = source === 'workArea' ? wa[1] - wa[0] : source === 'comp' ? c.duration : state.selected?.seconds ?? 0;
-  const over = source !== 'layer' && span > cap + 1e-3;
+  // The layer source is the one picked, kept while EffectCraft selects other layers (it selects every result it places).
+  const picked = pickedLayer(state, layerPick);
   const sel = state.selected;
-  const chip = (kind: SourceKind, label: React.ReactNode, title: string, disabled = false): JSX.Element => (
+  const span = source === 'workArea' ? wa[1] - wa[0] : source === 'comp' ? c.duration : picked?.seconds ?? 0;
+  const over = source !== 'layer' && span > cap + 1e-3;
+  const usePick = (): void => { if (sel) pickLayer({ compId: c.id, layerId: sel.layerId, name: sel.name }); };
+  const chip = (kind: SourceKind, label: React.ReactNode, title: string, onClick: () => void, disabled = false): JSX.Element => (
     <button
       type="button"
       className={'chip ' + (kind === 'layer' ? 'min-w-0 ' : 'shrink-0 ') + (source === kind ? '!border-brand/70 !bg-brand/15 !text-ink' : '')}
-      onClick={() => setSource(kind)}
+      onClick={onClick}
       disabled={disabled}
       title={title}
       data-source={kind}
@@ -146,22 +152,33 @@ function SourcePicker({ state, source, cap }: { state: CompState; source: Source
       <span className="truncate">{label}</span>
     </button>
   );
+  // A selection that is not the picked layer is offered, never taken.
+  const offer = sel && (!picked || picked.layerId !== sel.layerId) ? sel : null;
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-1.5">
         <span className="section-label shrink-0">Source</span>
         <div className="flex min-w-0 flex-1 gap-1">
           {chip('workArea', <>Work area <span className="font-mono text-[10px] text-ink-mute">{(Math.round(wa[0] * 10) / 10).toFixed(1)}–{seconds(wa[1])}</span></>,
-            c.workAreaSet ? 'The work area, rendered by EffectCraft when the run starts' : 'No work area is set: it is the whole comp (B / N in EffectCraft set one)')}
-          {chip('comp', 'Whole comp', 'All of the comp, rendered by EffectCraft when the run starts')}
-          {chip('layer', sel ? <>Layer: {sel.name}</> : 'Selected layer', sel ? `The layer's own file: ${sel.path ?? 'none'} (${sel.width}×${sel.height})` : 'Select a layer in EffectCraft', !sel)}
+            c.workAreaSet ? 'The work area, rendered by EffectCraft when the run starts' : 'No work area is set: it is the whole comp (B / N in EffectCraft set one)', () => setSource('workArea'))}
+          {chip('comp', 'Whole comp', 'All of the comp, rendered by EffectCraft when the run starts', () => setSource('comp'))}
+          {chip('layer', picked ? <>Layer: {picked.name}</> : sel ? <>Layer: {sel.name}</> : 'Selected layer',
+            picked ? `The layer you picked: ${picked.path ?? 'no file'} (${picked.width}×${picked.height}). It stays the source until you pick another.`
+              : sel ? `Use the selected layer's own file: ${sel.path ?? 'none'} (${sel.width}×${sel.height})` : 'Select a layer in EffectCraft',
+            () => { if (picked) setSource('layer'); else usePick(); }, !picked && !sel)}
         </div>
       </div>
       <p className="text-[10px] leading-snug text-ink-mute">
-        {source === 'layer'
-          ? (sel ? <>The clip&rsquo;s own file, {sel.width}×{sel.height}, {seconds(sel.seconds)}{sel.media !== 'video' ? <span className="text-warn"> — {sel.media === 'image' ? 'a still' : 'no footage file'}</span> : null}.</> : 'Select a layer in EffectCraft.')
+        {source === 'layer' && picked
+          ? <>The clip&rsquo;s own file, {picked.width}×{picked.height}, {seconds(picked.seconds)}{picked.media !== 'video' ? <span className="text-warn"> — {picked.media === 'image' ? 'a still' : 'no footage file'}</span> : null}.</>
           : <>A render of the {source === 'workArea' ? 'work area' : 'comp'} ({c.width}×{c.height}, {seconds(Math.min(span, cap))}) made by EffectCraft when the run starts, kept next to the project.</>}
       </p>
+      {source === 'layer' && offer && (
+        <p className="flex items-center gap-1.5 text-[10px] leading-snug text-ink-mute" data-testid="selection-offer">
+          <span className="min-w-0 truncate">EffectCraft has &ldquo;{offer.name}&rdquo; selected now; the source stays &ldquo;{picked?.name}&rdquo;.</span>
+          <button className="shrink-0 text-brand hover:underline" onClick={usePick}>Use it instead</button>
+        </p>
+      )}
       {over && (
         <div className="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-[11px] leading-snug text-ink" data-testid="cap-warning">
           <span className="text-warn">●</span>
@@ -186,12 +203,13 @@ function usePlan(tool: string, source: SourceKind, options: ToolOptions, cap: nu
   const [plan, setPlan] = useState<ToolPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const c = state.comp;
-  const key = JSON.stringify([tool, source, options, cap, c?.id, c?.width, c?.height, c?.fps, c?.duration, c?.workArea, source === 'layer' ? [state.selected?.layerId, state.selected?.path] : null]);
+  const layer = source === 'layer' ? state.picked : null;
+  const key = JSON.stringify([tool, source, options, cap, c?.id, c?.width, c?.height, c?.fps, c?.duration, c?.workArea, layer ? [layer.layerId, layer.path, layer.in, layer.out] : null]);
   useEffect(() => {
     if (!enabled) return undefined;
     let alive = true;
     const t = setTimeout(() => {
-      compApi.plan({ tool, source, options, cap })
+      compApi.plan({ tool, source, layerId: layer?.layerId, options, cap })
         .then((p) => { if (alive) { setPlan(p); setError(null); } })
         .catch((e) => { if (alive) { setPlan(null); setError(e instanceof Error ? e.message : String(e)); } });
     }, 200);
@@ -237,9 +255,11 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
   const set = (patch: Partial<ToolDraft>): void => setDraft(tool.id, patch);
   const setOpt = (k: string, v: string | number | boolean): void => set({ options: { ...draft.options, [k]: v } });
 
-  // The same tool and variant from the same source already in the queue: its card is in Results.
-  const inQueue = state.runs.find((r) => r.tool === tool.id && r.source === source && (r.status === 'queued' || r.status === 'running')
-    && (!plan || variantOf(r) === plan.variant));
+  // The same tool and variant from the same source already in the queue: its card is in Results. A pack: any of its runs.
+  const inQueue = tool.id === 'social'
+    ? state.runs.find((r) => !!r.group && r.source === source && (r.status === 'queued' || r.status === 'running'))
+    : state.runs.find((r) => r.tool === tool.id && r.source === source && (r.status === 'queued' || r.status === 'running')
+      && (!plan || variantOf(r) === plan.variant));
   const needsPrompt = !!plan?.prompt;
   const ready = !!plan?.ok && !busy && !inQueue && (!needsPrompt || draft.prompt.trim() !== '');
 
@@ -250,7 +270,7 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
     setRunError(null);
     try {
       const r = await compApi.run({
-        tool: tool.id, source, options: draft.options, cap, prompt: draft.prompt,
+        tool: tool.id, source, layerId: source === 'layer' ? state.picked?.layerId : undefined, options: draft.options, cap, prompt: draft.prompt,
         resource: draft.resource === 'default' ? null : draft.resource, seed: draft.seed,
       });
       setFocusRun(r.id);
@@ -290,13 +310,16 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
 
           {tool.id === 'reframe' && <ReframeControls options={draft.options} setOpt={setOpt} />}
           {tool.id === 'upscale' && <UpscaleControls options={draft.options} setOpt={setOpt} plan={plan} />}
+          {tool.id === 'extend' && <ExtendControls options={draft.options} setOpt={setOpt} />}
+          {tool.id === 'slowmo' && <SlowmoControls options={draft.options} setOpt={setOpt} plan={plan} fps={source === 'layer' ? state.picked?.fps ?? state.comp!.fps : state.comp!.fps} />}
+          {tool.id === 'social' && <SocialControls options={draft.options} setOpt={setOpt} />}
 
           {plan?.prompt && (
             <label className="block">
               <span className="field-label">{plan.prompt.label}</span>
               <textarea
                 className="input resize-none text-xs leading-relaxed"
-                rows={plan.prompt.label === 'Scene' ? 3 : 1}
+                rows={plan.prompt.label === 'Scene' || plan.prompt.label === 'What happens next' ? 3 : 1}
                 value={draft.prompt}
                 placeholder={plan.prompt.placeholder}
                 onChange={(e) => set({ prompt: e.target.value })}
@@ -337,6 +360,8 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
 function variantOf(r: CompRun): string {
   if (r.tool === 'reframe') return r.options.mode === 'crop' ? `crop:${String(r.options.aspect)}` : `${String(r.options.quality ?? 'draft')}:${String(r.options.aspect)}`;
   if (r.tool === 'upscale') return `x${Number(r.options.scale) === 4 ? 4 : 2}`;
+  if (r.tool === 'extend') return `+${Number(r.options.seconds) || 2}`;
+  if (r.tool === 'slowmo') return String(r.options.mode ?? 'slow2');
   return r.tool;
 }
 
@@ -385,6 +410,7 @@ function ReframeControls({ options, setOpt }: { options: ToolOptions; setOpt: (k
 }
 
 function UpscaleControls({ options, setOpt, plan }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void; plan: ToolPlan | null }): JSX.Element {
+  const keep = options.colour !== 'model';
   return (
     <div className="space-y-1.5">
       <Segmented
@@ -398,6 +424,99 @@ function UpscaleControls({ options, setOpt, plan }: { options: ToolOptions; setO
           {plan.source.width}×{plan.source.height} → <span className="text-ok">{plan.output.width}×{plan.output.height}</span>
         </p>
       )}
+      <label className="flex cursor-pointer items-center gap-2 pl-[62px] text-[11px] text-ink-dim" data-testid="keep-colours"
+        title="SeedVR2 raises contrast and saturation on its own; its colour correction matches the result to your original">
+        <input type="checkbox" checked={keep} onChange={(e) => setOpt('colour', e.target.checked ? 'keep' : 'model')} />
+        Keep original colours
+      </label>
+    </div>
+  );
+}
+
+function ExtendControls({ options, setOpt }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void }): JSX.Element {
+  return (
+    <Segmented
+      label="Length"
+      value={Number(options.seconds) || 2}
+      options={[2, 4, 5].map((s) => ({ v: s, label: `+${s} s`, title: `${s} more seconds after the out point` }))}
+      onChange={(v) => setOpt('seconds', v)}
+    />
+  );
+}
+
+function SlowmoControls({ options, setOpt, plan, fps }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void; plan: ToolPlan | null; fps: number }): JSX.Element {
+  const f = Math.round((plan?.source.fps ?? fps) * 100) / 100;
+  return (
+    <div className="space-y-2">
+      <Segmented
+        label="Make"
+        value={String(options.mode ?? 'slow2')}
+        options={[
+          { v: 'slow2', label: '×2 slow', title: 'Twice as long, at the same frame rate' },
+          { v: 'slow4', label: '×4 slow', title: 'Four times as long, at the same frame rate' },
+          { v: 'fps2', label: `${f} → ${Math.round(f * 200) / 100} fps`, title: 'The same length at twice the frame rate (25 → 50, 24 → 48, 30 → 60)' },
+        ]}
+        onChange={(v) => setOpt('mode', v)}
+      />
+      <Segmented
+        label="Engine"
+        value={String(options.engine ?? 'rife')}
+        options={[
+          { v: 'rife', label: 'RIFE', title: 'Fast, good on most shots (MIT)' },
+          { v: 'film', label: 'FILM', title: 'The official ComfyUI template: core nodes, Google\'s FILM (Apache-2.0)' },
+          { v: 'gimm', label: 'GIMM-VFI', title: 'High quality on occlusions and crossing motion — non-commercial licence (S-Lab 1.0)' },
+        ]}
+        onChange={(v) => setOpt('engine', v)}
+      />
+      {plan?.output && (
+        <p className="pl-[62px] font-mono text-[11px] text-ink">
+          {seconds(plan.source.seconds)} at {f} fps → <span className="text-ok">{seconds(plan.output.seconds)} at {Math.round((plan.output.fps ?? f) * 100) / 100} fps</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+const SOCIAL_FORMATS = ['9:16', '1:1', '4:5', '16:9', '21:9', '4:3'];
+
+function SocialControls({ options, setOpt }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void }): JSX.Element {
+  const picked = String(options.formats ?? '').split(',').filter(Boolean);
+  const toggle = (a: string): void => {
+    const next = picked.includes(a) ? picked.filter((x) => x !== a) : [...picked, a];
+    setOpt('formats', SOCIAL_FORMATS.filter((x) => next.includes(x)).join(','));
+  };
+  return (
+    <div className="space-y-2" data-testid="social-controls">
+      <div className="flex items-center gap-2">
+        <span className="w-[54px] shrink-0 text-[11px] text-ink-dim">Formats</span>
+        <div className="flex flex-wrap gap-1">
+          {SOCIAL_FORMATS.map((a) => (
+            <button key={a} type="button" data-format={a}
+              className={'chip px-2 py-1 ' + (picked.includes(a) ? '!border-brand/70 !bg-brand !text-white' : '')}
+              onClick={() => toggle(a)}>{picked.includes(a) ? '✓ ' : ''}{a}</button>
+          ))}
+        </div>
+      </div>
+      <Segmented
+        label="Quality"
+        value={String(options.quality ?? 'draft')}
+        options={[{ v: 'draft', label: 'Draft', title: 'Wan VACE 1.3B at 480p' }, { v: 'final', label: 'Final', title: 'Wan VACE 14B at 720p' }]}
+        onChange={(v) => setOpt('quality', v)}
+      />
+      <label className="flex cursor-pointer items-center gap-2 pl-[62px] text-[11px] text-ink-dim">
+        <input type="checkbox" checked={options.upscale === true} onChange={(e) => setOpt('upscale', e.target.checked)} />
+        + Upscale ×2 (SeedVR2, original colours kept)
+      </label>
+      <Segmented
+        label="Masters"
+        value={String(options.masters ?? 'none')}
+        options={[
+          { v: 'none', label: 'None' },
+          { v: 'prores4444', label: 'ProRes 4444', title: 'A .mov of each final comp, next to the project' },
+          { v: 'png16', label: 'PNG 16-bit', title: 'A 16-bit PNG sequence of each final comp' },
+        ]}
+        onChange={(v) => setOpt('masters', v)}
+      />
     </div>
   );
 }
@@ -431,7 +550,22 @@ function Advanced({ tool, draft, set, setOpt, plan }: {
             )}
           </>
         )}
-        {tool !== 'matte' && (
+        {tool === 'upscale' && (plan?.choices?.method?.length ?? 0) > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="w-[54px] shrink-0 text-[11px] text-ink-dim">Colour</span>
+            <select
+              className="input h-7 w-auto py-0 text-xs"
+              value={String(o.method ?? plan!.choices!.method[0])}
+              disabled={o.colour === 'model'}
+              onChange={(e) => setOpt('method', e.target.value)}
+              data-testid="colour-method"
+            >
+              {plan!.choices!.method.map((x) => <option key={x} value={x}>{x}</option>)}
+            </select>
+            <span className="text-[10px] text-ink-mute">SeedVR2&rsquo;s colour correction (its own choices); wavelet matched best when measured</span>
+          </div>
+        )}
+        {tool !== 'matte' && tool !== 'social' && (
           <div className="flex items-center gap-2">
             <span className="w-[54px] shrink-0 text-[11px] text-ink-dim">Seed</span>
             <input
@@ -449,6 +583,9 @@ function Advanced({ tool, draft, set, setOpt, plan }: {
           {tool === 'reframe' && ' · official template video_wan_vace_outpainting'}
           {tool === 'upscale' && ' · official template utility_seedvr2_3b_int8_upscale_video'}
           {tool === 'matte' && ' · official template utility_video_segment_sam3 (tracking)'}
+          {tool === 'extend' && ' · official template video_ltx2_5_i2v, from the last frame'}
+          {tool === 'slowmo' && ' · official template utility_video_frame_interpolation (RIFE and GIMM-VFI in place of its interpolator)'}
+          {tool === 'social' && ' · one Reframe per format (video_wan_vace_outpainting), then SeedVR2'}
           . Every run keeps the graph it submitted and a job.json next to the project.
         </p>
       </div>
@@ -471,8 +608,8 @@ function Preview({ tool, state, source, options, plan, frame, onRefresh }: {
   tool: string; state: CompState; source: SourceKind; options: ToolOptions; plan: ToolPlan | null; frame: string | null; onRefresh: () => void;
 }): JSX.Element {
   const c = state.comp!;
-  const srcW = plan?.source.width || (source === 'layer' ? state.selected?.width : c.width) || c.width;
-  const srcH = plan?.source.height || (source === 'layer' ? state.selected?.height : c.height) || c.height;
+  const srcW = plan?.source.width || (source === 'layer' ? state.picked?.width : c.width) || c.width;
+  const srcH = plan?.source.height || (source === 'layer' ? state.picked?.height : c.height) || c.height;
   const srcAr = srcW / srcH;
   const H = 96;
   const [fw, fh] = fit(srcAr, 150, H);
@@ -533,6 +670,36 @@ function Preview({ tool, state, source, options, plan, frame, onRefresh }: {
         <span>→ ProRes 4444 with alpha</span>
       </div>
     );
+  } else if (tool === 'extend') {
+    const s = Number(options.seconds) || 2;
+    to = (
+      <div className="flex flex-col justify-center gap-1 text-[11px]">
+        <span className="font-mono text-ok">+{s} s</span>
+        <span className="text-[10px] text-ink-mute">a new layer from the out point</span>
+      </div>
+    );
+  } else if (tool === 'slowmo') {
+    to = (
+      <div className="flex flex-col justify-center gap-1 text-[11px]">
+        <span className="font-mono text-ok">{options.mode === 'fps2' ? '2× fps' : options.mode === 'slow4' ? '×4 slow' : '×2 slow'}</span>
+        <span className="text-[10px] text-ink-mute">new frames in between</span>
+      </div>
+    );
+  } else if (tool === 'social') {
+    const formats = String(options.formats ?? '').split(',').filter(Boolean);
+    to = (
+      <div className="flex items-end gap-1">
+        {formats.slice(0, 6).map((a) => {
+          const [tw, th] = fit(ratio(a), 40, 56);
+          return (
+            <div key={a} className="flex flex-col items-center gap-0.5">
+              <div className="rounded-sm border border-brand/70" style={{ width: tw, height: th, backgroundImage: 'repeating-linear-gradient(135deg, rgb(var(--jae-accent) / .35) 0 3px, rgb(var(--jae-accent) / .12) 3px 7px)' }} />
+              <span className="font-mono text-[8px] text-ink-mute">{a}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
   }
   return (
     <div className="flex items-center gap-2.5">
@@ -556,13 +723,47 @@ function Results({ state }: { state: CompState }): JSX.Element | null {
     );
   }
   const waiting = state.queue.pending.length;
+  // A pack's runs show as one result, where its newest run would be.
+  const shown = new Set<string>();
+  const items: Array<{ key: string; runs: CompRun[] }> = [];
+  for (const r of state.runs) {
+    if (!r.group) { items.push({ key: r.id, runs: [r] }); continue; }
+    if (shown.has(r.group.id)) continue;
+    shown.add(r.group.id);
+    items.push({ key: r.group.id, runs: state.runs.filter((x) => x.group?.id === r.group!.id).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)) });
+  }
   return (
     <div className="space-y-1.5" data-testid="comp-results">
       <div className="flex items-center justify-between">
-        <span className="section-label">Results · {state.runs.length}</span>
+        <span className="section-label">Results · {items.length}</span>
         {waiting > 0 && <span className="text-[10px] text-ink-mute">{waiting} waiting in the queue (one at a time)</span>}
       </div>
-      {state.runs.map((r) => <ResultCard key={r.id} run={r} state={state} />)}
+      {items.map((it) => (it.runs[0].group ? <PackResult key={it.key} runs={it.runs} state={state} /> : <ResultCard key={it.key} run={it.runs[0]} state={state} />))}
+    </div>
+  );
+}
+
+/** A Social pack: its runs together, with how far it has got. */
+function PackResult({ runs, state }: { runs: CompRun[]; state: CompState }): JSX.Element {
+  const g = runs[0].group!;
+  const done = runs.filter((r) => r.status === 'done' && r.versions.length > 0).length;
+  const live = runs.some((r) => r.status === 'running' || r.status === 'queued');
+  const failed = runs.filter((r) => r.status === 'error').length;
+  const formats = runs.filter((r) => r.tool === 'reframe').map((r) => String(r.options.aspect)).join(' + ');
+  const exports = runs.flatMap((r) => r.versions.flatMap((v) => v.exports ?? []));
+  return (
+    <div className="space-y-1.5 rounded-lg border border-brand/40 bg-bg-raised/60 p-2" data-testid="pack-result" data-group={g.id}>
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-brand/15 text-xs text-brand">☰</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-ink">{g.label} · {formats}</span>
+        <span className={'shrink-0 font-mono text-[10px] ' + (failed ? 'text-err' : live ? 'text-ink-dim' : 'text-ok')}>
+          {done}/{runs.length} done{failed ? ` · ${failed} failed` : ''}{live ? ' · in the queue' : ''}
+        </span>
+      </div>
+      {exports.length > 0 && <p className="truncate pl-8 font-mono text-[9px] text-ok" title={exports.map((x) => x.path).join('\n')}>✔ {exports.length} master{exports.length === 1 ? '' : 's'} written next to the project</p>}
+      <div className="space-y-1.5 pl-2">
+        {runs.map((r) => <ResultCard key={r.id} run={r} state={state} />)}
+      </div>
     </div>
   );
 }
@@ -578,8 +779,10 @@ function useTick(on: boolean): void {
 
 const SOURCE_WORD: Record<SourceKind, string> = { workArea: 'work area', comp: 'whole comp', layer: 'layer' };
 
-/** What tells two runs of one tool apart: Draft or Final, a crop. */
+/** What tells two runs of one tool apart: Draft or Final, a crop, the engine. */
 function tagOf(r: CompRun): string | null {
+  if (r.tool === 'slowmo') return r.options.engine === 'gimm' ? 'GIMM-VFI' : r.options.engine === 'film' ? 'FILM' : 'RIFE';
+  if (r.tool === 'upscale') return r.options.colour === 'model' ? 'Model colours' : 'Colours kept';
   if (r.tool !== 'reframe') return null;
   if (r.options.mode === 'crop') return 'Crop';
   return r.options.quality === 'final' ? 'Final' : 'Draft';
