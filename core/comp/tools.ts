@@ -356,7 +356,7 @@ const slowmo: ToolDef = {
   defaults: { mode: 'slow2', engine: 'rife' },
   plan(src, o, manifest) {
     const mode = opt(o, 'mode', ['slow2', 'slow4', 'fps2'] as const, 'slow2');
-    // RIFE (MIT) and FILM (Apache-2.0). GIMM-VFI (S-Lab 1.0, non-commercial) is not offered since 26 Oct.
+    // RIFE (MIT) and FILM (Apache-2.0). GIMM-VFI (S-Lab 1.0, non-commercial) is not offered since 25 Oct.
     const engine = opt(o, 'engine', ['rife', 'film'] as const, 'rife');
     const workflowId = `interp-${engine}`;
     const m = manifest(workflowId);

@@ -87,7 +87,7 @@ const VACE_OUTPAINT = {
  * (core nodes, film_net_fp16). RIFE swaps the template's interpolator for a custom
  * node checked in this server's object_info; everything around it — the multiplier,
  * the frame-rate switch, the save — stays the template's. (GIMM-VFI was a third
- * engine until 26 Oct: its S-Lab 1.0 licence is non-commercial, so it is not shipped.)
+ * engine until 25 Oct: its S-Lab 1.0 licence is non-commercial, so it is not shipped.)
  */
 const INTERP = {
   // "Int (Multiplier)", "Boolean (Apply multiplier to FPS?)", and the audio the template carries over.

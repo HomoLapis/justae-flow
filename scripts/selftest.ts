@@ -861,7 +861,7 @@ console.log('comp tab');
   const fpsSent = submits.at(-1)!.prompt as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
   check('24 → 48 fps: a comp "Comp · 48 fps" at 48 fps, the sound kept', host.comps.at(-1)?.name === 'Comp · 48 fps' && host.comps.at(-1)?.fps === 48 && fpsSent['16:13'].inputs.value === true && 'audio' in fpsSent['16:5'].inputs);
 
-  // A queued run does not take the user's comp away (decided 26 Oct): two runs queued from comp 1; the first one's
+  // A queued run does not take the user's comp away (decided 25 Oct): two runs queued from comp 1; the first one's
   // result opens (the user was on comp 1), the second one's does not — its comp is offered in Results.
   await host.openComp(1);
   await engine.sync();

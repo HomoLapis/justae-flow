@@ -1827,7 +1827,7 @@ export class Engine {
   }
 
   /**
-   * The end of a Comp tab run (decided 26 Oct: a queued run must not steal focus). A run opens the comps it works in —
+   * The end of a Comp tab run (decided 25 Oct: a queued run must not steal focus). A run opens the comps it works in —
    * EffectCraft renders and places only in the active one — so at the end: if the user was on the comp the run started
    * from, the result stays in front (its new comp, or the same comp for Extend and a layer's cut-out); otherwise the comp
    * they were on comes back to the front and Results offers "Open comp". A comp the user opened during the run (one the
