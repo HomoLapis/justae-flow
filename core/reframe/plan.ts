@@ -20,7 +20,8 @@ export interface SubjectFrame {
 
 export type Smoothing = 'gentle' | 'steady' | 'locked';
 
-export const ASPECTS: Record<string, number> = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9 };
+/** Width over height; 21:9 is 7:3 (2.33:1), the same shape as the generative reframe's 2520×1080. */
+export const ASPECTS: Record<string, number> = { '9:16': 9 / 16, '4:5': 4 / 5, '1:1': 1, '16:9': 16 / 9, '21:9': 21 / 9, '4:3': 4 / 3 };
 
 export function subjectOf(img: GreyImage, threshold = 128): SubjectFrame {
   let n = 0, sx = 0, sy = 0;

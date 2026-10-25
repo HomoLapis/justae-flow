@@ -10,13 +10,59 @@
 
 import type { WorkflowJson } from '../comfy/types.ts';
 
-/** Delivery sizes for the new comp. */
-export const DELIVERY: Record<string, [number, number]> = {
-  '9:16': [1080, 1920],
-  '4:5': [1080, 1350],
-  '1:1': [1080, 1080],
-  '16:9': [1920, 1080],
-};
+/** The formats a reframe offers, in the order the UI lists them. 21:9 is 7:3 (2.33:1), as 2520×1080 states it. */
+export const REFRAME_ASPECTS = ['9:16', '4:5', '1:1', '16:9', '21:9', '4:3'] as const;
+
+/** Width over height of an aspect name ("21:9" → 7/3). */
+export function aspectRatio(name: string): number {
+  const m = /^(\d+):(\d+)$/.exec(name);
+  return m ? Number(m[1]) / Number(m[2]) : NaN;
+}
+
+/**
+ * Delivery sizes for the new comp: 1080 on the short side, the exact aspect
+ * (9:16 1080×1920, 4:5 1080×1350, 1:1 1080×1080, 16:9 1920×1080, 21:9 2520×1080, 4:3 1440×1080).
+ */
+export const DELIVERY: Record<string, [number, number]> = Object.fromEntries(REFRAME_ASPECTS.map((a) => {
+  const r = aspectRatio(a);
+  return [a, r >= 1 ? [Math.round(1080 * r), 1080] : [1080, Math.round(1080 / r)]];
+}));
+
+/**
+ * The frame Wan 2.1 VACE generates in, per aspect. The model is made for two
+ * frames — 1280×720 (the 14B, "720p") and 832×480 (the 1.3B, "480p"), the
+ * sizes of the official outpainting template and of Wan 2.1's own examples —
+ * and WanVaceToVideo takes width and height in steps of 16 (its object_info).
+ * So: the model's own frame where the aspect is its own (16:9 and 9:16), else
+ * the size with exactly the aspect, both sides multiples of 16, whose pixel
+ * count is closest to that frame's. This reproduces every size the reframe
+ * shipped with and gives the two added ones:
+ *
+ *   14B   9:16 720×1280 · 4:5 832×1040 · 1:1 960×960 · 16:9 1280×720 · 21:9 1456×624 · 4:3 1088×816
+ *   1.3B  9:16 480×832  · 4:5 576×720  · 1:1 624×624 · 16:9 832×480  · 21:9 1008×432 · 4:3 704×528
+ */
+export function vaceGenSize(aspect: string, model: '14b' | '1.3b', step = 16): [number, number] {
+  const native: [number, number] = model === '14b' ? [1280, 720] : [832, 480];
+  if (aspect === '16:9') return native;
+  if (aspect === '9:16') return [native[1], native[0]];
+  const m = /^(\d+):(\d+)$/.exec(aspect);
+  if (!m) throw new Error(`Not an aspect: ${aspect}`);
+  const gcd = (x: number, y: number): number => (y ? gcd(y, x % y) : x);
+  let a = Number(m[1]);
+  let b = Number(m[2]);
+  const d = gcd(a, b);
+  a /= d; b /= d;
+  // The smallest multiplier that puts both sides on the 16-pixel grid.
+  const ua = step / gcd(step, a);
+  const ub = step / gcd(step, b);
+  const unit = (ua * ub) / gcd(ua, ub);
+  const budget = native[0] * native[1];
+  let best: [number, number] = [a * unit, b * unit];
+  for (let t = unit; a * t <= 8192 && b * t <= 8192; t += unit) {
+    if (Math.abs(a * t * b * t - budget) < Math.abs(best[0] * best[1] - budget)) best = [a * t, b * t];
+  }
+  return best;
+}
 
 export interface OutpaintPlan {
   /** Generation frame, model pixels. */

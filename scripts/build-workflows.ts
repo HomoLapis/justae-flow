@@ -19,6 +19,7 @@ import { ComfyClient } from '../core/comfy/client.ts';
 import type { WorkflowJson } from '../core/comfy/types.ts';
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import { missingNodes, type ModelFile, type WorkflowManifest } from '../core/workflows/manifest.ts';
+import { REFRAME_ASPECTS, vaceGenSize } from '../core/reframe/outpaint.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, 'workflows');
@@ -47,6 +48,11 @@ const VACE_BINDINGS: WorkflowManifest['bindings'] = {
   prompt: '6.text', negative: '7.text', video: '71.file', seed: '3.seed',
   width: '137.value', height: '139.value', frames: '131.value', fps: '68.fps',
 };
+
+/** The generation frame per format, by the rule in core/reframe/outpaint.ts (vaceGenSize). */
+function vaceSizes(model: '14b' | '1.3b'): Record<string, [number, number]> {
+  return Object.fromEntries(REFRAME_ASPECTS.map((a) => [a, vaceGenSize(a, model)]));
+}
 
 const VACE_OUTPAINT = {
   take: '200.length',
@@ -171,7 +177,7 @@ const RECIPES: Recipe[] = [
     task: 'reframe', hosts: ['effectcraft'], output: 'image', input: 'video',
     bindings: { video: '115.file', prompt: '114:100.text' },
     params: [
-      { ref: '@aspect', label: 'Aspect', options: ['9:16', '4:5', '1:1', '16:9'] },
+      { ref: '@aspect', label: 'Aspect', options: [...REFRAME_ASPECTS] },
       { ref: '@smooth', label: 'Smoothing', options: ['gentle', 'steady', 'locked'] },
     ],
     license: SAM_LICENSE,
@@ -191,8 +197,8 @@ const RECIPES: Recipe[] = [
     task: 'outpaint-video', hosts: ['effectcraft'], output: 'video', input: 'video',
     bindings: VACE_BINDINGS,
     frameLattice: { min: 1, step: 4 },
-    params: [{ ref: '@aspect', label: 'Aspect', options: ['9:16', '4:5', '1:1', '16:9'] }],
-    outpaint: { ...VACE_OUTPAINT, sizes: { '9:16': [720, 1280], '4:5': [832, 1040], '1:1': [960, 960], '16:9': [1280, 720] } },
+    params: [{ ref: '@aspect', label: 'Aspect', options: [...REFRAME_ASPECTS] }],
+    outpaint: { ...VACE_OUTPAINT, sizes: vaceSizes('14b') },
     license: {
       weights: 'Apache-2.0 (Wan2.1 VACE 14B; lightx2v 4-step LoRA)',
       openWeights: true,
@@ -215,8 +221,8 @@ const RECIPES: Recipe[] = [
     task: 'outpaint-video', hosts: ['effectcraft'], output: 'video', input: 'video',
     bindings: VACE_BINDINGS,
     frameLattice: { min: 1, step: 4 },
-    params: [{ ref: '@aspect', label: 'Aspect', options: ['9:16', '4:5', '1:1', '16:9'] }],
-    outpaint: { ...VACE_OUTPAINT, sizes: { '9:16': [480, 832], '4:5': [576, 720], '1:1': [624, 624], '16:9': [832, 480] } },
+    params: [{ ref: '@aspect', label: 'Aspect', options: [...REFRAME_ASPECTS] }],
+    outpaint: { ...VACE_OUTPAINT, sizes: vaceSizes('1.3b') },
     license: { weights: 'Apache-2.0 (Wan2.1 VACE 1.3B)', openWeights: true },
     patch: (api) => {
       vacePatch(api, SLUG + '/vace_reframe_draft');
