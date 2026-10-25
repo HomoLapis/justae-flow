@@ -10,89 +10,28 @@
  *   reframe  Wan 2.1 VACE outpainting (14B "Final" / 1.3B "Draft"), or SAM 3
  *            tracking for a crop that follows the subject (nothing generated)
  *   upscale  SeedVR2 ×2; ×4 is two ×2 passes, the second fed with the first's result;
- *            "Keep original colours" = SeedVR2's own colour correction
+ *            "Keep original colours" = SeedVR2's own colour correction. Second engine:
+ *            LTX Refine (LTX-2.5 + Refine Details, Tiled Fusion) to Full HD / 4K / 8K
  *   matte    SAM 3 subject matte, set as a luma track matte; a ProRes 4444 master
- *            with alpha can be written from it
+ *            with alpha can be written from it. Second engine: LTX Alpha Gen
  *   extend   LTX-2.5 image-to-video from the source's last frame: a new layer that
  *            starts at the source's out point
  *   slowmo   frame interpolation (RIFE, FILM): ×2 / ×4 slow motion, or
  *            twice the frame rate, in a new comp
  *   social   several reframes (and their upscales, and masters) queued one after
  *            the other: orchestration of the tools above, no model of its own
+ *   LTX finishing (finishing-tools.ts): Archive restore, Deblur, De-compression,
+ *            Colorize, Clean plate, Day → Night; SDR → HDR listed, to be verified
  */
 
 import { ASPECTS } from '../reframe/plan.ts';
 import { DELIVERY, planOutpaint, REFRAME_ASPECTS, aspectRatio } from '../reframe/outpaint.ts';
-import { planSize, type WorkflowManifest } from '../workflows/manifest.ts';
+import { planSize } from '../workflows/manifest.ts';
 
-export type SourceKind = 'workArea' | 'comp' | 'layer';
-
-/** The input a run would get, as the host describes it now. */
-export interface SourceInfo {
-  kind: SourceKind;
-  /** What it is: a video (a clip, or a render of the comp), a still, or nothing with a file (a solid, text). */
-  media: 'video' | 'image' | 'none';
-  width: number;
-  height: number;
-  fps: number;
-  /** Seconds a run covers: a render of the comp stops at the cap. */
-  seconds: number;
-  /** Seconds asked for, before the cap. */
-  requested: number;
-  /** The comp's or the layer's name. */
-  name: string;
-  /** Where it sits in the comp, seconds: the work area, the whole comp, or the layer's in and out points. */
-  span?: [number, number];
-  /** The comp's own length and frame rate (a layer source has its own fps above). */
-  compSeconds?: number;
-  compFps?: number;
-}
-
-export type ToolOptions = Record<string, string | number | boolean>;
-
-export interface ToolPlan {
-  ok: boolean;
-  /** Why it cannot run on this source, in words. */
-  reason?: string;
-  /** The bundled workflow the run uses (routing: its task's row in Settings ▸ Resources). */
-  workflowId: string;
-  /** The jobs the run submits, as the run history names them, for the estimate (seconds: what each covers). */
-  jobs: Array<{ workflowId: string; seconds: number | null }>;
-  /** What the run makes, said before it runs. */
-  makes: string;
-  output?: { width: number; height: number; seconds: number; fps?: number };
-  notes: string[];
-  warnings: string[];
-  /** The primary button. */
-  action: string;
-  /** The text the workflow needs, if any. */
-  prompt?: { label: string; placeholder: string };
-  /** Card params (the "@" ones are the app's own settings, not node fields). */
-  params: ToolOptions;
-  /** One card per tool, variant and source: re-runs of the same thing are its versions. */
-  variant: string;
-  /** Choices the card offers that come from the workflow itself (a node's own options, from object_info). */
-  choices?: Record<string, string[]>;
-  /** A pack (the Social pack): the runs it queues, in order, each with its own plan. */
-  members?: Array<{ tool: string; options: ToolOptions; plan: ToolPlan }>;
-  /** Extend: the motion it carries on from — the source's last frames that guide the model (none: one frame). */
-  motion?: { frames: number; seconds: number };
-}
-
-export interface ToolDef {
-  id: string;
-  name: string;
-  /** One line under the name. */
-  promise: string;
-  icon: string;
-  sources: SourceKind[];
-  /** The defaults of its choices. */
-  defaults: ToolOptions;
-  /** false: the source is not rendered (Extend only takes its last frame), so the render cap does not apply. */
-  renders?: boolean;
-  plan(src: SourceInfo, options: ToolOptions, manifest: (id: string) => WorkflowManifest | undefined): ToolPlan;
-}
-
+export type { SourceKind, SourceInfo, ToolOptions, ToolPlan, ToolDef } from './common.ts';
+import { FINISHING_TOOLS, LTX_SIZES, ltxAlphaPlan, ltxRefinePlan, SINGLE_TOOLS } from './finishing-tools.ts';
+import { LTX_LICENCE_LINE, LTX_LICENCE_URL } from '../finishing/licence.ts';
+import { fmt, needsVideo, opt, what, type SourceInfo, type ToolDef, type ToolOptions, type ToolPlan } from './common.ts';
 /** Long side past which an upscale is not claimed to work: 3840 px (UHD "4K"). */
 export const UPSCALE_VERIFIED_LONG_SIDE = 3840;
 
@@ -134,20 +73,6 @@ export function extendGuide(available: number, lengths: readonly number[]): numb
 /** Interpolation: frames out of n frames in, with N − 1 new frames between each pair (RIFE VFI). */
 export function interpolatedFrames(n: number, multiplier: number): number {
   return Math.max(1, (Math.max(1, n) - 1) * multiplier + 1);
-}
-
-const fmt = (s: number): string => `${(Math.round(s * 10) / 10).toFixed(1)} s`;
-const what = (src: SourceInfo): string => (src.kind === 'layer' ? 'clip' : src.kind === 'workArea' ? 'work area' : 'comp');
-
-function needsVideo(src: SourceInfo): string | undefined {
-  if (src.media === 'video') return undefined;
-  if (src.media === 'image') return 'This tool works on video: the selected layer is a still. Pick a clip, the work area or the whole comp.';
-  return 'The selected layer has no footage file (a solid, text or a shape): pick a clip, the work area or the whole comp.';
-}
-
-function opt<T extends string | number | boolean>(o: ToolOptions, k: string, allowed: readonly T[], fallback: T): T {
-  const v = o[k] as T;
-  return allowed.includes(v) ? v : fallback;
 }
 
 const reframe: ToolDef = {
@@ -226,11 +151,14 @@ const reframe: ToolDef = {
 const upscale: ToolDef = {
   id: 'upscale',
   name: 'Upscale',
-  promise: '×2, or ×4 in two passes: restored detail at the new size.',
+  promise: 'SeedVR2 ×2 / ×4 (fast, keeps colours), or LTX Refine to Full HD / 4K / 8K (rebuilds detail).',
   icon: '⤢',
   sources: ['workArea', 'comp', 'layer'],
-  defaults: { scale: 2, colour: 'keep', method: KEEP_COLOUR_DEFAULT },
-  plan(src, o, manifest) {
+  defaults: { engine: 'seedvr2', scale: 2, colour: 'keep', method: KEEP_COLOUR_DEFAULT, size: 'fhd', fast: 1, master: 'png16', preview: false },
+  licence: { line: LTX_LICENCE_LINE, url: LTX_LICENCE_URL },
+  plan(src, o, manifest, extra) {
+    // The second engine: LTX-2.5 with the Refine Details IC-LoRA, Tiled Fusion (core/comp/finishing-tools.ts).
+    if (o.engine === 'ltx') return ltxRefinePlan(src, o, manifest, extra);
     const scale = opt(o, 'scale', [2, 4] as const, 2);
     const workflowId = 'seedvr2-upscale';
     const m = manifest(workflowId);
@@ -273,11 +201,14 @@ const upscale: ToolDef = {
 const matte: ToolDef = {
   id: 'matte',
   name: 'Cut-out',
-  promise: 'The subject as a luma track matte; a ProRes 4444 master with alpha from it.',
+  promise: 'The subject as a luma track matte (SAM 3, or LTX Alpha for hair and smoke); a ProRes 4444 master with alpha from it.',
   icon: '◐',
   sources: ['workArea', 'comp', 'layer'],
-  defaults: {},
-  plan(src) {
+  defaults: { engine: 'sam3' },
+  licence: { line: LTX_LICENCE_LINE, url: LTX_LICENCE_URL },
+  plan(src, o, manifest) {
+    // The second engine: LTX-2.5 with the Alpha Gen IC-LoRA — no prompt, soft edges (core/comp/finishing-tools.ts).
+    if (o?.engine === 'ltx') return ltxAlphaPlan(src, o, manifest);
     const workflowId = 'sam3-matte';
     const plan: ToolPlan = {
       ok: true, workflowId, jobs: [{ workflowId, seconds: src.seconds }], makes: '', notes: [], warnings: [], action: 'Cut out',
@@ -442,7 +373,7 @@ const social: ToolDef = {
 };
 
 /** The tools the Comp tab shows, in order. Only tools that work are listed. */
-export const COMP_TOOLS: ToolDef[] = [reframe, upscale, matte, extend, slowmo, social];
+export const COMP_TOOLS: ToolDef[] = [reframe, upscale, matte, extend, slowmo, social, ...FINISHING_TOOLS];
 
 export function toolById(id: string): ToolDef | undefined {
   return COMP_TOOLS.find((t) => t.id === id);
@@ -452,8 +383,15 @@ export function toolById(id: string): ToolDef | undefined {
 export function resultName(base: string, tool: string, options: ToolOptions, plan?: Pick<ToolPlan, 'output'>): string {
   const clean = base.replace(/\.[a-z0-9]{2,4}$/i, '');
   if (tool === 'reframe') return `${clean} · ${String(options.aspect ?? '9:16')}${options.mode === 'crop' ? ' crop' : ''}`;
+  if (tool === 'upscale' && options.engine === 'ltx') {
+    const size = String(options.size ?? 'fhd') as keyof typeof LTX_SIZES;
+    return `${clean} · LTX ${size === 'same' ? 'refine' : LTX_SIZES[size] ?? 'Full HD'}${options.preview === true ? ' tile' : ''}`;
+  }
   if (tool === 'upscale') return `${clean} · ×${Number(options.scale) === 4 ? 4 : 2}`;
-  if (tool === 'matte') return `${clean} · cut-out`;
+  if (tool === 'matte') return `${clean} · ${options.engine === 'ltx' ? 'LTX cut-out' : 'cut-out'}`;
+  if (tool === 'restore') return `${clean} · ${options.mode === 'archive' ? 'restored + refined' : options.mode === 'restore-refine' ? 'restored + refine' : 'restored'}${options.preview === true ? ' tile' : ''}`;
+  const single = SINGLE_TOOLS.find((t) => t.id === tool);
+  if (single) return `${clean} · ${single.name.toLowerCase()}`;
   if (tool === 'extend') return `${clean} · +${Number(options.seconds) || 2} s`;
   if (tool === 'slowmo') {
     if (options.mode === 'fps2') return `${clean} · ${plan?.output?.fps ? Math.round(plan.output.fps * 100) / 100 : '2×'} fps`;

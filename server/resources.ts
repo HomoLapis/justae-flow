@@ -54,7 +54,7 @@ export interface Resource {
 }
 
 /** What each button runs: the rows of Settings ▸ Resources ▸ "Where each task runs" (PLAN v3 §2.1). */
-export type TaskId = 'video' | 'image' | 'reframe' | 'reframe-draft' | 'upscale' | 'matte' | 'interpolate' | 'restyle';
+export type TaskId = 'video' | 'image' | 'reframe' | 'reframe-draft' | 'upscale' | 'matte' | 'interpolate' | 'restyle' | 'finishing';
 export const TASKS: Array<{ id: TaskId; label: string; default: string }> = [
   { id: 'video', label: 'Generate video (LTX, H3, Wan)', default: 'auto' },
   { id: 'image', label: 'Generate image', default: 'local' },
@@ -64,6 +64,8 @@ export const TASKS: Array<{ id: TaskId; label: string; default: string }> = [
   { id: 'matte', label: 'Cut-out / matte (SAM 3)', default: 'local' },
   { id: 'interpolate', label: 'Slow motion / fps (RIFE, FILM)', default: 'local' },
   { id: 'restyle', label: 'Restyle / edit video', default: 'auto' },
+  // LTX-2.5 + IC-LoRAs: the models are on the local ComfyUI; no resource of this app is known to have them elsewhere.
+  { id: 'finishing', label: 'LTX finishing (Refine, Restore, IC-LoRAs)', default: 'local' },
 ];
 
 /** A bundled workflow's task, as a row of that table. */
@@ -78,6 +80,7 @@ export function taskOf(manifestTask: Task, workflowId = ''): TaskId {
     case 'upscale-video': case 'upscale-image': return 'upscale';
     case 'matte-video': case 'reframe': case 'remove-bg': return 'matte';
     case 'interpolate-video': return 'interpolate';
+    case 'finish-video': return 'finishing';
   }
 }
 

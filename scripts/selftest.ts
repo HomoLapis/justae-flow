@@ -24,7 +24,7 @@ import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import type { CardStatus } from '../core/storyboard/types.ts';
 import type { Box, CanvasHost, CanvasPlaceRequest, CompRequest, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, RenderRequest, RenderResult, TimelineHost } from '../hosts/types.ts';
 import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, SEAM_GUARD, vaceGenSize } from '../core/reframe/outpaint.ts';
-import { extendGuide, KEEP_COLOUR_DEFAULT, ltxExtendFrames, ltxGuidedFrames, toolById } from '../core/comp/tools.ts';
+import { COMP_TOOLS, extendGuide, KEEP_COLOUR_DEFAULT, ltxExtendFrames, ltxGuidedFrames, toolById } from '../core/comp/tools.ts';
 import { compRoutes } from '../server/api-comp.ts';
 import { FEATURED, featuredRoutes, featuredView } from '../server/api-featured.ts';
 import type { Settings } from '../server/config.ts';
@@ -32,6 +32,10 @@ import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
 import { makeServices } from '../server/services.ts';
 import { FAKE_KEY, fakeV2, resourceChecks } from './selftest-resources.ts';
+import { LTX_LICENCE_LINE } from '../core/finishing/licence.ts';
+import { DEFAULT_OPTIONS as FINISH_DEFAULTS, planFinish, tileGrid } from '../core/finishing/plan.ts';
+import { DEFAULT_PROMPTS as FINISH_PROMPTS, lintPrompt } from '../core/finishing/prompt.ts';
+import { TASKS } from '../server/resources.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let passed = 0;
@@ -77,7 +81,7 @@ for (const m of library.list()) {
   check(`${m.id}: open weights, licence named`, m.license.openWeights && m.license.weights.length > 3);
   if (m.id.startsWith('ltx')) {
     check(`${m.id}: the LTX-2.x Community License as the README states it, with its link`,
-      m.license.weights.startsWith('LTX-2.x Community License (11 Aug 2026): commercial use permitted for entities under USD 10M annual revenue (affiliates counted together), outputs belong to the user, published machine-generated content must be disclosed as such')
+      m.license.weights.startsWith(LTX_LICENCE_LINE)
       && m.license.weights.includes('https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x'));
   }
   if (m.output === 'text') check(`${m.id}: answers in words, through its PreviewAny node`, api[m.text?.node ?? '']?.class_type === 'PreviewAny');
@@ -181,9 +185,10 @@ for (const m of library.list()) {
   for (const n of Object.values(library.graph(m.id)!)) {
     const info = (objectInfo[n.class_type] ??= { input: { required: {} }, output_node: /^Save/.test(n.class_type) });
     for (const [k, v] of Object.entries(n.inputs)) {
-      if (typeof v !== 'string' || !/\.(safetensors|pth)$/.test(v)) continue;
+      // Every other input is known by name, of any type: graphs built at run time (LTX finishing) are validated against this.
+      if (typeof v !== 'string' || !/\.(safetensors|pth)$/.test(v)) { (info.input!.optional ??= {})[k] ??= ['*']; continue; }
       const opts = ((info.input!.required![k] ??= [[]])[0] as string[]);
-      const local = v.replace('transformer-comfy-int8-convrot', 'transformer-nvfp4');
+      const local = v.replace(/transformer-(comfy-int8-convrot|bf16)/, 'transformer-nvfp4');
       if (!opts.includes(local)) opts.push(local);
     }
   }
@@ -207,6 +212,15 @@ const fake = createServer(async (req, res) => {
       setTimeout(() => {
         history[p.prompt_id] = { status: { status_str: 'success' }, outputs: { 7: { text: ['<think>frames</think>Description: A small sailboat glides to the right on a calm lake at dawn.'] } } };
       }, 150);
+      return json({ prompt_id: p.prompt_id });
+    }
+    // LTX finishing: the 16-bit frames on the SaveImageAdvanced node, the MP4 on the SaveVideo node (the engine reads them by node id).
+    if (classes.includes('LTXICLoRALoaderModelOnly')) {
+      const ids = (c: string): string[] => Object.entries(p.prompt as Record<string, { class_type: string }>).filter(([, n]) => n.class_type === c).map(([id]) => id);
+      const outs: Record<string, unknown> = {};
+      for (const id of ids('SaveImageAdvanced')) outs[id] = { images: [0, 1, 2].map((i) => ({ filename: `frame_${String(i).padStart(5, '0')}_.png`, subfolder: 'justae-flow/finish', type: 'output' })) };
+      for (const id of ids('SaveVideo')) outs[id] = { images: [{ filename: 'preview_00001_.mp4', subfolder: 'justae-flow/finish', type: 'output' }], animated: [true] };
+      setTimeout(() => { history[p.prompt_id] = { status: { status_str: 'success' }, outputs: outs }; }, 150);
       return json({ prompt_id: p.prompt_id });
     }
     // The tracking workflow saves one small mask per frame.
@@ -628,7 +642,7 @@ console.log('comp tab');
   await until(() => engine.state().cards.find((c) => c.id === rfId)?.versions.length === 2);
   check('the same reframe again is the same card\'s next version, "Comp · 9:16 v2"', again.id === rfId && host.outpaints.at(-1)?.name === 'Comp · 9:16 v2', `${again.id} ${rfId} ${host.outpaints.at(-1)?.name} ${engine.state().cards.find((c) => c.id === rfId)?.status} ${engine.state().cards.find((c) => c.id === rfId)?.error}`);
   const view = await engine.compView();
-  check('the Comp tab view: comp, work area, the six tools, this run', view.comp?.workAreaSet === true && JSON.stringify(view.comp?.workArea) === '[1,4]' && view.tools.map((t) => t.id).join() === 'reframe,upscale,matte,extend,slowmo,social' && view.runs.some((r) => r.id === rfId && r.versions.length === 2));
+  check('the Comp tab view: comp, work area, the six tools then the LTX finishing family, this run', view.comp?.workAreaSet === true && JSON.stringify(view.comp?.workArea) === '[1,4]' && view.tools.map((t) => t.id).join() === 'reframe,upscale,matte,extend,slowmo,social,restore,deblur,decompress,colorize,cleanplate,daynight,sdr2hdr' && view.tools.filter((t) => t.family === 'ltx').length === 7 && view.runs.some((r) => r.id === rfId && r.versions.length === 2));
 
   // Upscale from the selected layer (the clip, 1344×768): a new comp at 2688×1536, the original kept, switched off.
   await host.openComp(1);
@@ -938,6 +952,136 @@ console.log('comp tab');
   await engine.sync();
 }
 
+console.log('ltx finishing');
+{
+  // The planner, ported from Flow 2: the official grid, frames, the 8K ladder.
+  check('Tiled Fusion grid = ComfyUI-LTXVideo\'s planner: Full HD 9, 4K 49, 8K 210 tiles of 1024×576',
+    tileGrid(1920, 1088, 1024, 576).count === 9 && tileGrid(3840, 2176, 1024, 576).count === 49 && tileGrid(7680, 4352, 1024, 576).count === 210);
+  const fhd = planFinish({ width: 1280, height: 704, pixelAspect: 1, frames: 121, fps: 24 }, { ...FINISH_DEFAULTS, preset: 'refine-fhd', preview: false });
+  check('Refine Full HD of a 5 s 1280×704 clip: 1920×1056, 3×3 tiles, 121 → 129 frames in 2 windows of 97, 144 tile-steps',
+    fhd.delivery.w === 1920 && fhd.delivery.h === 1056 && fhd.passes[0].grid.count === 9 && fhd.frames.total === 129 && fhd.frames.pad === 8 && fhd.frames.windows === 2 && fhd.load === 144);
+  const r8 = planFinish({ width: 1920, height: 1080, pixelAspect: 1, frames: 48, fps: 24 }, { ...FINISH_DEFAULTS, preset: 'refine-8k', preview: false });
+  check('8K goes through 4K: Refine 3840×2176, then a 2-step pass at 7680×4352 from the image', r8.passes.length === 2 && r8.passes[0].canvas.w === 3840 && r8.passes[1].canvas.w === 7680 && r8.passes[1].fromImage && r8.passes[1].steps === 2);
+  const dup = planFinish({ width: 1280, height: 704, pixelAspect: 1, frames: 121, fps: 24 }, { ...FINISH_DEFAULTS, preset: 'refine-fhd', preview: false, duplicate: 2 });
+  check('Fast scene ×2: 121 → 242 → 257 frames (8n+1, 15 copies of the last frame), conditioning at 48 fps', dup.frames.content === 242 && dup.frames.total === 257 && dup.frames.pad === 15 && dup.conditioningFps === 48);
+  check('the Look check: subjects flagged, rendering words pass', lintPrompt('crisp detail, a sailboat on the lake', 'refine').length === 2 && lintPrompt(FINISH_PROMPTS.positive, 'refine').length === 0);
+
+  // The cards' plans.
+  const man = (id: string) => library.get(id)?.manifest;
+  const clip5 = { kind: 'layer' as const, media: 'video' as const, width: 1280, height: 704, fps: 24, seconds: 121 / 24, requested: 121 / 24, name: 'Sailboat' };
+  const lp = toolById('upscale')!.plan(clip5, { engine: 'ltx', size: 'fhd' }, man, { prompt: 'crisp detail, the boat' });
+  check('Upscale ▸ LTX Refine: Full HD 1920×1056, an optional "Look", the time from the tile count, measured on an RTX 5080',
+    lp.ok && lp.workflowId === 'ltx25-refine' && lp.output?.width === 1920 && lp.output.height === 1056 && lp.prompt?.label === 'Look' && !!lp.prompt.optional
+    && lp.prompt.placeholder === 'sharpness, grain, light — not the subjects' && /measured on an RTX 5080/.test(lp.estimate?.line ?? '') && (lp.estimate?.seconds ?? 0) > 0, JSON.stringify([lp.reason, lp.output, lp.estimate]));
+  check('…a subject in the Look is warned about, with what the check is', lp.warnings.some((w) => /"boat"/.test(w) && /simple check/.test(w)));
+  check('…the master is a PNG 16-bit sequence, the comp an MP4 preview', lp.notes.some((n) => /PNG 16-bit sequence/.test(n) && /MP4 preview/.test(n)));
+  const l8 = toolById('upscale')!.plan(clip5, { engine: 'ltx', size: '8k' }, man);
+  check('…8K says it goes through 4K', l8.ok && l8.output?.width === 7680 && l8.notes.some((n) => /8K always goes through 4K/.test(n)));
+  check('…the LTX variants are cards of their own', lp.variant === 'ltx:fhd' && l8.variant === 'ltx:8k' && toolById('upscale')!.plan(clip5, { engine: 'ltx', size: 'fhd', fast: 2, preview: true }, man).variant === 'ltx:fhd·f2·tile');
+  check('…and SeedVR2 stays the default engine', toolById('upscale')!.defaults.engine === 'seedvr2' && toolById('upscale')!.plan(clip5, { scale: 2 }, man).workflowId === 'seedvr2-upscale');
+  const arch = { ...clip5, width: 640, height: 480, seconds: 2, requested: 2 };
+  const rr = toolById('restore')!.plan(arch, { mode: 'restore-refine' }, man);
+  check('Archive restore + Refine 30 %: one pass at 1440×1088 (4:3), Refine 0.3 as the second IC-LoRA', rr.ok && /Refine Details at 30 %/.test(rr.makes) && rr.notes.some((n) => /\+ Refine 30 %/.test(n) && /1440×1088/.test(n)), JSON.stringify([rr.reason, rr.makes, rr.notes[0]]));
+  const ra = toolById('restore')!.plan(arch, { mode: 'archive' }, man);
+  check('Archive order: Restore first, then Refine ×2 (2880×2160)', ra.ok && ra.output?.width === 2880 && ra.output.height === 2160 && ra.notes.some((n) => /Restore first, then Refine/.test(n)));
+  check('Restore says Colorization is a tool of its own (not documented as combinable)', rr.notes.some((n) => /Colorization IC-LoRA is a separate tool/.test(n)));
+  const db = toolById('deblur')!.plan(clip5, {}, man);
+  check('Deblur: one pass at the source size, the card\'s sentence, a scene to write', db.ok && db.prompt?.label === 'Scene' && !db.prompt.optional && db.output?.width === 1280 && db.notes.some((n) => /sentence the card trained on/.test(n)));
+  const cz = toolById('colorize')!.plan(clip5, {}, man);
+  check('Colorize: near the 960×544 training size, with a "Colours" field', cz.ok && cz.fields?.[0].key === 'colours' && cz.notes.some((n) => /992×544/.test(n)), JSON.stringify(cz.notes));
+  const sh = toolById('sdr2hdr')!;
+  check('SDR → HDR is listed, not runnable: to be verified, with why', !!sh.unavailable && /models\/embeddings/.test(sh.unavailable) && !sh.plan(clip5, {}, man).ok);
+  const ap = toolById('matte')!.plan(clip5, { engine: 'ltx' }, man);
+  check('Cut-out ▸ LTX Alpha: no prompt, a luma matte like SAM 3\'s, ≤ 145 frames', ap.ok && !ap.prompt && ap.workflowId === 'ltx25-alpha' && ap.notes.some((n) => /White = foreground/.test(n)));
+  check('every LTX finishing card carries the LTX-2.x licence line and its link', COMP_TOOLS.filter((t) => t.family === 'ltx').every((t) => t.licence?.line === LTX_LICENCE_LINE && /LICENSE-2_x/.test(t.licence.url)));
+  check('Settings ▸ Resources has an "LTX finishing" row, Local by default', TASKS.some((t) => t.id === 'finishing' && t.default === 'local') && library.get('ltx25-refine')!.manifest.task === 'finish-video');
+
+  // The engine: LTX Refine from a layer, on the fake ComfyUI.
+  await host.openComp(1);
+  host.selected = [901];
+  await engine.sync();
+  const pl = await engine.planComp({ tool: 'upscale', source: 'layer', options: { engine: 'ltx', size: 'fhd' }, cap: 8, prompt: '' });
+  check('the plan from the server: the local files found (NVFP4, the Refine IC-LoRA)', pl.ok && pl.notes.some((n) => /On the local ComfyUI: ltx-2\.5-22b-distilled-transformer-nvfp4/.test(n)), JSON.stringify([pl.reason, pl.notes.slice(-2)]));
+  const before = submits.length;
+  const { id: lId } = await engine.runCompTool({ tool: 'upscale', source: 'layer', options: { engine: 'ltx', size: 'fhd' }, cap: 8, prompt: '' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === lId)?.status ?? ''));
+  const lc = engine.state().cards.find((c) => c.id === lId)!;
+  check('LTX Refine from a layer finishes, one job', lc.status === 'done' && submits.length === before + 1, lc.error);
+  const g = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  const byClass = (c: string) => Object.values(g).filter((n) => n.class_type === c);
+  const tf = byClass('LTXVTiledFusionSampler')[0]?.inputs;
+  check('its graph: the clip uploaded into LoadVideo, Tiled Fusion with 1024×576 tiles, overlap 0.5, blend 0.05, cfg 1, 97-frame windows',
+    byClass('LoadVideo')[0]?.inputs.file === 'uploaded.png' && tf?.tile_width === 1024 && tf.tile_height === 576 && tf.overlap_frac === 0.5 && tf.blend_var === 0.05 && tf.cfg === 1 && tf.tile_frames === 97);
+  check('…the 8 distilled sigmas, the Refine IC-LoRA at 1.0, VAEDecodeTiled 1024/128/256',
+    byClass('ManualSigmas')[0]?.inputs.sigmas === '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0'
+    && /refine-details/.test(String(byClass('LTXICLoRALoaderModelOnly')[0]?.inputs.lora_name)) && byClass('LTXICLoRALoaderModelOnly')[0]?.inputs.strength_model === 1
+    && byClass('VAEDecodeTiled')[0]?.inputs.tile_size === 1024 && byClass('VAEDecodeTiled')[0]?.inputs.overlap === 128 && byClass('VAEDecodeTiled')[0]?.inputs.temporal_size === 256);
+  check('…the empty Look runs with the card\'s generic look', byClass('CLIPTextEncode').some((n) => n.inputs.text === FINISH_PROMPTS.positive));
+  check('…16-bit PNG frames and an 8-bit MP4 with the clip\'s sound', byClass('SaveImageAdvanced')[0]?.inputs['format.bit_depth'] === '16-bit' && byClass('CreateVideo')[0]?.inputs.bit_depth === 8 && Array.isArray(byClass('CreateVideo')[0]?.inputs.audio));
+  const lv = lc.versions[0];
+  check('the master: every 16-bit frame next to the project, recorded with the version', lv?.exports?.[0]?.kind === 'png16' && existsSync(lv.exports[0].path) && /_png16[\\/]/.test(lv.exports[0].path));
+  const lComp = host.comps.at(-1)!;
+  check('a new comp at the delivery size (1344×768 → 1890×1080), the original under it at 140.625 %, switched off',
+    lComp.width === 1890 && lComp.height === 1080 && lComp.layers[1].visible === false && Math.abs((lComp.layers[1].scale ?? 0) - 140.625) < 0.01 && /LTX Full HD/.test(lComp.name), JSON.stringify([lComp.width, lComp.height, lComp.layers[1], lComp.name]));
+  // The run's own record sits under "host" in job.json, as every Comp tab tool's does.
+  const lJob = JSON.parse(readFileSync(join(engine.state().mediaDir, lv.file.replace(/\.\w+$/, '.job.json')), 'utf8')).host;
+  check('its job.json: the plan (tiles, frames), the estimate and its basis, the time it took, the VRAM seen, the licence',
+    lJob.finishing?.plan?.passes?.[0]?.tiles === 9 && lJob.finishing.estimate.seconds > 0 && /steps in \d+ s/.test(lJob.finishing.estimate.basis) && typeof lJob.finishing.took.seconds === 'number'
+    && 'minFreeGb' in lJob.finishing.vram && lJob.finishing.licence.startsWith(LTX_LICENCE_LINE), JSON.stringify(lJob.finishing ? { p: lJob.finishing.plan?.passes?.[0], e: lJob.finishing.estimate, t: lJob.finishing.took, v: lJob.finishing.vram, l: String(lJob.finishing.licence).slice(0, 40) } : Object.keys(lJob)));
+
+  // A preview tile: one 1024×576 tile, the original placed so the tile lines up.
+  const { id: tId } = await engine.runCompTool({ tool: 'upscale', source: 'layer', options: { engine: 'ltx', size: 'fhd', preview: true }, cap: 8, prompt: 'subtle film grain' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === tId)?.status ?? ''));
+  const tComp = host.comps.at(-1)!;
+  const crop = (submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, number> }>);
+  const ic = Object.values(crop).find((n) => n.class_type === 'ImageCrop')?.inputs;
+  check('a preview tile: a 1024×576 comp, the original scaled to the canvas and moved so the tile lines up',
+    engine.state().cards.find((c) => c.id === tId)?.status === 'done' && tComp.width === 1024 && tComp.height === 576 && !!ic
+    && JSON.stringify(tComp.layers[1].position) === JSON.stringify([1888 / 2 - ic.x, 1088 / 2 - ic.y]), JSON.stringify([tComp.width, tComp.layers[1], ic, engine.state().cards.find((c) => c.id === tId)?.error]));
+
+  // Archive restore + Refine 30 %, and a single-pass tool, from the work area.
+  const { id: rId } = await engine.runCompTool({ tool: 'restore', source: 'workArea', options: { mode: 'restore-refine', negative: 'logos, lettering' }, cap: 8, prompt: '' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === rId)?.status ?? ''));
+  const rg = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  const loras = Object.values(rg).filter((n) => n.class_type === 'LTXICLoRALoaderModelOnly').map((n) => `${String(n.inputs.lora_name).split('/').pop()}@${n.inputs.strength_model}`);
+  check('Restore + Refine: Restore at 1.0 and Refine at 0.3 in the same pass, on 960×544 tiles, the negative as written',
+    engine.state().cards.find((c) => c.id === rId)?.status === 'done' && loras.join() === 'ltx-2.5-22b-ic-lora-restore-1.0.safetensors@1,ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors@0.3'
+    && Object.values(rg).some((n) => n.class_type === 'LTXVTiledFusionSampler' && n.inputs.tile_width === 960 && n.inputs.tile_height === 544)
+    && Object.values(rg).some((n) => n.class_type === 'CLIPTextEncode' && n.inputs.text === 'logos, lettering'), engine.state().cards.find((c) => c.id === rId)?.error ?? loras.join());
+  const { id: dId } = await engine.runCompTool({ tool: 'deblur', source: 'workArea', options: {}, cap: 8, prompt: 'a sailboat on a lake' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === dId)?.status ?? ''));
+  const dg = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  check('Deblur: the official single-stage chain (CFGGuider 1, euler_ancestral, LTXVCropGuides), the card\'s DEBLUR sentence',
+    engine.state().cards.find((c) => c.id === dId)?.status === 'done'
+    && Object.values(dg).some((n) => n.class_type === 'CFGGuider' && n.inputs.cfg === 1) && Object.values(dg).some((n) => n.class_type === 'KSamplerSelect' && n.inputs.sampler_name === 'euler_ancestral')
+    && Object.values(dg).some((n) => n.class_type === 'LTXVCropGuides') && Object.values(dg).some((n) => n.class_type === 'CLIPTextEncode' && /DEBLUR a sailboat on a lake\./.test(String(n.inputs.text))),
+    engine.state().cards.find((c) => c.id === dId)?.error);
+
+  // LTX Alpha from a layer: a matte above it, like SAM 3's, exportable with alpha.
+  await host.openComp(1);
+  host.selected = [901];
+  await engine.sync();
+  const { id: aId } = await engine.runCompTool({ tool: 'matte', source: 'layer', options: { engine: 'ltx' }, cap: 8 });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === aId)?.status ?? ''));
+  const ac = engine.state().cards.find((c) => c.id === aId)!;
+  const ag = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  check('LTX Alpha: no prompt, no master, the matte above the clip as its luma track matte',
+    ac.status === 'done' && JSON.stringify(host.mattes.at(-1)) === JSON.stringify([901, ac.placed?.layerId, 'luma'])
+    && !Object.values(ag).some((n) => n.class_type === 'SaveImageAdvanced') && Object.values(ag).filter((n) => n.class_type === 'CLIPTextEncode').every((n) => n.inputs.text === ''), ac.error);
+  check('…and can be exported with alpha, like a SAM 3 matte', engine.compView ? (await engine.compView(901)).runs.find((r) => r.id === aId)?.versions[0]?.canExport === true : false);
+
+  // Where it may run: a deployment is not known to have LTX-2.5.
+  services.resources.update({ apiKey: FAKE_KEY, resources: [{ id: 'deployment', url: v2fake.url, enabled: true }] });
+  const dp = await engine.planComp({ tool: 'upscale', source: 'layer', options: { engine: 'ltx', size: 'fhd' }, cap: 8, resource: 'deployment' });
+  check('a finishing plan on a deployment says JustAE Flow knows of no LTX-2.5 there', dp.warnings.some((w) => /knows of no LTX-2\.5 model there/.test(w) && /built without LTX-2\.5/.test(w)), JSON.stringify(dp.warnings));
+  const beforeDep = submits.length;
+  const { id: depId } = await engine.runCompTool({ tool: 'upscale', source: 'layer', options: { engine: 'ltx', size: 'same' }, cap: 8, resource: 'deployment' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === depId)?.status ?? ''));
+  const depc = engine.state().cards.find((c) => c.id === depId)!;
+  check('…and a run sent there is refused before anything is uploaded', depc.status === 'error' && /runs on your local ComfyUI/.test(depc.error ?? '') && submits.length === beforeDep, depc.error);
+  services.resources.update({ apiKey: null, resources: [{ id: 'deployment', remove: true }] });
+}
+
 console.log('comp routes');
 {
   const { createServer: mk } = await import('node:http');
@@ -953,7 +1097,7 @@ console.log('comp routes');
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
   const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
   const get = await (await fetch(`${base}/api/comp`)).json() as { comp: { name: string; workArea: number[] }; tools: unknown[]; runs: unknown[] };
-  check('GET /api/comp: the comp with its work area, the tools, the runs', get.comp?.name === 'Comp' && get.comp.workArea[0] === 1 && get.tools.length === 6 && get.runs.length >= 4);
+  check('GET /api/comp: the comp with its work area, the tools, the runs', get.comp?.name === 'Comp' && get.comp.workArea[0] === 1 && get.tools.length === 13 && get.runs.length >= 4);
   const pl = await (await fetch(`${base}/api/comp/plan`, { method: 'POST', body: JSON.stringify({ tool: 'reframe', source: 'comp', options: { aspect: '4:3' }, cap: 8 }) })).json() as { ok: boolean; makes: string; warnings: string[] };
   check('POST /api/comp/plan: 4:3 from the whole comp, capped at 8 s, said', pl.ok && /1440×1080/.test(pl.makes) && pl.warnings.some((w) => /12\.0 s/.test(w)));
   const no = await fetch(`${base}/api/comp/run`, { method: 'POST', body: JSON.stringify({ tool: 'upscale', source: 'comp', options: { scale: 2 } }) });
@@ -978,8 +1122,15 @@ console.log('featured workflows');
   const h3 = entries.find((e) => e.id === 'h3-flf');
   check('Featured lists the eight entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 8 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
   check('…from the probes: Local ✓ where the local ComfyUI has every node and model', entries.find((e) => e.id === 'ltx25-i2v')?.runsOn.find((r) => r.resource === 'local')?.status === 'ok' && entries.every((e) => e.runnable === e.runsOn.some((r) => r.status === 'ok' || r.status === 'proven')));
-  check('MiniMax H3 first + last frame: Draft / Final (Final = SeedVR2 ×2 after it) and its licence note',
-    h3?.tiers?.final.then === 'seedvr2-upscale' && h3.tiers.final.scale === 2 && /MiniMax commercial licence/.test(h3.licenceNote ?? '') && /to be verified/.test(h3.licenceNote ?? ''));
+  check('MiniMax H3 first + last frame: Draft / Final, Final = + SeedVR2 ×2 or + LTX Refine, and its licence note',
+    h3?.tiers?.finals.map((x) => `${x.id}:${x.then}`).join() === 'seedvr2:seedvr2-upscale,ltx:ltx25-refine' && h3.tiers.finals[0].scale === 2
+    && /MiniMax commercial licence/.test(h3.licenceNote ?? '') && /to be verified/.test(h3.licenceNote ?? ''));
+  const h3d = library.graph('h3-flf-draft')!;
+  check('H3 Draft is the turbo 4-step LoRA the official template names, 4 steps; the base model stays in Final',
+    h3?.tiers?.draft.workflow === 'h3-flf-draft' && h3.draftName === library.get('h3-flf-draft')!.manifest.title
+    && Object.values(h3d).some((n) => n.class_type === 'LoraLoaderModelOnly' && n.inputs.lora_name === 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors' && n.inputs.strength_model === 1)
+    && JSON.stringify(h3d['105:9'].inputs.steps) === '["105:125",0]' && h3d['105:125'].inputs.value === 4 && JSON.stringify(h3d['105:16'].inputs.model) === '["105:121",0]'
+    && library.get('h3-flf-draft')!.manifest.models.some((x) => /Comfy-Org\/MiniMax-H3\/resolve\/main\/loras\/minimax_h3_fl2v_turbo_4step/.test(x.url)));
   const h3g = library.graph('h3-flf')!;
   check('the H3 graph takes a first and a last frame, on the base model (no turbo LoRA left in it)',
     JSON.stringify(h3g['105:104'].inputs.first_frame) === '["114",0]' && JSON.stringify(h3g['105:104'].inputs.last_frame) === '["130",0]' && !Object.values(h3g).some((n) => n.class_type === 'LoraLoaderModelOnly'));

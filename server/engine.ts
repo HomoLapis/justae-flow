@@ -25,6 +25,14 @@ import { decodePngGrey } from '../core/lib/png.ts';
 import { ASPECTS, planReframe, subjectOf, type ReframePlan, type Smoothing, type SubjectFrame } from '../core/reframe/plan.ts';
 import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/outpaint.ts';
 import { COMP_TOOLS, ltxExtendFrames, ltxGuidedFrames, resultName, toolById, type SourceInfo, type SourceKind, type ToolDef, type ToolOptions, type ToolPlan } from '../core/comp/tools.ts';
+import { finishSpec, SINGLE_TOOLS, type FinishSpec } from '../core/comp/finishing-tools.ts';
+import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
+import { localVerdict, planFinish, type FinishPlan } from '../core/finishing/plan.ts';
+import { checkFiles, hasQuantizedTransformer, LORAS, lorasOf, requiredNodes, type LoraId, type NodeCatalog } from '../core/finishing/models.ts';
+import { buildFinishGraph } from '../core/finishing/graph.ts';
+import { buildSingleGraph, planSingle, singleNodes, type SinglePlan } from '../core/finishing/single.ts';
+import { validateGraph } from '../core/finishing/validate.ts';
+import { describeFinishEstimate, estimateFinish, estimateSingle } from '../core/finishing/estimate.ts';
 import { EffectCraftAdapter } from '../hosts/effectcraft/adapter.ts';
 import { PhotoCraftAdapter } from '../hosts/photocraft/adapter.ts';
 import type { CanvasHost, HostAdapter, HostLayer, HostSnapshot, ItemInfo, TimelineHost } from '../hosts/types.ts';
@@ -126,7 +134,16 @@ export interface CompView {
   resultOf: { cardId: string; compId: number; compName: string | null } | null;
   /** "Describe the clip": whether the local ComfyUI can run it (the model file is there), and with which model. */
   describe: { available: boolean; model?: string; reason?: string };
-  tools: Array<{ id: string; name: string; promise: string; icon: string; sources: SourceKind[]; defaults: ToolOptions }>;
+  tools: Array<{
+    id: string; name: string; promise: string; icon: string; sources: SourceKind[]; defaults: ToolOptions;
+    /** 'ltx': listed under LTX finishing. */
+    family?: 'ltx';
+    licence?: { line: string; url: string };
+    /** Listed, cannot run: why (to be verified). */
+    unavailable?: string;
+    /** LTX finishing: IC-LoRA files the local ComfyUI lacks, with where to get them (gated: accept the terms first). */
+    missing?: Array<{ what: string; file: string; url: string }>;
+  }>;
   runs: CompRunView[];
   queue: EngineState['queue'];
   mediaDir: string;
@@ -144,6 +161,10 @@ export interface CompPlanRequest {
   options?: ToolOptions;
   /** The work-area render cap, seconds. */
   cap?: number;
+  /** The card's text as typed now (the LTX "Look" is checked on every plan). */
+  prompt?: string;
+  /** The resource picked on the card ('default' or absent: the task's row), so a plan can say where it would run. */
+  resource?: string | null;
 }
 
 export function comfyFor(s: Pick<Settings, 'comfyUrl' | 'comfyToken' | 'comfyGpu'>): ComfyClient {
@@ -1072,7 +1093,9 @@ export class Engine {
     if (!tool.sources.includes(req.source)) throw new Error(`${tool.name} does not work from that source.`);
     const cap = renderCap(req.cap);
     const { info } = await this.compSource(req.source, cap, req.layerId);
-    const plan = tool.plan(info, { ...tool.defaults, ...(req.options ?? {}) }, (id) => this.library.get(id)?.manifest);
+    const options = { ...tool.defaults, ...(req.options ?? {}) };
+    const plan = tool.plan(info, options, (id) => this.library.get(id)?.manifest, { prompt: req.prompt });
+    this.finishingChecks(tool, options, plan, info, req.resource);
     // Extend takes only the last frame: the render cap does not apply to it.
     if (req.source !== 'layer' && tool.renders !== false && info.requested > cap + 1e-3) {
       plan.warnings.unshift(`The ${req.source === 'workArea' ? 'work area' : 'comp'} lasts ${info.requested.toFixed(1)} s: the render stops at ${cap} s (Work-area render cap).`);
@@ -1096,7 +1119,7 @@ export class Engine {
     const plan = await this.planComp(req);
     if (!plan.ok) throw new Error(plan.reason ?? 'This tool cannot run on this source.');
     const prompt = (req.prompt ?? '').trim();
-    if (plan.prompt && !prompt) throw new Error(`Write the ${plan.prompt.label.toLowerCase()} first.`);
+    if (plan.prompt && !plan.prompt.optional && !prompt) throw new Error(`Write the ${plan.prompt.label.toLowerCase()} first.`);
     if (req.resource && req.resource !== 'default' && req.resource !== 'auto' && !this.services.resources.get(req.resource)) throw new Error(`No resource "${req.resource}".`);
     const options = { ...tool.defaults, ...(req.options ?? {}) };
     const src = await this.compSource(req.source, plan.cap, req.layerId);
@@ -1174,7 +1197,7 @@ export class Engine {
         n: v.n, compId: v.compId ?? v.compare?.compId, compName: v.compName, createdAt: v.createdAt, elapsedMs: v.elapsedMs,
         executionMs: v.executionMs ?? null, derivedCredits: v.derivedCredits ?? null, resource: v.resource, width: v.width, height: v.height,
         seconds: v.seconds, exports: v.exports, file: v.file, thumb: v.thumb ?? null, showing: v.compare?.showing ?? null,
-        canExport: v.workflowId === 'sam3-matte' && !!v.source?.file,
+        canExport: (v.workflowId === 'sam3-matte' || v.workflowId === 'ltx25-alpha') && !!v.source?.file,
       })),
       group: t.group,
       updatedAt: c.updatedAt,
@@ -1209,7 +1232,11 @@ export class Engine {
       picked: bare(pickedInfo),
       resultOf: from ? { cardId: from.id, compId: from.compId, compName: from.tool?.compName ?? null } : null,
       describe: this.describeStatus(),
-      tools: this.host.kind === 'timeline' ? COMP_TOOLS.map(({ id, name, promise, icon, sources, defaults }) => ({ id, name, promise, icon, sources, defaults })) : [],
+      tools: this.host.kind === 'timeline'
+        ? COMP_TOOLS.map(({ id, name, promise, icon, sources, defaults, family, licence, unavailable, loras }) => ({
+          id, name, promise, icon, sources, defaults, family, licence, unavailable, missing: loras?.length ? this.missingLoras(loras as LoraId[]) : undefined,
+        }))
+        : [],
       runs,
       queue: st.queue,
       mediaDir: this.mediaDir,
@@ -1363,7 +1390,7 @@ export class Engine {
     const card = this.card(id);
     const v = card?.versions.find((x) => x.n === (n ?? card.activeVersion));
     if (!card || !v) throw new Error('No such version.');
-    if (v.workflowId !== 'sam3-matte' || !v.source?.file) throw new Error('Only a cut-out can be exported with alpha.');
+    if ((v.workflowId !== 'sam3-matte' && v.workflowId !== 'ltx25-alpha') || !v.source?.file) throw new Error('Only a cut-out can be exported with alpha.');
     const clip = /^([a-z]:|[\\/])/i.test(v.source.file) ? v.source.file : join(this.mediaDir, v.source.file);
     if (!existsSync(clip)) throw new Error(`The clip this matte was made from is no longer at ${clip}.`);
     const out = join(this.mediaDir, card.id, `${basename(v.file, extname(v.file))}_alpha_4444.mov`);
@@ -1526,8 +1553,14 @@ export class Engine {
     const entry = this.library.get(card.workflowId);
     if (!entry) throw new Error(`Workflow "${card.workflowId}" is not in the library.`);
     const m = entry.manifest;
-    if (!(m.hosts ?? ['effectcraft']).includes(this.host.id)) throw new Error(`${m.title} does not run in ${this.host.label}; pick another workflow for this card.`);
+    // LTX finishing's bundled graphs stay out of the pickers (hosts: []); they run from the Comp tab only.
+    const hosts = m.task === 'finish-video' && card.tool ? ['effectcraft'] : m.hosts ?? ['effectcraft'];
+    if (!hosts.includes(this.host.id)) throw new Error(`${m.title} does not run in ${this.host.label}; pick another workflow for this card.`);
     const route = this.route(card)!;
+    if (m.task === 'finish-video') {
+      const elsewhere = this.finishingElsewhere(route.resource);
+      if (elsewhere) throw new Error(elsewhere);
+    }
     const runner = this.runnerFor(route.resource);
     if (this.running) { this.running.runner = runner; this.running.why = route.why; }
     if (route.resource.kind === 'local') {
@@ -1935,6 +1968,9 @@ export class Engine {
     const m = entry.manifest;
     // Extend needs only the source's last frame, not a render of it.
     if (card.tool?.id === 'extend') return this.extendTool(card, entry, api, seed, t0);
+    // LTX finishing: the graph is built from the plan of the clip in hand, not filled in from the bundled one.
+    const spec = card.tool ? finishSpec(card.tool.id, card.tool.options) : null;
+    if (spec) return this.finishingTool(card, entry, spec, t0);
     const src = await this.toolClip(card);
     if (m.task === 'outpaint-video') return this.outpaint(card, entry, api, seed, t0, src);
     this.phase(card, 'Uploading');
@@ -2181,6 +2217,260 @@ export class Engine {
       thumb, compName, source: this.sourceRecord(src),
       compare: { compId: built.compId, showing: 'result', result: [[upLayer, true], [original, false]], original: [[upLayer, false], [original, true]] },
     }, saved.stem, { comp: compName, mode, multiplier: k, fps: { in: srcFps, out: fps }, frames: { in: inFrames, out: outFrames }, tool: card.tool, source: this.sourceRecord(src) });
+    await this.setHostStatus(card, 'done');
+  }
+
+  /* ─── LTX finishing ───────────────────────────────────────────────── */
+
+  /**
+   * Where LTX finishing may run: the local ComfyUI (or the proxy in front of it), or a resource whose probe found the
+   * workflow's nodes and models (or where a run of it finished). A deployment's catalogue cannot be read over Comfy API
+   * v2, and the one this app knows was built with core nodes, Wan VACE and SeedVR2 only: no LTX-2.5 there.
+   */
+  private finishingElsewhere(r: Resource, workflowId?: string): string | null {
+    if (r.kind === 'local') return null;
+    if (r.kind === 'proxy' && r.fronts === this.services.resources.local().id) return null;
+    if (workflowId && this.services.caps.has(r, workflowId) === 'ok') return null;
+    return `${r.label}: JustAE Flow knows of no LTX-2.5 model there${r.kind === 'deployment' ? ' — it was built without LTX-2.5, as far as JustAE Flow knows' : ''}. `
+      + 'LTX finishing runs on your local ComfyUI: pick Local for this card (or set Settings ▸ Resources ▸ LTX finishing to Local).';
+  }
+
+  /** The IC-LoRA files of a tool the local ComfyUI lacks; undefined while its catalogue has not been read. */
+  private missingLoras(loras: LoraId[]): Array<{ what: string; file: string; url: string }> | undefined {
+    const oi = this.objectInfo as unknown as NodeCatalog | null;
+    if (!oi) return undefined;
+    const known = loras.filter((l): l is LoraId => l in LORAS);
+    const { missing } = checkFiles(oi, known, 'local');
+    const files = new Set(known.map((l) => LORAS[l].file));
+    return missing.filter((x) => files.has(x.file)).map((x) => ({ what: x.what, file: x.file, url: x.repo }));
+  }
+
+  /** What is missing for a finishing run, with where it comes from (gated repos: the terms first). */
+  private missingText(missing: Array<{ what: string; file: string; repo: string; folder: string }>): string {
+    return `Not on the local ComfyUI: ${missing.map((x) => `${x.what} (${x.file} → ${x.folder}, from ${x.repo})`).join('; ')}. `
+      + 'The Lightricks repos are gated: open each page, press "Agree and Access", download the file into that folder, then restart ComfyUI.';
+  }
+
+  /** A finishing card's plan, completed with what only the server knows: the local ComfyUI's files, where it would run. */
+  private finishingChecks(tool: ToolDef, options: ToolOptions, plan: ToolPlan, info: SourceInfo, resource?: string | null): void {
+    const spec = finishSpec(tool.id, options);
+    if (!spec || !plan.ok) return;
+    const entry = this.library.get(spec.workflowId);
+    if (entry) {
+      const r = this.services.resources.resolve(taskOf(entry.manifest.task, entry.manifest.id), resource ?? null, (x) => this.services.caps.has(x, entry.manifest.id)).resource;
+      const why = this.finishingElsewhere(r, entry.manifest.id);
+      if (why) plan.warnings.unshift(why);
+    }
+    const oi = this.objectInfo as unknown as NodeCatalog | null;
+    if (!oi) {
+      plan.notes.push('The local ComfyUI has not been read yet: its LTX-2.5 files are checked when the run starts.');
+      if (!this.checking) void this.checkComfy().catch(() => undefined);
+      return;
+    }
+    let fp: FinishPlan | null = null;
+    if (spec.kind === 'tiled') fp = planFinish({ width: info.width, height: info.height, pixelAspect: 1, frames: Math.max(1, Math.round(info.seconds * (info.fps || 24))), fps: info.fps || 24 }, spec.options);
+    const files = checkFiles(oi, fp ? lorasOf(fp) : [spec.kind === 'single' ? spec.lora : 'refine'], 'local');
+    if (!files.models) {
+      plan.ok = false;
+      plan.reason = this.missingText(files.missing);
+      return;
+    }
+    const quantized = hasQuantizedTransformer(oi);
+    if (fp) {
+      const v = localVerdict(fp, quantized);
+      if (!v.ok) { plan.ok = false; plan.reason = v.warnings.join(' '); return; }
+      plan.warnings.push(...v.warnings);
+    } else if (!quantized) {
+      plan.ok = false;
+      plan.reason = 'The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8): the bf16 one does not fit a 16 GB card.';
+      return;
+    }
+    plan.notes.push(`On the local ComfyUI: ${files.models.transformer.replace(/\.safetensors$/, '')}, ${Object.values(files.models.loras).map((x) => String(x).split('/').pop()!.replace(/\.safetensors$/, '')).join(' + ')}.`);
+  }
+
+  /** The lowest free VRAM the local ComfyUI reports while a job runs (its /system_stats, every 5 s). */
+  private vramWatch(): { stop: () => { minFreeGb: number | null; totalGb: number | null; samples: number } } {
+    let minFree = Infinity;
+    let total = 0;
+    let samples = 0;
+    const tick = async (): Promise<void> => {
+      try {
+        const r = await fetch(`${this.comfy.base}/api/system_stats`, { signal: AbortSignal.timeout(4000) });
+        const d = ((await r.json()) as { devices?: Array<{ vram_free?: number; vram_total?: number }> }).devices?.[0];
+        if (typeof d?.vram_free === 'number') { minFree = Math.min(minFree, d.vram_free); total = d.vram_total ?? total; samples++; }
+      } catch { /* a missed reading is not a failure */ }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 5000);
+    const gb = (b: number): number => Math.round((b / 2 ** 30) * 10) / 10;
+    return { stop: () => { clearInterval(timer); return { minFreeGb: Number.isFinite(minFree) ? gb(minFree) : null, totalGb: total ? gb(total) : null, samples }; } };
+  }
+
+  /**
+   * LTX finishing (core/finishing): the source as one file — the layer's own, or a render of the comp — counted frame
+   * by frame, planned again with that count, checked against the local ComfyUI (nodes, files, the graph itself) before
+   * it is uploaded, then one job: the 16-bit frames (the master, kept next to the project) and an 8-bit MP4 of the
+   * same frames (what the comp shows). The result is a new comp at the delivery size with the original under it,
+   * switched off — or, for LTX Alpha, a matte placed like SAM 3's.
+   */
+  private async finishingTool(card: Card, entry: LibraryEntry, spec: FinishSpec, t0: number): Promise<void> {
+    const host = this.tl();
+    const m = entry.manifest;
+    const t = card.tool!;
+    const src = await this.toolClip(card);
+    const fps = src.info.frameRate || this.snap?.comp?.fps || 24;
+    this.phase(card, 'Counting the frames');
+    const counted = await countFrames(src.path);
+    const frames = counted ?? Math.max(1, Math.round((src.info.duration || 1) * fps));
+    const { width, height } = src.info;
+    this.throwIfCancelled();
+
+    // The local ComfyUI's catalogue: finishing runs only there (generate() refused anything else).
+    const oi = (this.objectInfo ?? await this.comfy.objectInfo()) as unknown as NodeCatalog;
+    if (!hasQuantizedTransformer(oi)) throw new Error('The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8): the bf16 one does not fit a 16 GB card.');
+    let fp: FinishPlan | null = null;
+    let sp: SinglePlan | null = null;
+    let needs: LoraId[];
+    let nodes: string[];
+    if (spec.kind === 'tiled') {
+      fp = planFinish({ width, height, pixelAspect: 1, frames, fps }, spec.options);
+      needs = lorasOf(fp);
+      nodes = requiredNodes(fp, 'video', true);
+    } else {
+      sp = planSingle(spec.lora, { width, height, frames, fps }, spec.size);
+      if (sp.reason) throw new Error(sp.reason);
+      needs = [spec.lora];
+      nodes = singleNodes(spec.master !== 'none');
+    }
+    const absent = nodes.filter((x) => !oi[x]);
+    if (absent.length) throw new Error(`The local ComfyUI lacks ${absent.join(', ')} (ComfyUI-LTXVideo 1.1.0, VideoHelperSuite).`);
+    const files = checkFiles(oi, needs, 'local');
+    if (!files.models) throw new Error(this.missingText(files.missing));
+
+    const n = (card.versions.at(-1)?.n ?? 0) + 1;
+    const seed = card.seed ?? Math.floor(Math.random() * 2 ** 47);
+    const crop = fp?.previewCrop ?? null;
+    const prefix = `${SLUG}/finish/${card.id}_v${String(n).padStart(3, '0')}`;
+    // The source's sound into the preview — not for a preview tile, which is shorter than the clip.
+    const previewVideo = { prefix: `${prefix}/preview`, fps, audio: !crop };
+
+    this.phase(card, 'Uploading');
+    const uploaded = await this.runner().uploadFile(src.path, () => readFileSync(src.path), `flow_${card.id}${extname(src.path)}`, videoMime(src.path));
+    let graph: { workflow: Record<string, { class_type: string; inputs: Record<string, unknown>; _meta?: { title?: string } }>; saveNode: string | null | undefined; previewNode?: string };
+    let prompts: Record<string, string>;
+    if (fp && spec.kind === 'tiled') {
+      const look = card.prompt.trim();
+      const p = {
+        positive: spec.look === 'refine' && look ? look : DEFAULT_PROMPTS.positive,
+        negative: DEFAULT_PROMPTS.negative,
+        restorePositive: spec.look === 'restore' && look ? look : DEFAULT_PROMPTS.restorePositive,
+        restoreNegative: String(t.options.negative ?? '').trim() || DEFAULT_PROMPTS.restoreNegative,
+      };
+      prompts = p;
+      graph = buildFinishGraph({ plan: fp, models: files.models, input: { video: uploaded }, prompts: p, seed, outputPrefix: `${prefix}/frame`, preview: previewVideo });
+    } else {
+      const single = SINGLE_TOOLS.find((x) => x.lora === sp!.lora);
+      const key = single?.field?.key;
+      const p = singlePrompt(sp!.lora, card.prompt.trim() || single?.prompt.fallback || '', key ? String(t.options[key] ?? '') : '');
+      prompts = p;
+      graph = buildSingleGraph({ plan: sp!, models: files.models, video: uploaded, prompt: p, seed, outputPrefix: `${prefix}/frame`, master: spec.kind === 'single' ? spec.master : 'png16', preview: previewVideo });
+    }
+    const loadId = Object.entries(graph.workflow).find(([, x]) => x.class_type === 'LoadVideo')?.[0] ?? '';
+    const problems = validateGraph(graph.workflow, oi, [`${loadId}.file`]);
+    if (problems.length) throw new Error(`The local ComfyUI would refuse the finishing graph: ${problems.slice(0, 3).join(' · ')}`);
+    const estimate = fp ? estimateFinish(fp) : estimateSingle(sp!);
+
+    const vram = this.vramWatch();
+    let res: { outputs: OutputFile[]; jobId: string };
+    let seenVram: { minFreeGb: number | null; totalGb: number | null; samples: number };
+    try {
+      res = await this.execute(card, graph.workflow as unknown as WorkflowJson, undefined, this.meta(m, frames / fps));
+    } finally {
+      seenVram = vram.stop();
+    }
+    const mp4 = res.outputs.filter((o) => o.nodeId === graph.previewNode && /\.(mp4|mov|webm)$/i.test(o.filename)).pop();
+    if (!mp4) throw new Error('The finishing job ended without its MP4 preview.');
+    this.phase(card, 'Downloading');
+    const saved = this.saveVersion(card, m, { bytes: await this.runner().download(mp4), filename: mp4.filename }, slugFromPrompt(t.label ?? src.name, 28));
+
+    // The master: every 16-bit frame, next to the project.
+    let masterRec: { kind: 'png16' | 'exr16'; dir: string; first: string; count: number } | null = null;
+    if (graph.saveNode) {
+      const outs = res.outputs.filter((o) => o.nodeId === graph.saveNode && o.type === 'output').sort((a, b) => a.filename.localeCompare(b.filename));
+      if (outs.length) {
+        const kind: 'png16' | 'exr16' = /\.exr$/i.test(outs[0].filename) ? 'exr16' : 'png16';
+        const ext = kind === 'exr16' ? 'exr' : 'png';
+        const dir = join(this.mediaDir, card.id, `${saved.stem}_${kind}`);
+        mkdirSync(dir, { recursive: true });
+        let done = 0;
+        const label = kind === 'exr16' ? 'EXR' : 'PNG 16-bit';
+        this.phase(card, `Downloading the ${label} master`, 0, outs.length);
+        await inPool(outs, 4, async (o, i) => {
+          writeFileSync(join(dir, `${saved.stem}_${String(i).padStart(5, '0')}.${ext}`), await this.runner().download(o));
+          this.phase(card, `Downloading the ${label} master`, ++done, outs.length);
+        });
+        masterRec = { kind, dir, first: join(dir, `${saved.stem}_00000.${ext}`), count: outs.length };
+      }
+    }
+    const meter = this.running?.meter;
+    const took = meter?.timed ? meter.executionMs / 1000 : (Date.now() - t0) / 1000;
+    const record = {
+      finishing: {
+        spec, sourceFrames: counted, frames, fps,
+        plan: fp ? {
+          preset: fp.options.preset, preview: !!crop, delivery: fp.delivery, frames: fp.frames, previewCrop: fp.previewCrop,
+          passes: fp.passes.map((p) => ({ name: p.name, lora: p.lora, extraLora: p.extraLora, canvas: p.canvas, tile: p.tile, tiles: p.grid.count, grid: [p.grid.x, p.grid.y], steps: p.steps, fromImage: p.fromImage, load: p.load })),
+          load: fp.load, loadFormula: fp.loadFormula, fixes: fp.fixes, warnings: fp.warnings,
+        } : { lora: sp!.lora, size: sp!.size, canvas: sp!.canvas, delivery: sp!.delivery, frames: sp!.frames, fixes: sp!.fixes, warnings: sp!.warnings },
+        models: files.models, prompts, seed,
+        estimate: { seconds: Math.round(estimate.seconds), basis: estimate.basis, tileSteps: estimate.tileSteps },
+        took: { seconds: Math.round(took * 10) / 10, basis: meter?.timed ? 'ComfyUI execution time' : 'wall-clock' },
+        vram: { ...seenVram, basis: 'lowest vram_free of /system_stats, read every 5 s while the job ran' },
+        master: masterRec ? { kind: masterRec.kind, dir: masterRec.dir, frames: masterRec.count } : null,
+        licence: m.license.weights,
+      },
+    };
+    const remaps = [`LTX-2.5 files used: ${files.models.transformer}, ${files.models.textEncoder}, ${files.models.vae}, ${Object.values(files.models.loras).join(', ')}`];
+
+    if (sp?.lora === 'alpha') {
+      await this.placeMatte(card, m, saved, src, { jobId: res.jobId, seed, t0, remaps, subject: '', by: 'LTX Alpha Gen', extra: record });
+      return;
+    }
+
+    this.phase(card, 'Building the comp');
+    const delivery = fp ? fp.delivery : sp!.delivery;
+    const upItem = await host.importFile(saved.abs);
+    const up = await host.itemInfo(upItem);
+    const w = up?.width || delivery.w;
+    const h = up?.height || delivery.h;
+    const duration = up?.duration || (crop ? fp!.frames.source / fps : src.info.duration || frames / fps);
+    const compName = this.toolCompName(card, saved.n);
+    const what = fp ? fp.passes.map((p) => p.name).join(' → ') : (SINGLE_TOOLS.find((x) => x.lora === sp!.lora)?.name ?? sp!.lora);
+    const comment = `${SLUG} card=${card.id} v${saved.n} · ${m.title} · ${what} · seed ${seed}${card.prompt ? `\n${card.prompt}` : ''}`;
+    // The original under the result, scaled to it; for a preview tile, scaled to the full canvas and moved so the tile lines up.
+    const canvas = crop?.canvas;
+    const scale = canvas ? (canvas.w / width) * 100 : (w / width) * 100;
+    const position: [number, number] | undefined = crop && canvas ? [canvas.w / 2 - crop.x, canvas.h / 2 - crop.y] : undefined;
+    const built = await host.buildComp({
+      name: compName, width: w, height: h, fps, duration,
+      layers: [
+        { itemId: upItem, name: `${TAG} ${t.label?.split(' · ').pop() ?? 'LTX'} · ${src.name}`, comment },
+        { itemId: src.itemId, name: `${src.name} (original)`, scale: Math.round(scale * 1000) / 1000, position, visible: false },
+      ],
+    });
+    const [upLayer, original] = built.layers;
+    const thumb = await this.resultThumb(card, saved.stem, duration / 2);
+    const fmtT = (sec: number): string => (sec < 90 ? `${Math.round(sec)} s` : `${Math.round(sec / 60)} min`);
+    this.notice = `${what} in the new comp "${compName}" (${w}×${h}${crop ? ', one tile' : ''}): ${frames} frames`
+      + `${masterRec ? `; the ${masterRec.kind === 'exr16' ? 'EXR' : 'PNG 16-bit'} master is next to the project` : ''}, the comp shows an 8-bit MP4 preview. `
+      + `Estimated ${describeFinishEstimate(estimate).split(' (')[0]}, took ${fmtT(took)}.`;
+    this.recordVersion(card, m, {
+      n: saved.n, file: saved.rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed, width: w, height: h, seconds: duration,
+      jobId: res.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0, remaps,
+      compId: built.compId, itemId: upItem, thumb, compName, source: this.sourceRecord(src),
+      compare: { compId: built.compId, showing: 'result', result: [[upLayer, true], [original, false]], original: [[upLayer, false], [original, true]] },
+      exports: masterRec ? [{ kind: masterRec.kind, path: masterRec.first, at: new Date().toISOString() }] : undefined,
+    }, saved.stem, { comp: compName, tool: card.tool, source: this.sourceRecord(src), ...record });
     await this.setHostStatus(card, 'done');
   }
 
@@ -2466,11 +2756,26 @@ export class Engine {
    * holding the render with the matte as its luma track matte.
    */
   private async matteTool(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, models: ModelCheck, t0: number, src: ClipSource): Promise<void> {
-    const host = this.tl();
     const m = entry.manifest;
     const result = await this.runJob(card, api, m, undefined, this.meta(m, src.info.duration || null));
-    const { n, rel, abs, stem } = this.saveVersion(card, m, result, slugFromPrompt(card.tool?.label ?? src.name, 28));
-    const comment = `${SLUG} card=${card.id} v${n} · ${m.title}\n${card.prompt}`;
+    const saved = this.saveVersion(card, m, result, slugFromPrompt(card.tool?.label ?? src.name, 28));
+    await this.placeMatte(card, m, saved, src, {
+      jobId: result.jobId, seed, t0, remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), subject: card.prompt, extra: {},
+    });
+  }
+
+  /**
+   * A matte file (SAM 3's, or LTX Alpha Gen's) into the comp. From a layer: above it, as its luma track matte (a new
+   * version replaces the matte's footage). From a render of the comp: a new comp holding the render with the matte as
+   * its luma track matte.
+   */
+  private async placeMatte(card: Card, m: WorkflowManifest, saved: { n: number; rel: string; abs: string; stem: string }, src: ClipSource,
+    ctx: { jobId: string; seed: number | null; t0: number; remaps: string[]; subject: string; extra: Record<string, unknown>; by?: string }): Promise<void> {
+    const host = this.tl();
+    const { n, rel, abs, stem } = saved;
+    const what = ctx.subject || 'the foreground';
+    const comment = `${SLUG} card=${card.id} v${n} · ${m.title}
+${ctx.subject}`;
     const fps = src.info.frameRate || this.snap?.comp?.fps || 24;
     const duration = src.info.duration || 1;
     let compare: CompareState;
@@ -2490,7 +2795,7 @@ export class Engine {
       } else {
         const placed = await host.place({
           file: abs, time: layer.in, endTime: layer.out, sourceStart: layer.start,
-          name: `${TAG} matte · ${layerNameFromPrompt(card.prompt, 40)}`, comment, index: layer.index,
+          name: `${TAG} matte · ${layerNameFromPrompt(what, 40)}`, comment, index: layer.index,
         });
         card.placed = placed;
         await host.matchLayer(placed.layerId, placed.itemId, layer.id, src.itemId).catch(() => undefined);
@@ -2508,7 +2813,7 @@ export class Engine {
       const built = await host.buildComp({
         name: compName, width: src.info.width, height: src.info.height, fps, duration,
         layers: [
-          { itemId, name: `${TAG} matte · ${layerNameFromPrompt(card.prompt, 40)}`, comment },
+          { itemId, name: `${TAG} matte · ${layerNameFromPrompt(what, 40)}`, comment },
           { itemId: src.itemId, name: src.name },
         ],
       });
@@ -2518,14 +2823,15 @@ export class Engine {
       compare = { compId: built.compId, showing: 'result', result: [], original: [], matte: { layer: clip, matte: matteLayer } };
       thumb = await this.resultThumb(card, stem, duration / 2);
     }
+    const by = ctx.by ? ` (${ctx.by})` : '';
     this.notice = src.kind === 'layer'
-      ? `Cut out "${card.prompt}": the matte is above "${src.name}" as its luma track matte. "Export with alpha" writes a ProRes 4444 master.`
-      : `Cut out "${card.prompt}" in the new comp "${compName}". "Export with alpha" writes a ProRes 4444 master.`;
+      ? `Cut out ${ctx.subject ? `"${ctx.subject}"` : 'the foreground'}${by}: the matte is above "${src.name}" as its luma track matte. "Export with alpha" writes a ProRes 4444 master.`
+      : `Cut out ${ctx.subject ? `"${ctx.subject}"` : 'the foreground'}${by} in the new comp "${compName}". "Export with alpha" writes a ProRes 4444 master.`;
     this.recordVersion(card, m, {
-      n, file: rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed, width: src.info.width, height: src.info.height, seconds: duration,
-      jobId: result.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0,
-      remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId, itemId, thumb, compName, source: this.sourceRecord(src), compare,
-    }, stem, { comp: compName, tool: card.tool, source: this.sourceRecord(src) });
+      n, file: rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed: ctx.seed, width: src.info.width, height: src.info.height, seconds: duration,
+      jobId: ctx.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - ctx.t0,
+      remaps: ctx.remaps, compId, itemId, thumb, compName, source: this.sourceRecord(src), compare,
+    }, stem, { comp: compName, tool: card.tool, source: this.sourceRecord(src), ...ctx.extra });
     await this.setHostStatus(card, 'done');
   }
 

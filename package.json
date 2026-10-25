@@ -17,9 +17,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p client/tsconfig.json",
     "selftest": "node scripts/selftest.ts",
     "verify:workflows": "node scripts/verify-workflows.ts",
+    "verify:finishing": "node scripts/verify-finishing.ts",
+    "verify:finishing-run": "node scripts/verify-finishing-run.ts",
     "verify:effectcraft": "node scripts/verify-effectcraft.ts",
     "probe:cloud": "node scripts/probe-cloud.ts",
     "workflows:build": "node scripts/build-workflows.ts",
+    "workflows:build-finishing": "node scripts/build-finishing.ts",
     "scan:secrets": "node scripts/scan-secrets.ts"
   },
   "dependencies": {

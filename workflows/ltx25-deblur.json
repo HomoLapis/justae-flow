@@ -1,0 +1,44 @@
+{
+  "id": "ltx25-deblur",
+  "title": "LTX-2.5 · Deblur",
+  "description": "Out-of-focus footage back in focus (the Deblur IC-LoRA, one pass).",
+  "task": "finish-video",
+  "hosts": [],
+  "output": "video",
+  "input": "video",
+  "api": "ltx25-deblur.api.json",
+  "bindings": {
+    "video": "1.file"
+  },
+  "models": [
+    {
+      "name": "ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/blob/main/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"
+    },
+    {
+      "name": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/blob/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors"
+    },
+    {
+      "name": "ltx-2.5-video-vae-bf16.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/blob/main/vae/ltx-2.5-video-vae-bf16.safetensors"
+    },
+    {
+      "name": "ltx-2.5-22b-ic-lora-deblur-0.9.safetensors",
+      "directory": "loras",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Deblur/blob/main/ltx-2.5-22b-ic-lora-deblur-0.9.safetensors"
+    }
+  ],
+  "source": {
+    "template": "LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json",
+    "package": "ComfyUI-LTXVideo (example_workflows/2.5), via core/finishing",
+    "version": "1.1.0"
+  },
+  "license": {
+    "weights": "LTX-2.x Community License (11 Aug 2026): commercial use permitted for entities under USD 10M annual revenue (affiliates under common control counted together; clients receiving outputs are not the licensee), outputs belong to the user, machine-generated content must be disclosed when published — https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x",
+    "openWeights": true
+  }
+}

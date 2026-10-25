@@ -34,7 +34,7 @@
     ]
   },
   "license": {
-    "weights": "LTX-2.x Community License (11 Aug 2026): commercial use permitted for entities under USD 10M annual revenue (affiliates counted together), outputs belong to the user, published machine-generated content must be disclosed as such — https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x",
+    "weights": "LTX-2.x Community License (11 Aug 2026): commercial use permitted for entities under USD 10M annual revenue (affiliates under common control counted together; clients receiving outputs are not the licensee), outputs belong to the user, machine-generated content must be disclosed when published — https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x",
     "openWeights": true
   },
   "api": "ltx25-extend.api.json",

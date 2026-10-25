@@ -1,0 +1,577 @@
+{
+  "1": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "source.mp4"
+    },
+    "_meta": {
+      "title": "Source video"
+    }
+  },
+  "2": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Frames"
+    }
+  },
+  "3": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "batch_index": 0,
+      "length": 121
+    },
+    "_meta": {
+      "title": "Source range"
+    }
+  },
+  "4": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ],
+      "batch_index": 120,
+      "length": 1
+    },
+    "_meta": {
+      "title": "Last frame"
+    }
+  },
+  "5": {
+    "class_type": "RepeatImageBatch",
+    "inputs": {
+      "image": [
+        "4",
+        0
+      ],
+      "amount": 8
+    },
+    "_meta": {
+      "title": "Pad ×8"
+    }
+  },
+  "6": {
+    "class_type": "VHS_MergeImages",
+    "inputs": {
+      "images_A": [
+        "3",
+        0
+      ],
+      "images_B": [
+        "5",
+        0
+      ],
+      "merge_strategy": "match A",
+      "scale_method": "bicubic",
+      "crop": "disabled"
+    },
+    "_meta": {
+      "title": "Frames → 129 (8n+1)"
+    }
+  },
+  "7": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "LTX-2.5 distilled"
+    }
+  },
+  "8": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+      "type": "ltxv",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Gemma-4 12B"
+    }
+  },
+  "9": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ltx-2.5-video-vae-bf16.safetensors"
+    },
+    "_meta": {
+      "title": "LTX-2.5 video VAE"
+    }
+  },
+  "10": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "_meta": {
+      "title": "euler"
+    }
+  },
+  "11": {
+    "class_type": "LTXICLoRALoaderModelOnly",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "lora_name": "ltx-2.5-22b-ic-lora-restore-1.0.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "1. Restore · IC-LoRA restore 1.0"
+    }
+  },
+  "12": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "8",
+        0
+      ],
+      "text": "Restored archival footage, period-accurate look: natural film grain, stable exposure, clean fine detail, faithful colours of the time."
+    },
+    "_meta": {
+      "title": "1. Restore · prompt"
+    }
+  },
+  "13": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "8",
+        0
+      ],
+      "text": "modern objects, smartphones, modern vehicles, logos, brand signage, lettering, modern clothing, plastic, LED lights, digital oversharpening"
+    },
+    "_meta": {
+      "title": "1. Restore · negative"
+    }
+  },
+  "14": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": [
+        "12",
+        0
+      ],
+      "negative": [
+        "13",
+        0
+      ],
+      "frame_rate": 24
+    },
+    "_meta": {
+      "title": "1. Restore · conditioning"
+    }
+  },
+  "15": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 1920,
+      "height": 1056,
+      "crop": "disabled"
+    },
+    "_meta": {
+      "title": "1. Restore · lanczos 1920×1056"
+    }
+  },
+  "16": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": 1920,
+      "height": 1056,
+      "length": 129,
+      "batch_size": 1
+    },
+    "_meta": {
+      "title": "1. Restore · latent"
+    }
+  },
+  "17": {
+    "class_type": "LTXAddVideoICLoRAGuide",
+    "inputs": {
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "14",
+        1
+      ],
+      "vae": [
+        "9",
+        0
+      ],
+      "latent": [
+        "16",
+        0
+      ],
+      "image": [
+        "15",
+        0
+      ],
+      "frame_idx": 0,
+      "strength": 1,
+      "latent_downscale_factor": 1,
+      "crop": "disabled",
+      "use_tiled_encode": false,
+      "tile_size": 256,
+      "tile_overlap": 64,
+      "use_streaming": true,
+      "tile_frames": 97
+    },
+    "_meta": {
+      "title": "1. Restore · IC-LoRA guide"
+    }
+  },
+  "18": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "_meta": {
+      "title": "1. Restore · sigmas (8 steps)"
+    }
+  },
+  "19": {
+    "class_type": "LTXVTiledFusionSampler",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "17",
+        1
+      ],
+      "latents": [
+        "17",
+        2
+      ],
+      "sigmas": [
+        "18",
+        0
+      ],
+      "sampler": [
+        "10",
+        0
+      ],
+      "seed": 42,
+      "cfg": 1,
+      "tile_width": 960,
+      "tile_height": 544,
+      "overlap_frac": 0.5,
+      "blend_var": 0.05,
+      "grid_cycle": 1,
+      "tile_frames": 97,
+      "vae": [
+        "9",
+        0
+      ],
+      "canvas_device": "auto"
+    },
+    "_meta": {
+      "title": "1. Restore · Tiled Fusion 3×3"
+    }
+  },
+  "20": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": [
+        "19",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ],
+      "tile_size": 1024,
+      "overlap": 128,
+      "temporal_size": 256,
+      "temporal_overlap": 32
+    },
+    "_meta": {
+      "title": "1. Restore · decode"
+    }
+  },
+  "21": {
+    "class_type": "LTXICLoRALoaderModelOnly",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "lora_name": "ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · IC-LoRA refine 1.0"
+    }
+  },
+  "22": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "8",
+        0
+      ],
+      "text": "The same footage, sharper and more detailed: fine natural textures, crisp focus, clean edges, subtle film grain, faithful colour and light."
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · prompt"
+    }
+  },
+  "23": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "8",
+        0
+      ],
+      "text": "blurry, soft focus, smeared detail, oversharpened halos, ringing, banding, blocky compression artifacts, waxy plastic texture"
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · negative"
+    }
+  },
+  "24": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": [
+        "22",
+        0
+      ],
+      "negative": [
+        "23",
+        0
+      ],
+      "frame_rate": 24
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · conditioning"
+    }
+  },
+  "25": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "20",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 3840,
+      "height": 2112,
+      "crop": "disabled"
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · lanczos 3840×2112"
+    }
+  },
+  "26": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": 3840,
+      "height": 2112,
+      "length": 129,
+      "batch_size": 1
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · latent"
+    }
+  },
+  "27": {
+    "class_type": "LTXAddVideoICLoRAGuide",
+    "inputs": {
+      "positive": [
+        "24",
+        0
+      ],
+      "negative": [
+        "24",
+        1
+      ],
+      "vae": [
+        "9",
+        0
+      ],
+      "latent": [
+        "26",
+        0
+      ],
+      "image": [
+        "25",
+        0
+      ],
+      "frame_idx": 0,
+      "strength": 1,
+      "latent_downscale_factor": 1,
+      "crop": "disabled",
+      "use_tiled_encode": false,
+      "tile_size": 256,
+      "tile_overlap": 64,
+      "use_streaming": true,
+      "tile_frames": 97
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · IC-LoRA guide"
+    }
+  },
+  "28": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · sigmas (8 steps)"
+    }
+  },
+  "29": {
+    "class_type": "LTXVTiledFusionSampler",
+    "inputs": {
+      "model": [
+        "21",
+        0
+      ],
+      "positive": [
+        "27",
+        0
+      ],
+      "negative": [
+        "27",
+        1
+      ],
+      "latents": [
+        "27",
+        2
+      ],
+      "sigmas": [
+        "28",
+        0
+      ],
+      "sampler": [
+        "10",
+        0
+      ],
+      "seed": 42,
+      "cfg": 1,
+      "tile_width": 1024,
+      "tile_height": 576,
+      "overlap_frac": 0.5,
+      "blend_var": 0.05,
+      "grid_cycle": 1,
+      "tile_frames": 97,
+      "vae": [
+        "9",
+        0
+      ],
+      "canvas_device": "auto"
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · Tiled Fusion 7×7"
+    }
+  },
+  "30": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": [
+        "29",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ],
+      "tile_size": 1024,
+      "overlap": 128,
+      "temporal_size": 256,
+      "temporal_overlap": 32
+    },
+    "_meta": {
+      "title": "2. Refine ×2 · decode"
+    }
+  },
+  "31": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "30",
+        0
+      ],
+      "batch_index": 0,
+      "length": 121
+    },
+    "_meta": {
+      "title": "Cut the pad"
+    }
+  },
+  "32": {
+    "class_type": "SaveImageAdvanced",
+    "inputs": {
+      "images": [
+        "31",
+        0
+      ],
+      "filename_prefix": "justae-flow/finish/frame",
+      "format": "png",
+      "format.bit_depth": "16-bit",
+      "format.input_color_space": "sRGB"
+    },
+    "_meta": {
+      "title": "PNG 16-bit"
+    }
+  },
+  "33": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "31",
+        0
+      ],
+      "fps": 24,
+      "bit_depth": 8,
+      "audio": [
+        "2",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Preview video (8-bit)"
+    }
+  },
+  "34": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "33",
+        0
+      ],
+      "filename_prefix": "justae-flow/finish/preview",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "Preview MP4"
+    }
+  }
+}

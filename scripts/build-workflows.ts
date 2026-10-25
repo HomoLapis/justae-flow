@@ -20,6 +20,7 @@ import type { ObjectInfo, WorkflowJson } from '../core/comfy/types.ts';
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import { missingNodes, type ModelFile, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { REFRAME_ASPECTS, vaceGenSize } from '../core/reframe/outpaint.ts';
+import { LTX_LICENCE_LINE, LTX_LICENCE_URL } from '../core/finishing/licence.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, 'workflows');
@@ -38,10 +39,9 @@ type Recipe = Omit<WorkflowManifest, 'api' | 'models' | 'source'> & {
   dropModels?: string[];
 };
 
-/** The LTX-2.x Community License, as the README, NOTICE and the Featured cards state it (licence text read 25 Oct 2026). */
-const LTX_LICENSE_NOTE = 'LTX-2.x Community License (11 Aug 2026): commercial use permitted for entities under USD 10M annual revenue '
-  + '(affiliates counted together), outputs belong to the user, published machine-generated content must be disclosed as such';
-const LTX_LICENSE_URL = 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x';
+/** The LTX-2.x Community License, as the README, NOTICE, the Featured cards and the LTX finishing cards state it (core/finishing/licence.ts). */
+const LTX_LICENSE_NOTE = LTX_LICENCE_LINE;
+const LTX_LICENSE_URL = LTX_LICENCE_URL;
 
 const LTX_LICENSE = {
   weights: `${LTX_LICENSE_NOTE} — ${LTX_LICENSE_URL}`,
@@ -57,6 +57,8 @@ const SAM_LICENSE = {
 };
 
 const LIGHTX2V = 'wan2.1_t2v_14b_lora_rank64_lightx2v_4step.safetensors';
+/** MiniMax H3's 4-step turbo LoRA, as the official template's note names it (Comfy-Org/MiniMax-H3, loras/). */
+const H3_TURBO_4STEP = 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors';
 
 const VACE_BINDINGS: WorkflowManifest['bindings'] = {
   prompt: '6.text', negative: '7.text', video: '71.file', seed: '3.seed',
@@ -177,6 +179,45 @@ const KEYFRAMES: Recipe[] = [
       }
       for (const id of ['105:121', '105:122', '105:123', '105:125', '105:126']) delete api[id];
       api['92'].inputs.filename_prefix = SLUG + '/h3_flf';
+    },
+  },
+  {
+    // Draft = the 4-step turbo LoRA the official template's note names (Comfy-Org/MiniMax-H3, "4 steps"); the local
+    // file's sha256 equals that repo's LFS sha256 (checked 25 Oct 2026, docs/TEST_LOG_2026-10-25.md, P4-3 c). The
+    // template's own turbo branch (LoraLoaderModelOnly + the steps switch) is kept and switched on; Final is h3-flf.
+    id: 'h3-flf-draft',
+    template: 'video_minimax_h3_i2v',
+    title: 'MiniMax H3 · First + last frame (Draft, turbo 4 steps)',
+    description: 'The H3 draft: the template\'s turbo LoRA branch on, with its 4-step 768p LoRA, 4 steps. For a quick look; Final is the base model.',
+    dropModels: ['minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors'],
+    extraModels: [{
+      name: H3_TURBO_4STEP, directory: 'loras',
+      url: `https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/loras/${H3_TURBO_4STEP}`,
+    }],
+    task: 'i2v', hosts: [], output: 'video', input: 'image',
+    bindings: { prompt: '105:104.prompt', image: '114.image', seed: '105:15.noise_seed', width: '105:104.width', height: '105:104.height', seconds: '105:111.value' },
+    sizeMultiple: 32, maxLongSide: 1344, defaults: { seconds: 5, width: 1344, height: 768 },
+    license: {
+      weights: 'MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: to be verified on the licence text',
+      openWeights: true,
+    },
+    patch: (api) => {
+      api['130'] = { class_type: 'LoadImage', inputs: { image: 'last_frame.png' }, _meta: { title: 'Load Image (last frame)' } };
+      api['105:104'].inputs.last_frame = ['130', 0];
+      delete api['119'];
+      delete api['120'];
+      // The turbo branch, switched on: the model goes through the LoRA, the steps come from the turbo value.
+      for (const node of Object.values(api)) {
+        for (const [k, v] of Object.entries(node.inputs)) {
+          if (Array.isArray(v) && v[0] === '105:122') node.inputs[k] = ['105:121', 0];
+          if (Array.isArray(v) && v[0] === '105:123') node.inputs[k] = ['105:125', 0];
+        }
+      }
+      api['105:121'].inputs.lora_name = H3_TURBO_4STEP;
+      api['105:121'].inputs.strength_model = 1;
+      api['105:125'].inputs.value = 4;
+      for (const id of ['105:122', '105:123', '105:124', '105:126']) delete api[id];
+      api['92'].inputs.filename_prefix = SLUG + '/h3_flf_draft';
     },
   },
   {

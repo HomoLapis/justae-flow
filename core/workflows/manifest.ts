@@ -11,7 +11,9 @@ import type { ObjectInfo, WorkflowJson } from '../comfy/types.ts';
 import { snapFramesUp } from './form.ts';
 
 export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg' | 'matte-video' | 'reframe' | 'outpaint-video' | 'interpolate-video'
-  | 'extend-video' | 'describe';
+  | 'extend-video' | 'describe'
+  /** LTX finishing (Refine, Restore and the other IC-LoRAs of the Creative Lab): the graph is built from a plan at run time (core/finishing). */
+  | 'finish-video';
 /** 'text': a workflow that answers in words (the Comp tab's "Describe the clip"). */
 export type MediaKind = 'image' | 'video' | 'text';
 

@@ -21,13 +21,25 @@ import type { Services } from './services.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse, m: RegExpExecArray, url: URL) => Promise<void> | void;
 
-/** The entries, in order. `tiers`: Draft runs the workflow; Final runs it, then the chained step on its result. */
-export const FEATURED: Array<{ id: string; name: string; line: string; tiers?: { final: { then: string; scale: number; note: string } }; licenceNote?: string }> = [
+/** A Final: the draft's workflow, then a chained step on its result (a second job on the same resource). */
+export interface FinalTier { id: 'seedvr2' | 'ltx'; label: string; then: string; scale: number; note: string }
+
+/**
+ * The entries, in order. `tiers`: Draft runs its own workflow (MiniMax H3: the 4-step turbo LoRA of the official
+ * template); Final runs the entry's workflow (the base model), then one of the chained steps on its result.
+ */
+export const FEATURED: Array<{ id: string; name: string; line: string; tiers?: { draft: { workflow: string; note: string }; finals: FinalTier[] }; licenceNote?: string }> = [
   { id: 'ltx25-i2v', name: 'LTX-2.5 · image to video', line: 'A shot with sound from a frame: the marker\'s, or an image you attach.' },
   { id: 'ltx25-t2v', name: 'LTX-2.5 · text to video', line: 'A shot with sound from the prompt alone, sized and timed by the slot.' },
   {
     id: 'h3-flf', name: 'MiniMax H3 · first + last frame', line: 'From one frame you choose to another, with sound.',
-    tiers: { final: { then: 'seedvr2-upscale', scale: 2, note: 'Final = the Draft, then SeedVR2 ×2 on its result (a second job), original colours kept.' } },
+    tiers: {
+      draft: { workflow: 'h3-flf-draft', note: 'Draft = the 4-step turbo LoRA the official template names (Comfy-Org/MiniMax-H3), 4 steps: a quick look, never the final.' },
+      finals: [
+        { id: 'seedvr2', label: '+ SeedVR2 ×2', then: 'seedvr2-upscale', scale: 2, note: 'Final = the base model (20 steps), then SeedVR2 ×2 on its result (a second job), original colours kept.' },
+        { id: 'ltx', label: '+ LTX Refine', then: 'ltx25-refine', scale: 1, note: 'Final = the base model (20 steps), then LTX Refine to Full HD on its result (LTX-2.5 + Refine Details, tiled; a second job on your local ComfyUI, with a PNG 16-bit master). For 4K: Comp tab ▸ Upscale ▸ LTX Refine.' },
+      ],
+    },
     licenceNote: 'Commercial use of locally generated H3 outputs needs a MiniMax commercial licence (sold by Comfy); in the EU: to be verified on the licence text.',
   },
   { id: 'wan22-flf', name: 'Wan 2.2 14B · first + last frame', line: 'Keyframe to keyframe under Apache-2.0.' },
@@ -58,6 +70,8 @@ export interface FeaturedEntry {
   licence: string;
   licenceNote?: string;
   tiers?: (typeof FEATURED)[number]['tiers'];
+  /** The draft tier's own workflow, as a library entry the Flow window can load ("bundled:<id>"). */
+  draftName?: string;
   runsOn: FeaturedRunsOn[];
   /** Missing on the local ComfyUI: node classes, and model files with where the template downloads them. */
   missing: Array<{ kind: 'node' | 'model'; name: string; directory?: string; url?: string }>;
@@ -93,6 +107,7 @@ export function featuredView(s: Services, library: WorkflowLibrary): FeaturedEnt
     out.push({
       id: m.id, name: f.name, line: f.line, title: m.title, task: m.task, input: m.input, output: m.output,
       template: m.source.template, licence: m.license.weights, licenceNote: f.licenceNote, tiers: f.tiers, runsOn, missing,
+      draftName: f.tiers ? library.get(f.tiers.draft.workflow)?.manifest.title : undefined,
       runnable: runsOn.some((r) => r.status === 'ok' || r.status === 'proven'),
     });
   }
@@ -109,7 +124,8 @@ export function featuredRoutes(s: Services, library: WorkflowLibrary): Array<[st
     ['GET', /^\/api\/featured$/, (_q, res) => send(res, 200, { entries: featuredView(s, library) })],
     ['GET', /^\/api\/featured\/([\w-]+)\/graph$/, (_q, res, m) => {
       const entry = library.get(m[1]);
-      if (!entry || !FEATURED.some((f) => f.id === m[1])) return send(res, 404, { error: `No featured workflow "${m[1]}".` });
+      // A Featured entry, or the workflow of one of its tiers (MiniMax H3's Draft).
+      if (!entry || !FEATURED.some((f) => f.id === m[1] || f.tiers?.draft.workflow === m[1])) return send(res, 404, { error: `No featured workflow "${m[1]}".` });
       const graph = library.graph(m[1])!;
       // The template names one precision of each model; the local ComfyUI may have another of the same weights.
       const oi = s.caps.objectInfo(s.resources.local().id);

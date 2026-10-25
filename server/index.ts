@@ -21,6 +21,7 @@ import { taskOf } from './resources.ts';
 import { activeResource, resourceRoutes } from './api-resources.ts';
 import { compRoutes } from './api-comp.ts';
 import { featuredRoutes } from './api-featured.ts';
+import { finishingRoutes } from './api-finishing.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
@@ -233,6 +234,7 @@ const routes: Array<[string, RegExp, Handler]> = [
   ...resourceRoutes(services, engine),
   ...compRoutes(engine),
   ...featuredRoutes(services, library),
+  ...finishingRoutes(services),
 ];
 
 const server = createServer(async (req, res) => {

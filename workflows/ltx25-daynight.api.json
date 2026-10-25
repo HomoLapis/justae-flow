@@ -1,0 +1,433 @@
+{
+  "1": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "source.mp4"
+    },
+    "_meta": {
+      "title": "Source video"
+    }
+  },
+  "2": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Frames"
+    }
+  },
+  "3": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "batch_index": 0,
+      "length": 121
+    },
+    "_meta": {
+      "title": "Source range"
+    }
+  },
+  "4": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ],
+      "batch_index": 120,
+      "length": 1
+    },
+    "_meta": {
+      "title": "Last frame"
+    }
+  },
+  "5": {
+    "class_type": "RepeatImageBatch",
+    "inputs": {
+      "image": [
+        "4",
+        0
+      ],
+      "amount": 8
+    },
+    "_meta": {
+      "title": "Pad ×8"
+    }
+  },
+  "6": {
+    "class_type": "VHS_MergeImages",
+    "inputs": {
+      "images_A": [
+        "3",
+        0
+      ],
+      "images_B": [
+        "5",
+        0
+      ],
+      "merge_strategy": "match A",
+      "scale_method": "bicubic",
+      "crop": "disabled"
+    },
+    "_meta": {
+      "title": "Frames → 129 (8n+1)"
+    }
+  },
+  "7": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 800,
+      "height": 448,
+      "crop": "disabled"
+    },
+    "_meta": {
+      "title": "lanczos 800×448"
+    }
+  },
+  "8": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "LTX-2.5 distilled"
+    }
+  },
+  "9": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+      "type": "ltxv",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Gemma-4 12B"
+    }
+  },
+  "10": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ltx-2.5-video-vae-bf16.safetensors"
+    },
+    "_meta": {
+      "title": "LTX-2.5 video VAE"
+    }
+  },
+  "11": {
+    "class_type": "LTXICLoRALoaderModelOnly",
+    "inputs": {
+      "model": [
+        "8",
+        0
+      ],
+      "lora_name": "ltx-2.5-22b-ic-lora-day-to-night-0.9.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "IC-LoRA daynight 1.0"
+    }
+  },
+  "12": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        0
+      ],
+      "text": "a sailboat on a misty lake at dawn. Only the lighting changes from day to night; identical composition, framing, camera movement and motion."
+    },
+    "_meta": {
+      "title": "prompt"
+    }
+  },
+  "13": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        0
+      ],
+      "text": "daytime, bright sunlight, blue sky, overexposed, worst quality, inconsistent motion, blurry, jittery, distorted"
+    },
+    "_meta": {
+      "title": "negative"
+    }
+  },
+  "14": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": [
+        "12",
+        0
+      ],
+      "negative": [
+        "13",
+        0
+      ],
+      "frame_rate": 24
+    },
+    "_meta": {
+      "title": "conditioning"
+    }
+  },
+  "15": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": 800,
+      "height": 448,
+      "length": 129,
+      "batch_size": 1
+    },
+    "_meta": {
+      "title": "latent"
+    }
+  },
+  "16": {
+    "class_type": "LTXAddVideoICLoRAGuide",
+    "inputs": {
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "14",
+        1
+      ],
+      "vae": [
+        "10",
+        0
+      ],
+      "latent": [
+        "15",
+        0
+      ],
+      "image": [
+        "7",
+        0
+      ],
+      "frame_idx": 0,
+      "strength": 1,
+      "latent_downscale_factor": [
+        "11",
+        1
+      ],
+      "crop": "disabled",
+      "use_tiled_encode": false,
+      "tile_size": 256,
+      "tile_overlap": 64,
+      "use_streaming": false,
+      "tile_frames": 97
+    },
+    "_meta": {
+      "title": "IC-LoRA guide"
+    }
+  },
+  "17": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    },
+    "_meta": {
+      "title": "noise"
+    }
+  },
+  "18": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "positive": [
+        "16",
+        0
+      ],
+      "negative": [
+        "16",
+        1
+      ],
+      "cfg": 1
+    },
+    "_meta": {
+      "title": "CFG 1"
+    }
+  },
+  "19": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler_ancestral"
+    },
+    "_meta": {
+      "title": "euler_ancestral"
+    }
+  },
+  "20": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "_meta": {
+      "title": "sigmas (8 steps)"
+    }
+  },
+  "21": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "17",
+        0
+      ],
+      "guider": [
+        "18",
+        0
+      ],
+      "sampler": [
+        "19",
+        0
+      ],
+      "sigmas": [
+        "20",
+        0
+      ],
+      "latent_image": [
+        "16",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "sample"
+    }
+  },
+  "22": {
+    "class_type": "LTXVCropGuides",
+    "inputs": {
+      "positive": [
+        "16",
+        0
+      ],
+      "negative": [
+        "16",
+        1
+      ],
+      "latent": [
+        "21",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "crop the guide frames"
+    }
+  },
+  "23": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": [
+        "22",
+        2
+      ],
+      "vae": [
+        "10",
+        0
+      ],
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 128,
+      "temporal_overlap": 32
+    },
+    "_meta": {
+      "title": "decode"
+    }
+  },
+  "24": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "23",
+        0
+      ],
+      "batch_index": 0,
+      "length": 121
+    },
+    "_meta": {
+      "title": "Cut the pad"
+    }
+  },
+  "25": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "24",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 814,
+      "height": 448,
+      "crop": "disabled"
+    },
+    "_meta": {
+      "title": "Delivery 814×448"
+    }
+  },
+  "26": {
+    "class_type": "SaveImageAdvanced",
+    "inputs": {
+      "images": [
+        "25",
+        0
+      ],
+      "filename_prefix": "justae-flow/finish/frame",
+      "format": "png",
+      "format.bit_depth": "16-bit",
+      "format.input_color_space": "sRGB"
+    },
+    "_meta": {
+      "title": "PNG 16-bit"
+    }
+  },
+  "27": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "25",
+        0
+      ],
+      "fps": 24,
+      "bit_depth": 8,
+      "audio": [
+        "2",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Preview video (8-bit)"
+    }
+  },
+  "28": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "27",
+        0
+      ],
+      "filename_prefix": "justae-flow/finish/preview",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "Preview MP4"
+    }
+  }
+}
