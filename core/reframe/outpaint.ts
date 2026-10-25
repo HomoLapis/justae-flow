@@ -132,7 +132,7 @@ export interface ChainRefs {
 export function chainGraph(
   api: WorkflowJson,
   refs: ChainRefs,
-  run: { previous: string; from: number; overlap: number; take: number; size: [number, number] },
+  run: { previous: unknown; from: number; overlap: number; take: number; size: [number, number] },
 ): void {
   const set = (ref: string, value: unknown): void => {
     const dot = ref.indexOf('.', ref.lastIndexOf(':') + 1);
@@ -157,7 +157,7 @@ export function chainGraph(
 }
 
 /** One video from the runs of a chain, each without the frames it repeats. */
-export function joinGraph(parts: Array<{ file: string; skip: number; take: number }>, fps: number, prefix: string): WorkflowJson {
+export function joinGraph(parts: Array<{ file: unknown; skip: number; take: number }>, fps: number, prefix: string): WorkflowJson {
   const api: WorkflowJson = {};
   let last: [string, number] | null = null;
   parts.forEach((p, i) => {

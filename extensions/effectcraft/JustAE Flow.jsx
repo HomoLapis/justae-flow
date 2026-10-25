@@ -104,6 +104,11 @@ var JustAEFlowPanel = (function (thisObj) {
   var serverLine = win.add('statictext', undefined, 'Connecting…', { multiline: true });
   serverLine.alignment = ['fill', 'top'];
   serverLine.preferredSize = [250, 30];
+  // Where the next (or running) job goes — Settings ▸ Resources in the Flow window — and, when that
+  // bills, the account's balance with the time it was read (the billing report follows invoices).
+  var resourceLine = win.add('statictext', undefined, '');
+  resourceLine.alignment = ['fill', 'top'];
+  resourceLine.helpTip = 'Where the layer tool runs, from Settings ▸ Resources in the Flow window. The balance comes from Comfy\'s billing report, which follows invoices.';
   var compLine = win.add('statictext', undefined, '');
   compLine.alignment = ['fill', 'top'];
 
@@ -168,6 +173,40 @@ var JustAEFlowPanel = (function (thisObj) {
 
   var lastRefresh = 0;
 
+  /** 8967.5 → "8,968" (ExtendScript has no toLocaleString with grouping). */
+  function credits(v) {
+    if (v < 10) return v.toFixed(1);
+    var s = String(Math.round(v));
+    var out = '';
+    while (s.length > 3) { out = ',' + s.slice(-3) + out; s = s.slice(0, -3); }
+    return s + out;
+  }
+
+  function hhmm(iso) {
+    var m = /T(\d\d):(\d\d)/.exec(iso || '');
+    if (!m) return '';
+    // The server's time is UTC; the panel shows the machine's local hour.
+    var d = new Date();
+    var offset = -d.getTimezoneOffset();
+    var mins = (parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + offset + 1440) % 1440;
+    var h = Math.floor(mins / 60);
+    var mm = mins % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (mm < 10 ? '0' : '') + mm;
+  }
+
+  function resourceText(s) {
+    var tl = TOOLS[tool.selection ? tool.selection.index : 0];
+    var r = s.resource && s.resource.running ? s.resource : (s.routes && s.routes[tl.workflow]) || s.resource;
+    if (!r) return '';
+    var icon = r.kind === 'local' ? '⌂ ' : r.kind === 'cloud' ? '☁ ' : r.kind === 'deployment' ? '▣ ' : '⇄ ';
+    var line = (s.resource && s.resource.running ? 'Running on ' : 'Runs on ') + icon + r.label;
+    if (r.metered) {
+      var c = s.credits;
+      line += c && c.ok && c.credits !== null ? ' · ' + credits(c.credits) + ' cr (read ' + hhmm(c.asOf) + ', invoices)' : ' · balance not read yet';
+    }
+    return line;
+  }
+
   function refresh() {
     lastRefresh = new Date().getTime();
     compLine.text = compSummary();
@@ -180,6 +219,7 @@ var JustAEFlowPanel = (function (thisObj) {
       return;
     }
     serverLine.text = (s.comfy.online ? '● ComfyUI ' + (s.comfy.version || '') : '✖ ComfyUI offline') + (s.queue.running ? '   · running' : '');
+    resourceLine.text = resourceText(s);
     if (running) {
       var c = null;
       for (var i = 0; i < s.cards.length; i++) if (s.cards[i].id === running) c = s.cards[i];
@@ -228,7 +268,7 @@ var JustAEFlowPanel = (function (thisObj) {
     refresh();
   };
 
-  tool.onChange = showTool;
+  tool.onChange = function () { showTool(); refresh(); };
 
   bRun.onClick = function () {
     var tl = TOOLS[tool.selection ? tool.selection.index : 0];

@@ -27,6 +27,8 @@ import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/o
 import type { Settings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
+import { makeServices } from '../server/services.ts';
+import { FAKE_KEY, fakeV2, resourceChecks } from './selftest-resources.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let passed = 0;
@@ -227,6 +229,8 @@ console.log('cloud router');
   submits.length = 0;
 }
 
+await resourceChecks(check, until);
+
 /* ─── Fake host ────────────────────────────────────────────────────── */
 const projectDir = mkdtempSync(join(tmpdir(), 'sf-selftest-'));
 class FakeHost implements TimelineHost {
@@ -296,11 +300,15 @@ const settings: Settings = {
   markerWorkflow: 'ltx25-t2v', placeholderWorkflow: 'ltx25-t2v', placeholderSeconds: 4, pollSeconds: 60, setupDone: true,
 };
 {
-  const secret = new Engine({ ...settings, comfyToken: 's3cret' }, library, new FakeHost());
+  const secret = new Engine({ ...settings, comfyToken: 's3cret' }, library, makeServices(mkdtempSync(join(tmpdir(), 'jaf-svc-')), () => settings, library, 'http://127.0.0.1:9'), new FakeHost());
   const st = secret.state();
   check('the router token never reaches the browser', !JSON.stringify(st).includes('s3cret') && st.settings.comfyTokenSet && st.comfy.routed);
 }
-const engine = new Engine(settings, library, host);
+// The engine's resources, run history and balance live in a temporary folder; the Cloud stand-in is the fake v2.
+const v2fake = await fakeV2();
+const svcDir = mkdtempSync(join(tmpdir(), 'jaf-svc-'));
+const services = makeServices(svcDir, () => settings, library, v2fake.url);
+const engine = new Engine(settings, library, services, host);
 await engine.checkComfy();
 await host.addMarker(1, 'a paper plane over a desk');
 await host.addMarker(5, 'a red balloon in the sky');
@@ -353,6 +361,31 @@ check('a new run is a new version, the old one kept', two.versions.length === 2 
 check('the new version replaced the footage under the same layer', host.items.get(two.placed!.itemId)?.path?.endsWith(two.versions[1].file.split('/')[1]));
 await engine.selectVersion(done.id, 1);
 check('switching back puts v1 in the comp', host.items.get(two.placed!.itemId)?.path?.endsWith(two.versions[0].file.split('/')[1]) && engine.state().cards.find((c) => c.id === done.id)?.activeVersion === 1);
+
+console.log('engine on resources');
+{
+  const job = JSON.parse(readFileSync(join(s.mediaDir, done.versions[0].file.replace(/\.\w+$/, '.job.json')), 'utf8'));
+  check('a card with no choice runs where its task\'s row says (video: Auto → Local)', engine.state().cards[0].runsOn?.id === 'local' && /Auto/.test(engine.state().cards[0].runsOn?.why ?? ''));
+  check('job.json says where it ran, and nothing billed on your own GPU', job.resource?.id === 'local' && job.resource.creditsPerHour === null && job.resource.cost === undefined);
+  check('local runs go into the run history (in the test folder, never the user\'s)', services.runs.of('ltx25-t2v', 'local').length >= 3 && existsSync(join(svcDir, 'runs.json')));
+  // The same card on a deployment (the fake v2), through the SDK.
+  services.resources.update({ apiKey: FAKE_KEY, resources: [{ id: 'deployment', url: v2fake.url, enabled: true }] });
+  await engine.updateCards([done.id], { resource: 'deployment' });
+  check('a card can be sent to another resource; the card says so', engine.state().cards.find((c) => c.id === done.id)?.runsOn?.id === 'deployment');
+  const prompts = submits.length;
+  engine.enqueue([done.id]);
+  await until(() => engine.state().cards.find((c) => c.id === done.id)?.versions.length === 3, 10_000);
+  const onDep = engine.state().cards.find((c) => c.id === done.id)!;
+  const v3 = onDep.versions[2];
+  check('it ran on the deployment, not on the local ComfyUI', onDep.status === 'done' && v3?.resource === 'deployment' && submits.length === prompts, onDep.error);
+  check('the version carries the execution time and the derived credits (12 s × 736.39 cr/h ≈ 2.45)', v3?.executionMs === 12_000 && Math.abs((v3?.derivedCredits ?? 0) - 2.45) < 0.01);
+  check('the input frame went up as a v2 asset', v2fake.seen.some((x) => x.path === '/api/v2/jobs' && x.method === 'POST'));
+  const job3 = JSON.parse(readFileSync(join(s.mediaDir, v3.file.replace(/\.\w+$/, '.job.json')), 'utf8'));
+  check('its job.json: the resource, its GPU and rate, and the cost marked as derived', job3.resource?.id === 'deployment' && job3.resource.gpu === 'RTX PRO 6000' && job3.resource.creditsPerHour === 736.39 && /≈/.test(job3.resource.cost?.basis ?? ''));
+  check('the key is in none of it', !readFileSync(join(s.mediaDir, v3.file.replace(/\.\w+$/, '.job.json')), 'utf8').includes('test-key') && !JSON.stringify(engine.state()).includes('test-key'));
+  await engine.updateCards([done.id], { resource: 'default' });
+  services.resources.update({ apiKey: null, resources: [{ id: 'deployment', remove: true }] });
+}
 
 console.log('placeholders, layers, errors');
 const pid = await engine.createPlaceholder();
@@ -490,7 +523,7 @@ class FakeCanvas implements CanvasHost {
   close(): void {}
 }
 const pc = new FakeCanvas();
-const canvas = new Engine({ ...settings, host: 'photocraft', photocraftRoot: canvasRoot }, library, pc);
+const canvas = new Engine({ ...settings, host: 'photocraft', photocraftRoot: canvasRoot }, library, services, pc);
 await canvas.checkComfy();
 await canvas.sync();
 check('a canvas offers only the workflows made for it', canvas.state().workflows.every((w) => w.hosts.includes('photocraft')) && !canvas.state().workflows.some((w) => w.id.startsWith('ltx')));
@@ -535,5 +568,6 @@ check('a deleted selection channel orphans its card', canvas.state().cards.find(
 canvas.stop();
 
 fake.close();
+v2fake.close();
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

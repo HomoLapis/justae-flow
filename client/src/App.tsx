@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { useApp, type Tab } from './state/store';
+import { takeLegacySettings, useApp, type Tab } from './state/store';
+import { billingConfigured, migrateLegacySettings, useResources } from './lib/resources';
 import { ProviderPill, ProviderBanner } from './components/ProviderPill';
 import { WorkflowTab } from './components/WorkflowTab';
 import { ShotMode } from './modes/ShotMode';
@@ -21,6 +22,24 @@ export function App(): JSX.Element {
   const openHistory = useApp((s) => s.setHistoryOpen);
   const historyCount = useApp((s) => s.history.length);
   const activeName = useApp((s) => s.active?.name ?? null);
+
+  // Resources live on the server: read them, move the page's old backend settings there once,
+  // and keep the probe states (every 30 s) and the balance (every minute, cached 5 min server-side) fresh.
+  useEffect(() => {
+    const res = useResources.getState();
+    let alive = true;
+    void (async () => {
+      const legacy = takeLegacySettings();
+      if (legacy) await migrateLegacySettings(legacy).catch(() => undefined);
+      await res.load();
+      if (alive && billingConfigured(useResources.getState().data)) void res.loadCredits();
+    })();
+    const t1 = setInterval(() => void useResources.getState().load(), 30_000);
+    const t2 = setInterval(() => {
+      if (billingConfigured(useResources.getState().data)) void useResources.getState().loadCredits();
+    }, 60_000);
+    return () => { alive = false; clearInterval(t1); clearInterval(t2); };
+  }, []);
 
   useEffect(() => {
     if (!isInCEP()) return;

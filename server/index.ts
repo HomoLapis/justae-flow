@@ -16,12 +16,19 @@ import { comfyFor, Engine, makeHost } from './engine.ts';
 import { WorkflowLibrary } from './library.ts';
 import { allowedOrigin, handleBridge, HostBridge, withToken } from './bridge.ts';
 import { openFlowWindow } from './dock.ts';
+import { makeServices } from './services.ts';
+import { taskOf } from './resources.ts';
+import { activeResource, resourceRoutes } from './api-resources.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
 const settings = loadSettings(root);
 const library = new WorkflowLibrary(join(root, 'workflows'));
-const engine = new Engine(settings, library);
+// Resources, run history, capabilities, v2 jobs and credits live in the user's config folder.
+let engineRef: Engine | null = null;
+const services = makeServices(configDir(), () => engineRef?.settings ?? settings, library);
+const engine = new Engine(settings, library, services);
+engineRef = engine;
 const dist = join(root, 'client', 'dist');
 const bridge = new HostBridge(settings.effectcraftPort, join(root, 'extensions', 'effectcraft', 'flow-host.jsx'));
 
@@ -91,7 +98,27 @@ engine.onChange(() => {
   }, 120);
 });
 
-type Handler = (req: IncomingMessage, res: ServerResponse, m: RegExpExecArray) => Promise<void> | void;
+type Handler = (req: IncomingMessage, res: ServerResponse, m: RegExpExecArray, url: URL) => Promise<void> | void;
+
+/** The panel's status line: the resource the next (or running) job uses, and the balance when it bills. */
+function panelResource(): {
+  resource: ReturnType<typeof activeResource>;
+  /** Where each layer tool's workflow would run now (its task's row in Settings ▸ Resources). */
+  routes: Record<string, { id: string; label: string; kind: string; metered: boolean }>;
+  credits: { ok: boolean; credits: number | null; asOf: string | null; error: string | null } | null;
+} {
+  const resource = activeResource(services, engine);
+  const routes: Record<string, { id: string; label: string; kind: string; metered: boolean }> = {};
+  for (const w of library.list()) {
+    const r = services.resources.resolve(taskOf(w.task, w.id), null, (x) => services.caps.has(x, w.id)).resource;
+    routes[w.id] = { id: r.id, label: r.label, kind: r.kind, metered: services.resources.creditsPerHour(r) !== null };
+  }
+  if (!resource.metered && !Object.values(routes).some((r) => r.metered)) return { resource, routes, credits: null };
+  // Never a network call per poll: the balance is read at most every five minutes (credits.ts).
+  void services.credits.get().catch(() => undefined);
+  const c = services.credits.cached();
+  return { resource, routes, credits: c ? { ok: c.ok, credits: c.credits, asOf: c.asOf, error: c.error ?? null } : null };
+}
 const routes: Array<[string, RegExp, Handler]> = [
   ['GET', /^\/api\/state$/, (_q, res) => send(res, 200, engine.state())],
   // A small view for the panel inside the host app: it polls this every second or two over a raw socket.
@@ -100,6 +127,7 @@ const routes: Array<[string, RegExp, Handler]> = [
     send(res, 200, {
       host: { ok: s.host.ok, app: s.host.app, kind: s.host.kind, comp: s.host.comp?.name ?? null, error: s.host.error ?? null, selection: !!s.host.selection, selectedLayers: s.host.selectedLayers.length },
       comfy: { online: s.comfy.online, version: s.comfy.version ?? null },
+      ...panelResource(),
       queue: { running: s.queue.running, waiting: s.queue.pending.length, ready: s.queue.ready },
       workflows: s.workflows.map((w) => ({ id: w.id, title: w.title, options: (w.params ?? []).filter((p) => p.options?.length) })),
       cards: s.cards.map((c, i) => ({
@@ -194,6 +222,7 @@ const routes: Array<[string, RegExp, Handler]> = [
     send(res, 200, await opening);
   }],
   ['GET', /^\/api\/media\/(.+)$/, (req, res, m) => serveFile(res, engine.mediaDir, decodeURIComponent(m[1]), req)],
+  ...resourceRoutes(services, engine),
 ];
 
 const server = createServer(async (req, res) => {
@@ -204,7 +233,7 @@ const server = createServer(async (req, res) => {
     if (await handleBridge(req, res, url, bridge)) return;
     for (const [method, re, handler] of routes) {
       const m = re.exec(url.pathname);
-      if (m && req.method === method) return await handler(req, res, m);
+      if (m && req.method === method) return await handler(req, res, m, url);
     }
     if (url.pathname.startsWith('/api/')) return send(res, 404, { error: 'No such endpoint.' });
     if (!existsSync(join(dist, 'index.html'))) {
@@ -232,6 +261,9 @@ server.listen(PORT, '127.0.0.1', () => {
     ? `  host: PhotoCraft on 127.0.0.1:${settings.photocraftPort} (root ${settings.photocraftRoot}) · ComfyUI: ${settings.comfyUrl}`
     : `  host: EffectCraft on 127.0.0.1:${settings.effectcraftPort} · ComfyUI: ${settings.comfyUrl}`);
   engine.start();
+  // What each resource can run, for the Auto rule and the badges: now, then every ten minutes.
+  services.caps.warm();
+  setInterval(() => services.caps.warm(), 10 * 60_000);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {

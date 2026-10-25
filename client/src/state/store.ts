@@ -6,7 +6,7 @@
 
 import { create } from 'zustand';
 import { lsGet, lsSet } from './persistence';
-import type { ProviderId, V2Target } from '../providers/types';
+import type { ProviderId } from '../providers/types';
 import type { WorkflowPreset, WorkflowRecord, WorkflowSummary } from '../workflows/library';
 import { deriveStoryboardSegments, type Segment } from './segments';
 import type { AdjustmentLayerInfo } from '../bridge/extendscript';
@@ -58,6 +58,20 @@ export interface JobState {
    * a GPU (cold start), or running. Null when the backend doesn't tell.
    */
   stage: 'queued' | 'gpu-starting' | 'running' | null;
+  /** Where this job runs (Settings ▸ Resources), and whether that bills. */
+  resourceId: string | null;
+  resourceLabel: string | null;
+  /** Credits per hour of GPU time while it executes; null on your own GPU. */
+  creditsPerHour: number | null;
+  /** When the server says it started executing (v2), ms. */
+  execStartedAt: number | null;
+  /** Once done: the execution time the server reported, and the credits derived from it (≈). */
+  executionMs: number | null;
+  derivedCredits: number | null;
+  /** Where executionMs came from: execution_ms, started→completed, history (local), or wall (the server reports none). */
+  timing: string | null;
+  /** What the error offers to do about itself ('run-locally' after a 402). */
+  action: string | null;
 }
 
 /**
@@ -124,19 +138,32 @@ export interface HistoryEntry {
   createdAt: number;
   /** What the backend billed for it (a metered cloud), when known. */
   costUsd?: number;
+  /** The resource it ran on (Settings ▸ Resources). */
+  resourceId?: string;
+  resourceLabel?: string;
+  /** Credits derived from its execution time at the resource's rate (≈); absent on your own GPU. */
+  credits?: number | null;
+  /** Execution time the server reported, else wall-clock, seconds. */
+  seconds?: number;
+}
+
+/**
+ * Where workflows run is no longer a page setting: it is the server's
+ * resource registry (Settings ▸ Resources), so a key is never in this page's
+ * storage. These are the keys the page used to keep; read once at load and
+ * handed to the server (lib/resources.ts migrateLegacySettings).
+ */
+const LEGACY_SETTING_KEYS = ['provider', 'localComfyUrl', 'comfyCloudApiKey', 'comfyV2Target', 'comfyV2Url', 'comfyV2Token', 'comfyV2ProxyToken'] as const;
+let legacySettings: Record<string, unknown> | null = null;
+
+/** The legacy backend settings found in local storage at load, once. */
+export function takeLegacySettings(): Record<string, unknown> | null {
+  const l = legacySettings;
+  legacySettings = null;
+  return l;
 }
 
 export interface Settings {
-  provider: ProviderId;
-  comfyCloudApiKey: string;
-  localComfyUrl: string;
-  /** Comfy API v2: which surface, its endpoint, and the key for it. */
-  comfyV2Target: V2Target;
-  comfyV2Url: string;
-  /** The platform API key — Comfy Cloud and deployments share it. */
-  comfyV2Token: string;
-  /** comfy-api-proxy's `--token`; empty when it was started without one. */
-  comfyV2ProxyToken: string;
   outputDir: string;
   defaults: {
     seedMode: 'random' | 'fixed';
@@ -162,13 +189,6 @@ export interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  provider: 'local-comfy',
-  comfyCloudApiKey: '',
-  localComfyUrl: 'http://127.0.0.1:8188',
-  comfyV2Target: 'deployment',
-  comfyV2Url: '',
-  comfyV2Token: '',
-  comfyV2ProxyToken: '',
   outputDir: '',
   defaults: {
     seedMode: 'random',
@@ -191,20 +211,20 @@ function hydrateSettings(): Settings {
     defaults?: Partial<Settings['defaults']>;
   }>('settings', DEFAULT_SETTINGS);
 
+  // The old backend fields (and any key among them) stay out of the page's state: the server takes them.
+  const rest: Record<string, unknown> = { ...raw };
+  const legacy: Record<string, unknown> = {};
+  for (const k of LEGACY_SETTING_KEYS) {
+    if (k in rest) { legacy[k] = rest[k]; delete rest[k]; }
+  }
+  if (Object.keys(legacy).length) legacySettings = legacy;
+
   const merged: Settings = {
     ...DEFAULT_SETTINGS,
-    ...raw,
+    ...(rest as Partial<Settings>),
     defaults: { ...DEFAULT_SETTINGS.defaults, ...(raw.defaults ?? {}) },
     pipeline: { ...DEFAULT_SETTINGS.pipeline, ...((raw as Partial<Settings>).pipeline ?? {}) },
   };
-
-  // Saved before there was a target: read it off the URL that was saved.
-  if (!raw.comfyV2Target && merged.comfyV2Url) {
-    merged.comfyV2Target = merged.comfyV2Url === 'https://cloud.comfy.org' ? 'cloud'
-      : /^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(merged.comfyV2Url) ? 'proxy'
-      : 'deployment';
-  }
-
   return merged;
 }
 
@@ -254,6 +274,14 @@ const IDLE_JOB: JobState = {
   lastEventLabel: null,
   device: null,
   stage: null,
+  resourceId: null,
+  resourceLabel: null,
+  creditsPerHour: null,
+  execStartedAt: null,
+  executionMs: null,
+  derivedCredits: null,
+  timing: null,
+  action: null,
 };
 
 interface AppState {
@@ -414,12 +442,15 @@ interface AppState {
   clearHistory: () => void;
 
   /**
-   * Clips that finished, keyed by `workflowId::providerId` — see {@link RunCost}.
-   * Keyed by both because the same graph on a rented H100 and on the laptop's
-   * card are not the same question.
+   * Clips that finished, keyed by `workflowId::resourceId` — see {@link RunCost}.
+   * Keyed by both because the same graph on a rented GPU and on the laptop's
+   * card are not the same question. (Keys written before resources used the
+   * provider id: `local-comfy` is read as the local resource.)
    */
   runCosts: Record<string, RunCost[]>;
-  recordRunCost: (workflowId: string, providerId: ProviderId, cost: RunCost) => void;
+  recordRunCost: (workflowId: string, resourceId: string, cost: RunCost) => void;
+  /** The resource each workflow last ran on, so a row's "longest that came back" asks the right machine. */
+  lastResource: Record<string, string>;
 
   /**
    * Put a loaded setup into the panel, in one go.
@@ -679,14 +710,17 @@ export const useApp = create<AppState>((set) => ({
   clearHistory: () => { lsSet('history', []); set({ history: [] }); },
 
   runCosts: lsGet<Record<string, RunCost[]>>('runCosts', {}),
-  recordRunCost: (workflowId, providerId, cost) => set((s) => {
-    const key = runCostKey(workflowId, providerId);
+  recordRunCost: (workflowId, resourceId, cost) => set((s) => {
+    const key = runCostKey(workflowId, resourceId);
     // Twelve is plenty to know the ceiling and small enough that localStorage
     // never becomes a thing anyone has to think about.
     const next = { ...s.runCosts, [key]: [cost, ...(s.runCosts[key] ?? [])].slice(0, 12) };
     lsSet('runCosts', next);
-    return { runCosts: next };
+    const lastResource = { ...s.lastResource, [workflowId]: resourceId };
+    lsSet('lastResource', lastResource);
+    return { runCosts: next, lastResource };
   }),
+  lastResource: lsGet<Record<string, string>>('lastResource', {}),
 
   applySetup: (input) => set((s) => {
     const prompts = { ...s.segmentPrompts };
@@ -747,8 +781,8 @@ export const useApp = create<AppState>((set) => ({
   setHistoryOpen: (historyOpen) => set({ historyOpen }),
 }));
 
-export function runCostKey(workflowId: string, providerId: ProviderId): string {
-  return `${workflowId}::${providerId}`;
+export function runCostKey(workflowId: string, resourceId: string): string {
+  return `${workflowId}::${resourceId}`;
 }
 
 /* ─── Selectors ──────────────────────────────────────────────────── */
@@ -764,7 +798,10 @@ export function runCostKey(workflowId: string, providerId: ProviderId): string {
 export function selectProvenCeiling(
   s: AppState, workflowId: string,
 ): RunCost | null {
-  const runs = s.runCosts[runCostKey(workflowId, s.settings.provider)] ?? [];
+  const resource = s.lastResource[workflowId] ?? 'local';
+  const legacy: ProviderId = 'local-comfy';
+  const runs = s.runCosts[runCostKey(workflowId, resource)]
+    ?? (resource === 'local' ? s.runCosts[runCostKey(workflowId, legacy)] : undefined) ?? [];
   let best: RunCost | null = null;
   for (const r of runs) if (!best || r.slotSeconds > best.slotSeconds) best = r;
   return best;

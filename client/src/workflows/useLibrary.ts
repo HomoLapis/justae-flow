@@ -9,7 +9,8 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '../state/store';
-import { buildProvider, providerConfig } from '../providers/registry';
+import { LocalComfyProvider } from '../providers/LocalComfyProvider';
+import { useResources } from '../lib/resources';
 import type { ObjectInfo, VideoProvider } from '../providers/types';
 import { HttpError } from '../providers/ComfyHttpProvider';
 import {
@@ -50,7 +51,7 @@ let inFlightObjectInfo: { key: string; promise: Promise<ObjectInfo | null> } | n
  * read, the folder watcher — at most one is ever in flight, so no combination
  * of them can turn into a storm of requests.
  */
-let inFlightRefresh: Promise<void> | null = null;
+let inFlightRefresh: { key: string; promise: Promise<void> } | null = null;
 
 /**
  * The node catalogue, cached for the whole session rather than per hook
@@ -64,7 +65,10 @@ let inFlightRefresh: Promise<void> | null = null;
 const objectInfoCache = new Map<string, ObjectInfo>();
 
 export function useLibrary(): LibraryApi {
-  const settings = useApp((s) => s.settings);
+  // The library is the local ComfyUI's (its workflow folder and node catalogue),
+  // whatever resource a run goes to: a workflow goes out as an API-format graph.
+  const localUrl = useResources((s) => s.data?.resources.find((r) => r.kind === 'local' && r.enabled)?.url ?? null);
+  const resourcesLoaded = useResources((s) => s.data !== null);
   const activeId = useApp((s) => s.activeId);
   const setLibrary = useApp((s) => s.setLibrary);
   const setLibraryError = useApp((s) => s.setLibraryError);
@@ -76,22 +80,19 @@ export function useLibrary(): LibraryApi {
   const setRecordError = useApp((s) => s.setRecordError);
   const resetFieldLocks = useApp((s) => s.resetFieldLocks);
 
-  const providerKey = [
-    settings.provider, settings.localComfyUrl, settings.comfyCloudApiKey,
-    settings.comfyV2Target, settings.comfyV2Url, settings.comfyV2Token, settings.comfyV2ProxyToken,
-  ].join('|');
+  const providerKey = localUrl ?? '';
 
   const { provider, providerError } = useMemo(() => {
-    try {
+    if (!localUrl) {
       return {
-        provider: buildProvider(settings.provider, providerConfig(settings)),
-        providerError: null as string | null,
+        provider: null as VideoProvider | null,
+        providerError: resourcesLoaded
+          ? 'The local ComfyUI is switched off in Settings ▸ Resources: only the workflows kept next to the project are listed.'
+          : null as string | null,
       };
-    } catch (e) {
-      return { provider: null, providerError: e instanceof Error ? e.message : String(e) };
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerKey]);
+    return { provider: new LocalComfyProvider(localUrl) as VideoProvider, providerError: null as string | null };
+  }, [localUrl, resourcesLoaded]);
 
   /**
    * The node catalogue. Needed for every editor-format workflow, so it's
@@ -146,11 +147,13 @@ export function useLibrary(): LibraryApi {
   }, [provider, providerError, setLibrary, setLibraryError, setLibraryLoading]);
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (inFlightRefresh) return inFlightRefresh;
-    const run = listAll().finally(() => { inFlightRefresh = null; });
-    inFlightRefresh = run;
+    // One listing at a time per source: a listing started before the resources
+    // arrived (no provider yet) must not stand in for the one that has it.
+    if (inFlightRefresh?.key === providerKey) return inFlightRefresh.promise;
+    const run: Promise<void> = listAll().finally(() => { if (inFlightRefresh?.promise === run) inFlightRefresh = null; });
+    inFlightRefresh = { key: providerKey, promise: run };
     return run;
-  }, [listAll]);
+  }, [listAll, providerKey]);
 
   /** The actual read. Wrapped by ensureRecordInner, which handles sharing. */
   const readRecord = useCallback(async (id: string, force: boolean): Promise<WorkflowRecord> => {
@@ -237,8 +240,8 @@ export function useLibrary(): LibraryApi {
     }
   }, [ensureRecordInner, resetFieldLocks, setActive, setActiveId, setLibraryError, setLibraryLoading]);
 
-  // Re-list whenever the provider changes.
-  useEffect(() => { void refresh(); }, [refresh]);
+  // Re-list whenever the provider changes — once the resources say which one it is.
+  useEffect(() => { if (resourcesLoaded) void refresh(); }, [refresh, resourcesLoaded]);
 
   /**
    * Re-open the workflow that was selected last session, once the list is in.

@@ -30,6 +30,10 @@ import { HostError } from '../hosts/types.ts';
 import { LEGACY_PRODUCT_DIR, LEGACY_SLUG, PRODUCT, SLUG, TAG } from '../core/brand.ts';
 import { saveSettings, type Settings } from './config.ts';
 import type { LibraryEntry, WorkflowLibrary } from './library.ts';
+import { taskOf, type Resource } from './resources.ts';
+import { LocalRunner, V2Runner, type Runner } from './runner.ts';
+import type { Services } from './services.ts';
+import type { RunMeta } from './v2run.ts';
 
 export interface EngineState {
   host: {
@@ -57,6 +61,8 @@ export interface CardView extends Card {
   label: string;
   /** What a run would produce right now — said before the render, not discovered after. */
   plan: { width?: number; height?: number; sizeNote?: string; seconds?: number; lengthNote?: string };
+  /** Where the next run goes, and why (the card's choice, its task's row in Settings, or Auto). */
+  runsOn: { id: string; kind: Resource['kind']; label: string; why: string; metered: boolean } | null;
 }
 
 const MAX_MARKER_SLOT = 20;
@@ -87,7 +93,13 @@ export class Engine {
   private markerIndex = new Map<string, number>();
   private layerOf = new Map<string, { in: number; out: number; start: number; box?: Box | null }>();
   private queue: string[] = [];
-  private running: { cardId: string; jobId: string | null; stop: (() => void) | null; cancelled: boolean } | null = null;
+  private running: {
+    cardId: string; jobId: string | null; stop: (() => void) | null; cancelled: boolean;
+    runner: Runner | null; why: string;
+    /** Summed over the generation's jobs (a long reframe is several). */
+    meter: { executionMs: number; credits: number; timed: boolean; billed: boolean };
+  } | null = null;
+  readonly services: Services;
   private paused = false;
   private recovered = 0;
   private previewRev = new Map<string, number>();
@@ -99,11 +111,29 @@ export class Engine {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly clientId = crypto.randomUUID();
 
-  constructor(settings: Settings, library: WorkflowLibrary, host?: HostAdapter) {
+  constructor(settings: Settings, library: WorkflowLibrary, services: Services, host?: HostAdapter) {
     this.settings = settings;
     this.library = library;
+    this.services = services;
     this.comfy = comfyFor(settings);
     this.host = host ?? makeHost(settings);
+    // The local resource and the ComfyUI address in the settings are one thing.
+    services.resources.onChange(() => {
+      const url = services.resources.local().url;
+      if (url !== this.settings.comfyUrl) {
+        this.settings = { ...this.settings, comfyUrl: url };
+        saveSettings(this.settings);
+        this.comfy = comfyFor(this.settings);
+        this.objectInfo = null;
+        void this.checkComfy();
+      }
+      this.changed(false);
+    });
+  }
+
+  /** A bundled workflow, for the estimate and routing routes. */
+  libraryEntry(id: string): LibraryEntry | undefined {
+    return this.library.get(id);
   }
 
   private tl(): TimelineHost {
@@ -151,6 +181,9 @@ export class Engine {
       this.comfy = comfyFor(this.settings);
       this.objectInfo = null;
       void this.checkComfy();
+      if (this.services.resources.local().url !== this.settings.comfyUrl) {
+        this.services.resources.update({ resources: [{ id: 'local', url: this.settings.comfyUrl }] });
+      }
     }
     const hostKeys: Array<keyof Settings> = ['host', 'effectcraftPort', 'photocraftPort', 'photocraftTokenFile', 'photocraftRoot'];
     if (hostKeys.some((k) => patch[k] !== undefined && patch[k] !== before[k])) {
@@ -501,7 +534,7 @@ export class Engine {
         const slotSeconds = slot.end !== null ? Math.max(0, slot.end - slot.start) : null;
         return {
           ...c, at: this.timeOf(c), slotSeconds, previewRev: this.previewRev.get(c.id) ?? 0, label: this.labelOf(c),
-          plan: this.planOf(c, slotSeconds),
+          plan: this.planOf(c, slotSeconds), runsOn: this.routeView(c),
         };
       })
       .sort((a, b) => Number(!!a.orphan) - Number(!!b.orphan) || (canvas ? a.createdAt.localeCompare(b.createdAt) : a.at - b.at));
@@ -524,6 +557,26 @@ export class Engine {
       mediaDir: this.mediaDir,
       notice: this.notice,
     };
+  }
+
+  /** Where a card's next run goes: its own choice, its task's row in Settings ▸ Resources, or Auto. */
+  route(card: Card): { resource: Resource; why: string } | null {
+    const m = this.library.get(card.workflowId)?.manifest;
+    if (!m) return null;
+    const { resources, caps } = this.services;
+    return resources.resolve(taskOf(m.task, m.id), card.resource, (r) => caps.has(r, m.id));
+  }
+
+  private routeView(card: Card): CardView['runsOn'] {
+    const r = this.route(card);
+    if (!r) return null;
+    return { id: r.resource.id, kind: r.resource.kind, label: r.resource.label, why: r.why, metered: this.services.resources.creditsPerHour(r.resource) !== null };
+  }
+
+  private runnerFor(r: Resource): Runner {
+    return r.kind === 'local'
+      ? new LocalRunner(r, this.comfy, this.clientId)
+      : new V2Runner(r, this.services.v2, this.services.resources.creditsPerHour(r) !== null);
   }
 
   private planOf(card: Card, slotSeconds: number | null): CardView['plan'] {
@@ -603,7 +656,7 @@ export class Engine {
 
   /* ─── Editing cards ───────────────────────────────────────────────── */
 
-  async updateCards(ids: string[], patch: Partial<Pick<Card, 'prompt' | 'workflowId' | 'seed' | 'seconds' | 'params'>>): Promise<void> {
+  async updateCards(ids: string[], patch: Partial<Pick<Card, 'prompt' | 'workflowId' | 'seed' | 'seconds' | 'params' | 'resource'>>): Promise<void> {
     const now = new Date().toISOString();
     for (const id of ids) {
       const card = this.card(id);
@@ -611,6 +664,11 @@ export class Engine {
       if (patch.workflowId !== undefined && this.library.get(patch.workflowId)) card.workflowId = patch.workflowId;
       if (patch.seed !== undefined) card.seed = patch.seed;
       if (patch.seconds !== undefined) card.seconds = patch.seconds || undefined;
+      if (patch.resource !== undefined) {
+        const r = patch.resource;
+        if (r && r !== 'auto' && r !== 'default' && !this.services.resources.get(r)) throw new Error(`No resource "${r}".`);
+        card.resource = r && r !== 'default' ? r : undefined;
+      }
       if (patch.params) card.params = { ...card.params, ...patch.params };
       if (patch.prompt !== undefined && patch.prompt !== card.prompt) {
         card.prompt = patch.prompt;
@@ -840,7 +898,7 @@ export class Engine {
       if (this.running?.cardId === cid) {
         this.running.cancelled = true;
         this.running.stop?.();
-        if (this.running.jobId) await this.comfy.cancel(this.running.jobId).catch(() => undefined);
+        if (this.running.jobId) await (this.running.runner ?? new LocalRunner(this.services.resources.local(), this.comfy, this.clientId)).cancel(this.running.jobId).catch(() => undefined);
       }
       this.queue = this.queue.filter((q) => q !== cid);
       card.status = card.versions.length ? 'done' : 'idle';
@@ -870,7 +928,7 @@ export class Engine {
     if (!next) return;
     const card = this.card(next);
     if (!card) return void this.pump();
-    this.running = { cardId: next, jobId: null, stop: null, cancelled: false };
+    this.running = { cardId: next, jobId: null, stop: null, cancelled: false, runner: null, why: '', meter: { executionMs: 0, credits: 0, timed: false, billed: false } };
     try {
       await this.generate(card);
     } catch (e) {
@@ -900,6 +958,8 @@ export class Engine {
   }
 
   private checkModels(api: WorkflowJson, m: WorkflowManifest): ModelCheck {
+    // Only the local ComfyUI's loaders are known here; a v2 resource answers for its own files (checked in generate).
+    if (this.running?.runner && this.running.runner.resource.kind !== 'local') return { remaps: [], missing: [] };
     const models = resolveModels(api, this.objectInfo ?? {}, m.models);
     if (models.missing.length) {
       throw new Error('ComfyUI is missing model files for this workflow: '
@@ -913,9 +973,23 @@ export class Engine {
     if (!entry) throw new Error(`Workflow "${card.workflowId}" is not in the library.`);
     const m = entry.manifest;
     if (!(m.hosts ?? ['effectcraft']).includes(this.host.id)) throw new Error(`${m.title} does not run in ${this.host.label}; pick another workflow for this card.`);
-    if (!this.comfyHealth.online) await this.checkComfy();
-    if (!this.comfyHealth.online) throw new Error(this.comfyHealth.message ?? 'ComfyUI is not reachable.');
-    if (!this.objectInfo) this.objectInfo = await this.comfy.objectInfo();
+    const route = this.route(card)!;
+    const runner = this.runnerFor(route.resource);
+    if (this.running) { this.running.runner = runner; this.running.why = route.why; }
+    if (route.resource.kind === 'local') {
+      if (!this.comfyHealth.online) await this.checkComfy();
+      if (!this.comfyHealth.online) throw new Error(this.comfyHealth.message ?? 'ComfyUI is not reachable.');
+      if (!this.objectInfo) this.objectInfo = await this.comfy.objectInfo();
+    } else {
+      const u = this.services.resources.usable(route.resource);
+      if (!u.ok) throw new Error(`${route.resource.label}: ${u.reason}. Choose Local for this card, or set it up in the Flow window ▸ Settings ▸ Resources.`);
+      // Said before a credit is spent: what the probe found missing there.
+      const caps = this.services.caps.cached(route.resource.id) ?? await this.services.caps.get(route.resource.id).catch(() => null);
+      const w = caps?.workflows[m.id];
+      if (w?.status === 'missing') {
+        throw new Error(`${route.resource.label} cannot run ${m.title}: missing ${[...w.missingNodes.map((n) => `node ${n}`), ...w.missingModels].join(', ')}. Choose Local for this card.`);
+      }
+    }
     if (!this.snap?.comp) throw new Error(`Nothing is open in ${this.host.label}.`);
     if (card.orphan) throw new Error('This card\'s marker, layer or selection is no longer in the project.');
     if (!card.prompt.trim() && m.bindings.prompt) throw new Error('Write a prompt first.');
@@ -941,34 +1015,48 @@ export class Engine {
     return { api, seed };
   }
 
+  /** The runner of the generation in progress. */
+  private runner(): Runner {
+    const r = this.running?.runner;
+    if (!r) throw new Error('No generation is running.');
+    return r;
+  }
+
+  /** What a job records in the run history (estimates come from it). */
+  private meta(m: WorkflowManifest, slotSeconds: number | null, suffix = ''): RunMeta {
+    return { workflowId: m.id + suffix, slotSeconds, scaleWithSlot: m.output === 'video', source: 'engine' };
+  }
+
   /** Submit, follow with live phases and previews, download the primary output. Returns its bytes and name. */
-  private async runJob(card: Card, api: WorkflowJson, m: WorkflowManifest, part?: string): Promise<{ bytes: Uint8Array; filename: string; jobId: string }> {
-    const { outputs, jobId } = await this.execute(card, api, part);
+  private async runJob(card: Card, api: WorkflowJson, m: WorkflowManifest, part?: string, meta?: RunMeta): Promise<{ bytes: Uint8Array; filename: string; jobId: string }> {
+    const { outputs, jobId } = await this.execute(card, api, part, meta ?? this.meta(m, null));
     const wanted = m.output === 'video' ? /\.(mp4|mov|webm|mkv)$/i : /\.(png|jpe?g|webp|exr|tiff?)$/i;
     const primary = outputs.filter((o) => o.type === 'output' && wanted.test(o.filename)).pop()
       ?? outputs.filter((o) => wanted.test(o.filename)).pop();
     if (!primary) throw new Error(`The workflow finished without a ${m.output} file.`);
     this.phase(card, part ? `${part} · Downloading` : 'Downloading');
-    return { bytes: await this.comfy.download(primary), filename: primary.filename, jobId };
+    return { bytes: await this.runner().download(primary), filename: primary.filename, jobId };
   }
 
   /** Submit and follow a job; every file it wrote, in the order the nodes reported them. */
-  private async execute(card: Card, api: WorkflowJson, part?: string): Promise<{ outputs: OutputFile[]; jobId: string }> {
+  private async execute(card: Card, api: WorkflowJson, part: string | undefined, meta: RunMeta): Promise<{ outputs: OutputFile[]; jobId: string }> {
     this.throwIfCancelled();
+    const runner = this.runner();
     // A run that is one of several says which one it is.
     const label = (phase: string): string => (part ? `${part} · ${phase}` : phase);
-    this.phase(card, label('Queued in ComfyUI'));
-    const jobId = await this.comfy.submit(api, this.clientId, { previewMethod: 'auto' });
+    this.phase(card, label(runner.resource.kind === 'local' ? 'Queued in ComfyUI' : `Queued on ${runner.resource.label}`));
+    const submittedAt = Date.now();
+    const jobId = await runner.submit(api, meta, { previewMethod: 'auto' });
     if (this.running) this.running.jobId = jobId;
     if (this.running?.cancelled) {
-      await this.comfy.cancel(jobId).catch(() => undefined);
+      await runner.cancel(jobId).catch(() => undefined);
       throw new Error('Canceled.');
     }
     const dir = join(this.mediaDir, card.id);
     const outputs = await new Promise<OutputFile[]>((resolve, reject) => {
       let got: OutputFile[] = [];
       let lastPreview = 0;
-      const stop = this.comfy.watch(jobId, this.clientId, (ev) => {
+      const stop = runner.watch(jobId, (ev) => {
         switch (ev.kind) {
           case 'queued': this.phase(card, label('Starting')); break;
           case 'executing': {
@@ -997,6 +1085,19 @@ export class Engine {
       if (this.running) this.running.stop = () => { stop(); reject(new Error('Canceled.')); };
     });
     this.throwIfCancelled();
+    // What it took: the server's execution time, and the credits derived from it (v2 records its own run).
+    const meter = await runner.meter(jobId).catch(() => ({ executionMs: null, derivedCredits: null }));
+    if (this.running) {
+      if (meter.executionMs !== null) { this.running.meter.executionMs += meter.executionMs; this.running.meter.timed = true; }
+      if (meter.derivedCredits !== null) { this.running.meter.credits += meter.derivedCredits; this.running.meter.billed = true; }
+    }
+    if (runner.resource.kind === 'local') {
+      this.services.runs.add({
+        at: new Date().toISOString(), workflowId: meta.workflowId, resourceId: runner.resource.id, resourceKind: 'local', gpu: null,
+        executionMs: meter.executionMs, timing: meter.executionMs !== null ? 'history' : 'wall', wallMs: Date.now() - submittedAt,
+        slotSeconds: meta.slotSeconds, scaleWithSlot: meta.scaleWithSlot, derivedCredits: null, creditsPerHour: null, jobId,
+      });
+    }
     return { outputs, jobId };
   }
 
@@ -1011,9 +1112,21 @@ export class Engine {
   }
 
   private recordVersion(card: Card, m: WorkflowManifest, v: Version, stem: string, extra: Record<string, unknown>): void {
+    const meter = this.running?.meter;
+    const r = this.running?.runner?.resource ?? this.services.resources.local();
+    const rate = this.services.resources.creditsPerHour(r);
+    v.resource = r.id;
+    v.executionMs = meter?.timed ? meter.executionMs : null;
+    v.derivedCredits = meter?.billed ? Math.round(meter.credits * 100) / 100 : null;
     writeFileSync(join(this.mediaDir, `${card.id}/${stem}.job.json`), JSON.stringify({
       ...v, card: card.id, host: { app: this.host.label, version: this.snap?.version, ...extra },
-      comfy: { url: this.settings.comfyUrl, version: this.comfyHealth.version },
+      resource: {
+        id: r.id, kind: r.kind, label: r.label, url: r.url, why: this.running?.why,
+        gpu: this.services.resources.gpuLabel(r), creditsPerHour: rate,
+        // Derived, not billed: no endpoint returns a job's cost (execution seconds × the GPU's rate).
+        cost: rate !== null ? { executionMs: v.executionMs, derivedCredits: v.derivedCredits, basis: 'execution_ms × rate (≈)' } : undefined,
+      },
+      comfy: r.kind === 'local' ? { url: this.settings.comfyUrl, version: this.comfyHealth.version } : undefined,
       workflow: { id: m.id, template: m.source, license: m.license },
     }, null, 2));
     card.versions.push(v);
@@ -1067,17 +1180,17 @@ export class Engine {
         src = await host.frameAt(slot.start, join(dir, 'input-frame.png'));
       }
       this.phase(card, 'Uploading');
-      setRef(api, m.bindings.image, await this.comfy.upload(readFileSync(src), `flow_${card.id}${extname(src)}`, 'image/png'));
+      setRef(api, m.bindings.image, await this.runner().uploadFile(src, () => readFileSync(src), `flow_${card.id}${extname(src)}`, 'image/png'));
     } else if (m.input === 'video') {
       const source = card.origin.kind === 'layer' ? card.origin.sourcePath : null;
       if (!source) throw new Error('This workflow needs a video: select a clip layer in EffectCraft, then press "Use selected layers".');
       this.phase(card, 'Uploading');
-      setRef(api, m.bindings.video, await this.comfy.upload(readFileSync(source), `flow_${card.id}${extname(source)}`, 'video/mp4'));
+      setRef(api, m.bindings.video, await this.runner().uploadFile(source, () => readFileSync(source), `flow_${card.id}${extname(source)}`, 'video/mp4'));
     }
     const models = this.checkModels(api, m);
     if (m.task === 'reframe') return this.reframe(card, entry, api, seed, models, t0);
 
-    const result = await this.runJob(card, api, m);
+    const result = await this.runJob(card, api, m, undefined, this.meta(m, length?.seconds ?? null));
     const { n, rel, abs, stem } = this.saveVersion(card, m, result);
 
     // Into the project.
@@ -1139,14 +1252,14 @@ export class Engine {
     const aspect = ASPECTS[aspectName] ?? ASPECTS['9:16'];
     const smoothing: Smoothing = card.params['@smooth'] === 'steady' || card.params['@smooth'] === 'locked' ? card.params['@smooth'] : 'gentle';
 
-    const { outputs, jobId } = await this.execute(card, api);
+    const { outputs, jobId } = await this.execute(card, api, undefined, this.meta(m, info.duration || null));
     const masks = outputs.filter((o) => o.type === 'output' && /\.png$/i.test(o.filename));
     if (masks.length === 0) throw new Error('The tracking finished without masks.');
     const frames: SubjectFrame[] = new Array(masks.length);
     let read = 0;
     this.phase(card, 'Reading the track', 0, masks.length);
     await inPool(masks, 8, async (o, i) => {
-      frames[i] = subjectOf(decodePngGrey(await this.comfy.download(o)));
+      frames[i] = subjectOf(decodePngGrey(await this.runner().download(o)));
       this.phase(card, 'Reading the track', ++read, masks.length);
     });
     this.throwIfCancelled();
@@ -1215,11 +1328,12 @@ export class Engine {
     o.pad.forEach((ref, i) => setRef(api, ref, plan.pad[i]));
 
     this.phase(card, 'Uploading');
-    setRef(api, m.bindings.video, await this.comfy.upload(readFileSync(origin.sourcePath), `flow_${card.id}${extname(origin.sourcePath)}`, 'video/mp4'));
+    const sourcePath = origin.sourcePath;
+    setRef(api, m.bindings.video, await this.runner().uploadFile(sourcePath, () => readFileSync(sourcePath), `flow_${card.id}${extname(sourcePath)}`, 'video/mp4'));
     const models = this.checkModels(api, m);
 
     // One run per segment; each later run carries on from the frames the one before made.
-    const parts: Array<{ bytes: Uint8Array; filename: string; jobId: string; uploaded: string; skip: number; take: number }> = [];
+    const parts: Array<{ bytes: Uint8Array; filename: string; jobId: string; uploaded: unknown; skip: number; take: number }> = [];
     const count = plan.segments.length;
     for (const [i, seg] of plan.segments.entries()) {
       const g = structuredClone(api);
@@ -1232,16 +1346,16 @@ export class Engine {
           previous: parts[i - 1].uploaded, from: before.overlap + before.take - seg.overlap, overlap: seg.overlap, take: seg.take, size: plan.gen,
         });
       }
-      const r = await this.runJob(card, g, m, count > 1 ? `Part ${i + 1} of ${count}` : undefined);
-      const uploaded = count > 1 ? await this.comfy.upload(r.bytes, `flow_${card.id}_part${i + 1}.mp4`, 'video/mp4') : '';
+      const r = await this.runJob(card, g, m, count > 1 ? `Part ${i + 1} of ${count}` : undefined, this.meta(m, seg.frames / fps));
+      const uploaded = count > 1 ? await this.runner().upload(r.bytes, `flow_${card.id}_part${i + 1}.mp4`, 'video/mp4') : '';
       parts.push({ ...r, uploaded, skip: seg.overlap, take: seg.take });
     }
     let result: { bytes: Uint8Array; filename: string; jobId: string } = parts[0];
     if (count > 1) {
-      const joined = await this.execute(card, joinGraph(parts.map((p) => ({ file: p.uploaded, skip: p.skip, take: p.take })), fps, `${SLUG}/vace_reframe_joined`), 'Joining the parts');
+      const joined = await this.execute(card, joinGraph(parts.map((p) => ({ file: p.uploaded, skip: p.skip, take: p.take })), fps, `${SLUG}/vace_reframe_joined`), 'Joining the parts', this.meta(m, plan.seconds, ':join'));
       const out = joined.outputs.filter((f) => f.type === 'output' && /\.(mp4|mov|webm|mkv)$/i.test(f.filename)).pop();
       if (!out) throw new Error('Joining the parts finished without a video.');
-      result = { bytes: await this.comfy.download(out), filename: out.filename, jobId: joined.jobId };
+      result = { bytes: await this.runner().download(out), filename: out.filename, jobId: joined.jobId };
     }
     const { n, rel, abs, stem } = this.saveVersion(card, m, result);
 
@@ -1291,7 +1405,7 @@ export class Engine {
         else await host.exportComposite(this.rootRel(abs));
       }
       this.phase(card, 'Uploading');
-      setRef(api, m.bindings.image, await this.comfy.upload(readFileSync(abs), `flow_${card.id}.png`, 'image/png'));
+      setRef(api, m.bindings.image, await this.runner().upload(readFileSync(abs), `flow_${card.id}.png`, 'image/png'));
     }
     const models = this.checkModels(api, m);
 

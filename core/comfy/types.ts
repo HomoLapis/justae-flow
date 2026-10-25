@@ -37,6 +37,9 @@ export interface OutputFile {
   bucket: string;
   /** Originating node id in the workflow. */
   nodeId: string;
+  /** Comfy API v2: the output's asset id and its job — v2 has no /api/view to fetch by name. */
+  assetId?: string;
+  jobId?: string;
 }
 
 export type ProviderEvent =

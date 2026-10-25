@@ -10,13 +10,15 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadSettings } from '../server/config.ts';
+import { configDir, loadSettings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
+import { makeServices } from '../server/services.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const settings = loadSettings(root);
-const engine = new Engine(settings, new WorkflowLibrary(join(root, 'workflows')));
+const library = new WorkflowLibrary(join(root, 'workflows'));
+const engine = new Engine(settings, library, makeServices(configDir(), () => settings, library));
 const args = process.argv.slice(2);
 
 await engine.checkComfy();

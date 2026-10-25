@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import type { JobState } from '../state/store';
+import { clock, formatCredits, useResources } from '../lib/resources';
 
 interface Props {
   job: JobState;
@@ -49,8 +50,13 @@ export function JobProgress({ job }: Props): JSX.Element | null {
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [live]);
+  const choose = useResources((s) => s.choose);
 
   if (job.phase === 'idle') return null;
+
+  // On a resource that bills: execution time so far × its rate, from when the server says it started executing.
+  const soFar = live && job.creditsPerHour !== null && job.execStartedAt
+    ? ((Date.now() - job.execStartedAt) / 3_600_000) * job.creditsPerHour : null;
 
   const pct = job.progress.max > 0 ? (job.progress.value / job.progress.max) * 100 : 0;
   const dotColor =
@@ -93,9 +99,13 @@ export function JobProgress({ job }: Props): JSX.Element | null {
         </div>
         <span className="flex shrink-0 items-center gap-2 font-mono text-ink-mute">
           {steps && <span title="Sampling steps reported by the server">step {steps}</span>}
-          {/* GPU time is billed by the second on a self-hosted cloud, so the
-              meter is shown while it runs, not after the fact. */}
-          {job.costUsd !== null && <span title="Cost so far on this job">${job.costUsd.toFixed(3)}</span>}
+          {/* GPU time bills by the second on Comfy Cloud and a deployment, so the
+              meter is shown while it runs, not after the fact — derived, with "≈". */}
+          {soFar !== null && (
+            <span title={`Since the server started executing it × ${job.creditsPerHour} cr/h — derived, not a billed amount`}>
+              ≈ {formatCredits(soFar)} cr so far
+            </span>
+          )}
           {elapsed !== null && <span title="Since this shot was submitted">{hms(elapsed)}</span>}
         </span>
       </div>
@@ -161,12 +171,47 @@ export function JobProgress({ job }: Props): JSX.Element | null {
       {job.error && (
         <p className="text-xs text-err font-mono whitespace-pre-wrap break-all">{job.error}</p>
       )}
+      {job.phase === 'error' && job.action === 'run-locally' && (
+        <button className="chip" onClick={() => void choose('local')} data-testid="run-locally">
+          Switch this batch to Local, then Generate again
+        </button>
+      )}
 
       {job.phase === 'done' && job.resultPath && (
         <p className="text-xs text-ok font-mono truncate" title={job.resultPath}>
           ✓ {job.resultPath}
         </p>
       )}
+      {job.phase === 'done' && <AfterJob job={job} />}
     </div>
+  );
+}
+
+/** "✔ 0:12 · ≈ 2.5 cr on Comfy Cloud", then the balance once the server has read it again. */
+function AfterJob({ job }: { job: JobState }): JSX.Element | null {
+  const credits = useResources((s) => s.credits);
+  const wall = job.timing === 'wall';
+  const basis = job.timing === 'history' ? "ComfyUI's history: execution_start → execution_success"
+    : job.timing === 'execution_ms' ? 'metrics.execution_ms, as the server reported it'
+    : job.timing === 'started→completed' ? 'the job\'s started_at → completed_at'
+    : 'wall-clock from submit to done: this server reports no execution time';
+  if (job.creditsPerHour === null) {
+    return job.executionMs !== null
+      ? <p className="font-mono text-[10px] text-ink-mute" title={basis}>{job.resourceLabel} · {wall ? 'took' : 'executed'} {hms(job.executionMs / 1000)}{wall ? ' (wall-clock)' : ''} · no credits</p>
+      : null;
+  }
+  const readAfter = credits?.asOf && job.lastEventAt ? Date.parse(credits.asOf) >= job.lastEventAt - 1000 : false;
+  const unchanged = readAfter && credits?.previous && credits.credits !== null && Math.abs(credits.previous.credits - credits.credits) < 0.005;
+  return (
+    <p className="font-mono text-[10px] leading-snug text-ink-dim" data-testid="after-job">
+      <span title={`Time: ${basis}. Credits: that time × ${job.creditsPerHour} cr/h — derived, not a billed amount`}>
+        ✔ {job.executionMs !== null ? hms(job.executionMs / 1000) : '—'}{wall ? ' (wall-clock)' : ''} · ≈ {job.derivedCredits !== null ? formatCredits(job.derivedCredits) : '—'} cr on {job.resourceLabel}
+      </span>
+      {credits?.ok && credits.credits !== null && readAfter && (
+        <span className="text-ink-mute" title="From the billing report, which follows invoices">
+          {' '}· balance {formatCredits(credits.credits)} cr (read {clock(credits.asOf)}){unchanged ? ' — not updated yet: the report follows invoices' : ''}
+        </span>
+      )}
+    </p>
   );
 }

@@ -42,6 +42,12 @@ export interface Version {
   layerId?: number;
   /** A reframe: every version is its own comp; choosing it opens that comp. */
   compId?: number;
+  /** Where it ran (a resource id: local, cloud, deployment…). Absent on versions made before resources. */
+  resource?: string;
+  /** GPU execution time the server reported, summed over the version's jobs; null when it reported none. */
+  executionMs?: number | null;
+  /** Credits derived from that time at the resource's rate (≈); null where nothing bills. */
+  derivedCredits?: number | null;
 }
 
 export interface Card {
@@ -56,6 +62,8 @@ export interface Card {
   seconds?: number;
   /** Values for the workflow's extra params, keyed by field ref. */
   params: Record<string, string | number | boolean>;
+  /** Where the next run goes: a resource id, 'auto', or absent for the task's row in Settings ▸ Resources. */
+  resource?: string;
   /** An image the user attached instead of the frame under the marker (relative to the media folder). */
   attachment?: string;
   versions: Version[];
@@ -64,7 +72,7 @@ export interface Card {
   placed?: { itemId: number; layerId: number };
   status: CardStatus;
   error?: string;
-  progress?: { value: number; max: number; phase: string; startedAt: number };
+  progress?: { value: number; max: number; phase: string; startedAt: number; resource?: string; credits?: number | null };
   /** Frame under the card, relative to the media folder. */
   thumb?: string;
   /** The marker or layer is gone from the project; the card keeps its versions. */

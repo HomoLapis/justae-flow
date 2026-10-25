@@ -1,18 +1,17 @@
 /**
  * Provider contract — any ComfyUI backend the plugin can target.
  *
- * Three implementations ship:
+ * Two implementations ship, one per protocol, built from the resources the
+ * server keeps (Settings ▸ Resources; providers/registry.ts):
  *   local-comfy   a ComfyUI on this machine / LAN (the classic protocol)
- *   comfy-cloud   ComfyCloud (cloud.comfy.org, X-API-Key)
- *   comfy-v2      Comfy's Developer Platform API v2 (jobs and assets): Comfy
- *                 Cloud, a serverless deployment, or comfy-api-proxy in front
- *                 of your own ComfyUI
+ *   comfy-v2      Comfy API v2 — Comfy Cloud, a deployment, or comfy-api-proxy —
+ *                 run by the server through the official SDK (ServerV2Provider)
+ *
+ * 'comfy-cloud' (the deprecated v1 Cloud API, run from this page) is gone; it
+ * stays in the union so history entries written by it still read.
  */
 
 export type ProviderId = 'comfy-cloud' | 'local-comfy' | 'comfy-v2';
-
-/** Where Comfy API v2 is served: a Developer Platform deployment, Comfy Cloud, or comfy-api-proxy. */
-export type V2Target = 'deployment' | 'cloud' | 'proxy';
 
 /** ComfyUI API-format workflow: flat object keyed by node id. */
 export type WorkflowJson = Record<string, ComfyNode>;
@@ -84,11 +83,19 @@ export type ProviderEvent =
   | { kind: 'preview'; blob: Blob }
   | { kind: 'output'; outputs: OutputFile[] }
   | { kind: 'done' }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string }
+  /**
+   * Comfy API v2: the server's own account of the job — its status, when it
+   * started executing, and once done the execution time and the credits
+   * derived from it. Every poll carries one.
+   */
+  | { kind: 'meter'; status: string; startedAt: string | null; executionMs: number | null; timing: string | null; derivedCredits: number | null; creditsPerHour: number | null };
 
 export interface SubmitCtx {
   /** Client identifier used for the WS connection. UUID v4 typically. */
   clientId: string;
+  /** What the server records in the run history (v2), for later estimates. */
+  meta?: { workflowId: string; slotSeconds: number | null; scaleWithSlot: boolean };
   /** Told when a submit is being retried (after checking it didn't land). */
   onRetry?: (attempt: number, max: number, reason: string) => void;
 }
@@ -205,6 +212,9 @@ export interface VideoProvider {
 
   /** Cancel a queued/running job. */
   cancel(jobId: string): Promise<void>;
+
+  /** How long a finished job executed, as the server reports it (ms), or null. */
+  executionMs?(jobId: string): Promise<number | null>;
 
   /* ─── Capabilities (optional — a backend may not expose them) ─────── */
 

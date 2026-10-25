@@ -1,7 +1,8 @@
 import { useApp } from '../state/store';
 import { ae, isErr } from '../bridge/extendscript';
 import { layerNameFromPrompt } from '../lib/filenames';
-import { PROVIDERS } from '../providers/registry';
+import { providerLabel } from '../providers/registry';
+import { formatCredits } from '../lib/resources';
 import { revealInFileManager } from '../lib/external';
 import { copyText } from '../lib/clipboard';
 
@@ -52,7 +53,7 @@ export function HistoryDrawer(): JSX.Element | null {
             >
               <header className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-ink-mute font-mono text-[10px]">
-                  {formatAgo(h.createdAt)} · {PROVIDERS.find((p) => p.id === h.providerId)?.label ?? h.providerId}
+                  {formatAgo(h.createdAt)} · {h.resourceLabel ?? providerLabel(h.providerId)}
                 </span>
                 <span className="text-[10px] text-ink-mute uppercase tracking-wider">
                   {h.resultIsVideo ? 'video' : 'image'}
@@ -62,6 +63,16 @@ export function HistoryDrawer(): JSX.Element | null {
               <p className="text-[10px] text-ink-mute mt-1 truncate" title={h.workflowLabel}>
                 {h.workflowLabel}
               </p>
+              {(typeof h.credits === 'number' || typeof h.seconds === 'number') && (
+                <p
+                  className="mt-0.5 font-mono text-[10px] text-ink-dim"
+                  title={typeof h.credits === 'number' ? 'Execution time the server reported × the GPU\'s rate — derived, not a billed amount' : 'Execution time (no credits on your own GPU)'}
+                  data-testid="history-cost"
+                >
+                  {typeof h.seconds === 'number' ? `${h.seconds.toFixed(1)} s` : ''}
+                  {typeof h.credits === 'number' ? ` · ≈ ${formatCredits(h.credits)} cr` : ' · no credits'}
+                </p>
+              )}
               {h.resultPath && (
                 <div className="mt-2 flex items-center gap-1.5 opacity-50 group-hover:opacity-100 transition-opacity">
                   <button

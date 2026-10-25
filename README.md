@@ -51,10 +51,10 @@ the selected clip:
 | Auto crop (SAM 3) | crops to the new aspect instead: the clip at 100% in a new comp, with Position keyframes that follow the subject |
 | Upscale ×2 (SeedVR2) | laid exactly over the source, which is switched off — not deleted |
 
-**Where workflows run** (Flow window ▸ Settings): your **local ComfyUI**, or the **Comfy Developer Platform** —
-Comfy API v2 on your own deployment, on Comfy Cloud, or on your ComfyUI behind `comfy-api-proxy` (see
-[Comfy Developer Platform](#comfy-developer-platform-comfy-api-v2)). ComfyCloud's older v1 API is still offered;
-Comfy has deprecated it in favour of v2.
+**Where workflows run** (Flow window ▸ Settings ▸ Resources): your **local ComfyUI**, **Comfy Cloud**, your own
+**Comfy API deployments**, or your ComfyUI behind **`comfy-api-proxy`** — chosen per task, with one platform API key
+for all of Comfy's side, the credit balance in the header and an estimate under every Generate button (see
+[Resources and credits](#resources-and-credits)).
 
 PhotoCraft keeps its own storyboard (selections and placeholder layers, at http://127.0.0.1:5199/storyboard/, where the Flow
 window goes by itself when Settings ▸ App is PhotoCraft); a Flow window for PhotoCraft is not in this version.
@@ -125,42 +125,80 @@ If the router publishes a GPU menu (`/manager/monitor/pricing`), **GPU for jobs*
 choice goes with every job as `X-Comfy-GPU`. Model files the router does not have are reported on the card with
 their download URLs, like on a local ComfyUI.
 
-### Comfy Developer Platform (Comfy API v2)
+### Resources and credits
 
-The Flow window can run its workflows on Comfy API v2, the API of Comfy's
-[Developer Platform](https://docs.comfy.org/development/overview), instead of a ComfyUI address. In the Flow window:
-**Settings ▸ Where workflows run ▸ Comfy Developer Platform**, then one of three targets:
+**Settings ▸ Resources** in the Flow window lists the places a workflow can run. Everything there is kept by the
+JustAE Flow server in your user folder — the registry in `resources.json`, the platform API key in
+`comfy-api-key.txt`, the proxy's token in `comfy-proxy-token.txt` — never in the project, the repository or the
+Flow window's storage. The window sends a key once and gets back only whether one is set and its last four
+characters.
 
-| Target | Endpoint URL | Key |
-|---|---|---|
-| Your deployment | `https://<deployment>.run.comfy.app` — `comfy deploy status` prints it as `endpointUrl` | an API key from [platform.comfy.org ▸ API Keys](https://platform.comfy.org/profile/api-keys) |
-| Comfy Cloud | `https://cloud.comfy.org` | the same API key; jobs draw on your Comfy Cloud credits |
-| Your ComfyUI | `http://127.0.0.1:8189`, served by [`comfy-api-proxy`](https://docs.comfy.org/development/comfyui-server/api-proxy) in front of the ComfyUI on :8188 | none, or the proxy's `--token` |
+| Resource | Address | Protocol, key | Cost |
+|---|---|---|---|
+| **Local ComfyUI** | `http://127.0.0.1:8188` (the address the settings already had) | ComfyUI's own HTTP + WebSocket protocol; no key | your GPU |
+| **Comfy Cloud** | `https://cloud.comfy.org` | Comfy API v2 for jobs (`Authorization: Bearer`); the v1 Cloud API (`X-API-Key`) for the node catalogue, the model folders and the billing report | credits for GPU time |
+| **Deployment** | `https://<deployment>.run.comfy.app` — `comfy deploy status` prints it | Comfy API v2, the same key | credits per second of GPU while a worker runs |
+| **Your ComfyUI via [`comfy-api-proxy`](https://docs.comfy.org/development/comfyui-server/api-proxy)** | `http://127.0.0.1:8189` | Comfy API v2; none, or the proxy's `--token` | your GPU |
 
-**Check connection** lists one job, which tests the URL and the key and runs nothing. JustAE Flow does not build,
-release, deploy, start, scale or stop anything on the platform: it talks to an endpoint you already have. Builds and
-deployments are made with comfy-cli (`comfy build …`, `comfy deploy …`; see Comfy's
-[quickstart](https://docs.comfy.org/development/serverless/quickstart)). A deployment bills for as long as it runs,
-not per job: started with `--min 0` it scales to zero between jobs (the next job waits for a worker), and
-`comfy deploy stop` ends the charge and keeps the endpoint URL.
+One key — from [platform.comfy.org ▸ API Keys](https://platform.comfy.org/profile/api-keys) — serves Comfy Cloud
+and your deployments (docs.comfy.org, *Comfy API v2 Overview* ▸ Base URLs; *v1 Cloud API Overview* ▸
+Authentication). It goes over https only, or over plain http to this machine.
 
-What is different on v2:
+**Comfy API v2 runs on the server, through the official SDK** (`@comfyorg/sdk` 0.5.0): inputs go up as assets
+addressed by their blake3 hash (bytes the platform already has are not sent again), each Generate is one submission
+under one `Idempotency-Key` (a 429 — queue full, or a deployment still starting a worker — is retried under the same
+key for up to 10 minutes, nothing else is), the job is polled every 2 seconds, outputs come down through the server.
+The SDK takes its base URL only from the `COMFY_BASE_URL` environment variable, read in its constructor
+(`src/sdk/client.ts`); JustAE Flow builds one client per resource and sets the variable only for the instant of
+construction.
 
-- **Workflows in API format.** v2 has no workflow folder and no node catalogue, so the Workflow tab lists the
-  workflows kept next to the project: bring one in with **Import file…** as an API-format export. A deployment runs
-  only the nodes and models of the build it was released from.
-- **Inputs are uploaded once.** Comp frames and images go up as assets addressed by their blake3 hash; bytes the server
-  already has are not sent again.
-- **No live previews**; progress is polled every 2 seconds.
-- **No double billing.** Each Generate is one submission with one `Idempotency-Key`. A submit refused with 429 (queue
-  full, or a deployment still bringing a worker up) is retried under the same key for up to 10 minutes; nothing else
-  is retried.
-- **The key goes over https only**, or over plain http to this machine (the proxy). It is kept in the Flow window's
-  local storage.
-- The **layer tools** of the EffectCraft panel still run on the ComfyUI address in the server's settings.
+**Where each task runs.** A table in the same page sets, per task, Local, Cloud, a deployment, the proxy or
+**Auto** (the defaults: video Auto, image Local, generative reframe Cloud, reframe draft Local, upscale Cloud,
+matte Local, slow motion Local, restyle Auto). Auto is Local when the local ComfyUI has the workflow's nodes and
+models, else the first other resource that has them. A row on a resource that is not set up falls back to Auto, so
+without a key everything stays local. The resource on the **Generate** button overrides the table for a batch; the
+EffectCraft panel says where its layer tools run. Each shot's `job.json` records the resource, why it was chosen,
+the execution time and the derived credits.
 
-To try it for free, run `pip install comfy-api-proxy` and then `comfy-api-proxy` next to your ComfyUI. The proxy
-speaks the same protocol as a deployment, so a workflow that runs there moves to a deployment by changing the target.
+**What a resource can run** is probed and kept ten minutes: on the local ComfyUI its `/api/object_info` (node classes
+and the model files its loaders offer, as `npm run verify:workflows` does); on Comfy Cloud the v1 `/api/object_info`
+(with the key) and `/api/experiment/models/{folder}` (public). A deployment and the proxy have no node catalogue on
+v2 (measured on `comfy-api-proxy` 0.1.6: `/api/object_info` answers 404), so they are "unknown until a workflow has
+finished there". What we found on Comfy Cloud is in [docs/CLOUD_PROBE_2026-10-25.md](docs/CLOUD_PROBE_2026-10-25.md).
+
+**Credits.** When the resource of the next Generate bills, the header shows the account's balance, read from the v1
+billing report `GET /api/billing/usage/timeseries` (`summary.balance`, in **cents** despite the `_micros` suffix,
+converted at 211 credits = 1 $; openapi-cloud.yaml and comfy.org/cloud/pricing). That report is drawn from invoices,
+not live usage, so the balance always carries the time it was read and is read again after every job on Cloud or a
+deployment — when it has not moved yet, the window says so. It is cached five minutes.
+
+**Estimates and costs are derived, never stated.** No endpoint returns a job's price (the v2 job carries
+`metrics.execution_ms`; SDK `types.gen.d.ts`). So, under every Generate button:
+
+- after a run: execution time × the GPU's rate — Comfy Cloud runs on the RTX PRO 6000, **736.39 credits per GPU
+  hour** (0.2045 per second); a deployment bills at the rate of the GPU it was deployed on: RTX PRO 6000 736.39,
+  H100 1,314.53, H200 1,626.81, B200 2,369.53 credits/h (comfy.org/cloud/pricing, read 25 Oct 2026) — chosen in its
+  card;
+- before a run: the fastest and slowest earlier runs of the same workflow on the same resource and GPU, scaled by the
+  slot for video, always with "≈" and its basis ("based on 3 runs on RTX PRO 6000"), or the rate alone when there
+  is none ("first run: 12.3 cr/min"). A slot longer than any run on record is flagged. A Storyboard series shows the
+  sum. When the balance is under twice the estimate, a yellow line offers to switch to Local; a `402
+  insufficient_credits` ends the job with the same offer.
+
+The run history the estimates come from is `runs.json`, in the same user folder.
+
+**A deployment bills while a worker runs**, not per job: deployed with `--min 0` it scales to zero between jobs (the
+next job waits for a worker); with `--min 1` a worker stays up and bills while idle — its card says how much a day.
+`comfy deploy stop` ends the charge and keeps the URL. JustAE Flow does not build, release, deploy, start, scale or
+stop anything on the platform: it talks to an endpoint you already have ([quickstart](https://docs.comfy.org/development/serverless/quickstart)).
+
+What is different on v2: workflows go in API format (the Workflow tab still reads your local ComfyUI's folder, and
+its graph is what goes to the cloud); no live previews; on a deployment, only the nodes and models of the build it
+was released from. To try v2 for free, run `pip install comfy-api-proxy` and `comfy-api-proxy` next to your ComfyUI:
+it speaks the protocol a deployment speaks.
+
+`npm run probe:cloud` (`scripts/probe-cloud.ts`) asks Comfy Cloud what it offers this account — read-only, no job,
+no credit — and prints the node and model tables.
 
 ## Install and run
 
@@ -213,7 +251,7 @@ it opens as a window of its own, next to which you place EffectCraft yourself.
                          · files, HTTP and WebSocket relays for the Flow window (session token)
                          · layer tools and the PhotoCraft storyboard: engine, queue, versions
                                                                │
- Flow window (React, Flow 2's interface) ──(HTTP + SSE)────────┘──(HTTP/WS)── ComfyUI, ComfyCloud, Comfy API v2
+ Flow window (React, Flow 2's interface) ──(HTTP + SSE)────────┘──(HTTP/WS, SDK)── ComfyUI, Comfy Cloud, deployments
 ```
 
 Flow 2 ran inside After Effects as a CEP panel: CEP gave it Node (files, HTTP without CORS) and ExtendScript (the
@@ -242,8 +280,9 @@ scripts/     launch, build-workflows, verify-workflows, verify-effectcraft, self
 
 ## Privacy and network
 
-JustAE Flow listens on 127.0.0.1 only. It talks to two things, both of your choosing: your EffectCraft or PhotoCraft
-(loopback; PhotoCraft also with its token) and the backend you set — your ComfyUI, or a Comfy API v2 endpoint. No
+JustAE Flow listens on 127.0.0.1 only. It talks to things of your choosing: your EffectCraft or PhotoCraft
+(loopback; PhotoCraft also with its token) and the resources you set up — your ComfyUI, and, once you add the API
+key, Comfy Cloud (jobs, node catalogue, model folders, billing report) and the deployment addresses you paste. No
 telemetry, no account of its own, no other network access.
 
 ## Development
@@ -253,6 +292,7 @@ npm run typecheck
 npm run selftest                 # offline: fake ComfyUI + in-memory hosts, end to end
 npm run verify:workflows         # bundled workflows against a live ComfyUI (read-only)
 npm run verify:effectcraft       # the storyboard as the engine sees a live EffectCraft
+npm run probe:cloud              # what Comfy Cloud offers this account (read-only, no job, no credit)
 npm run workflows:build          # regenerate workflows/*.api.json from the official templates
 npm run scan:secrets             # also runs as the pre-commit hook
 npm run dev                      # UI dev server on :5198 (proxying the API on :5199)

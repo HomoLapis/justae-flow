@@ -147,6 +147,12 @@ export interface JobManifest {
     formSource: 'appmode' | 'inspector';
   };
   provider: { id: string; label: string; gpu?: string };
+  /** Where it ran (Settings ▸ Resources) and why there: this run's pick, the task's row, or Auto. */
+  resource?: { id: string; kind: string; label: string; why: string; gpu: string | null; creditsPerHour: number | null };
+  /** GPU execution time the server reported (v2: metrics.execution_ms; local: its history), ms. */
+  executionMs?: number | null;
+  /** executionMs × the resource's rate (≈); null on your own GPU. */
+  derivedCredits?: number | null;
   /** Every value the panel sent, including the ones AE filled in. */
   values: Record<string, string | number | boolean>;
   /** Which values came from After Effects rather than the user, and why. */
@@ -165,21 +171,23 @@ export interface JobManifest {
   jobId: string;
   /** Conversion notes carried from the workflow, if any. */
   notes?: string[];
-  /**
-   * What it cost: billed by the backend (a metered backend's estimate at the end, GPU
-   * seconds, GPU) next to the estimate shown before launch — so estimates can
-   * be checked against reality later.
-   */
   /** Delivery profile applied to the save node (pipeline/catalog.ts). */
   outputProfile?: string;
   /** Draft or final render. */
   tier?: 'draft' | 'final';
+  /**
+   * What it cost, derived (execution seconds × the GPU's rate — no endpoint
+   * returns a job's cost), next to the estimate shown before launch, so
+   * estimates can be checked against reality later.
+   */
   cost?: {
-    usd: number | null;
+    derivedCredits: number | null;
+    basis: string;
     gpuSeconds: number | null;
     gpu: string | null;
-    estimatedUsd: [number, number | null] | null;
+    estimatedCredits: [number, number | null] | null;
     estimateBasis: string | null;
+    estimateText: string | null;
   };
 }
 

@@ -23,13 +23,14 @@
 
 import { useRef } from 'react';
 import { useApp, type AttachmentRef, type HistoryEntry } from '../state/store';
-import type { CostEstimate } from '../lib/costEstimate';
+import { estimate as estimateRuns, reportRun, resolveRun, useResources, type EstimateAnswer, type ResourceView } from '../lib/resources';
+import { RunError } from '../providers/ServerV2Provider';
 import { outputProfile } from '../pipeline/catalog';
 import { applyPreset } from '../pipeline/apply';
 import { makeProRes4444, makePng16Sequence } from '../lib/master';
 import { addLosslessSave, LOSSLESS_EXT } from '../pipeline/losslessSave';
 import type { Segment } from '../state/segments';
-import { buildProvider, providerConfig } from '../providers/registry';
+import { buildProvider } from '../providers/registry';
 import type { OutputFile, VideoProvider } from '../providers/types';
 import {
   applyFormValues, computeAutoFill, promptFieldOf, shotPlan, type AeContext,
@@ -124,14 +125,30 @@ export function useGenerate(): UseGenerate {
       return;
     }
 
-    let provider: VideoProvider;
+    /*
+     * Where each shot runs: the Generate button's pick for this batch, else
+     * the row of its task in Settings ▸ Resources (video or image), else Auto.
+     * Decided by the server, which knows what each resource has; said on the
+     * job and kept in job.json.
+     */
+    if (!useResources.getState().data) await useResources.getState().load();
+    const choice = useResources.getState().data?.choice ?? 'default';
+    const routes: Array<{ resource: ResourceView; provider: VideoProvider; why: string }> = [];
     try {
-      provider = buildProvider(state.settings.provider, providerConfig(state.settings));
+      for (const spec of shots.list) {
+        const record = state.records[spec.workflowId];
+        const res = await resolveRun({
+          task: record.inspected.primaryOutputKind === 'video' ? 'video' : 'image',
+          override: choice === 'default' ? null : choice, workflowId: record.id, graph: record.api,
+        });
+        const resource = useResources.getState().data?.resources.find((r) => r.id === res.resource);
+        if (!resource) throw new Error(`The server chose "${res.resource}", which this page does not know — reopen Settings.`);
+        routes.push({ resource, provider: buildProvider(resource), why: res.why });
+      }
     } catch (e) {
       setJob({ phase: 'error', error: e instanceof Error ? e.message : String(e) });
       return;
     }
-    providerRef.current = provider;
 
     let comp: CompInfo | null = null;
     const compResp = await ae.activeComp();
@@ -156,9 +173,10 @@ export function useGenerate(): UseGenerate {
     for (let i = 0; i < shots.list.length; i++) {
       if (cancelledRef.current) break;
       const spec = shots.list[i];
+      providerRef.current = routes[i].provider;
       await runShot({
         record: useApp.getState().records[spec.workflowId],
-        provider, comp, root, rootInProject,
+        provider: routes[i].provider, resource: routes[i].resource, why: routes[i].why, comp, root, rootInProject,
         spec, batchIndex: i, batchTotal: shots.list.length,
         unsubRef, jobIdRef, cancelledRef,
       });
@@ -250,6 +268,9 @@ function buildShots(state: ReturnType<typeof useApp.getState>): { list: ShotSpec
 interface RunCtx {
   record: WorkflowRecord;
   provider: VideoProvider;
+  /** Where it runs, and why there (Settings row, this run's pick, Auto). */
+  resource: ResourceView;
+  why: string;
   comp: CompInfo;
   root: string;
   rootInProject: boolean;
@@ -263,7 +284,9 @@ interface RunCtx {
 
 function runShot(ctx: RunCtx): Promise<void> {
   return new Promise<void>((resolve) => {
-    const { record, provider, comp, spec, batchIndex, batchTotal } = ctx;
+    const { record, provider, resource, comp, spec, batchIndex, batchTotal } = ctx;
+    const scaleWithSlot = record.inspected.primaryOutputKind === 'video';
+    const slotSeconds = spec.durationSeconds > 0 ? spec.durationSeconds : null;
     const state = useApp.getState();
     const { setJob } = state;
     const tag = batchTotal > 1 ? `[${batchIndex + 1}/${batchTotal}] ` : '';
@@ -286,11 +309,22 @@ function runShot(ctx: RunCtx): Promise<void> {
       lastEventLabel: 'submitted',
       device: null,
       stage: null,
+      resourceId: resource.id,
+      resourceLabel: resource.label,
+      creditsPerHour: resource.creditsPerHour,
+      execStartedAt: null,
+      executionMs: null,
+      derivedCredits: null,
+      timing: null,
+      action: null,
     });
 
     void (async (): Promise<void> => {
-      // The estimate shown before launch, kept so job.json can set it against what was billed.
-      const estimate: CostEstimate | null = null;
+      // The estimate shown before launch, kept so job.json can set it against what it cost.
+      let estimate: EstimateAnswer['total'] | null = null;
+      try {
+        estimate = (await estimateRuns({ resource: resource.id, shots: [{ workflowId: record.id, seconds: slotSeconds, scaleWithSlot }] })).total;
+      } catch { /* an estimate is a courtesy */ }
       if (!nodeAvailable()) {
         setJob({ phase: 'error', error: 'The JustAE Flow server is not answering — saving assets needs it.' });
         resolve();
@@ -415,10 +449,10 @@ function runShot(ctx: RunCtx): Promise<void> {
       // The panel's own id, stable for the life of the install — that is what
       // lets the Workflow tab tell our runs apart from the ones the user made
       // in the browser editor. See lib/clientId.ts.
-      const wsCtx = { clientId: panelClientId() };
+      const wsCtx = { clientId: panelClientId(), meta: { workflowId: record.id, slotSeconds, scaleWithSlot } };
       let jobId: string;
       try {
-        setJob({ message: `${tag}Queueing "${spec.label}"…` });
+        setJob({ message: `${tag}Queueing "${spec.label}" on ${resource.label}…` });
         const submitted = await provider.submit(workflow, {
           ...wsCtx,
           onRetry: (n, max, why) => setJob({
@@ -428,7 +462,8 @@ function runShot(ctx: RunCtx): Promise<void> {
         jobId = submitted.jobId;
         ctx.jobIdRef.current = jobId;
       } catch (e) {
-        setJob({ phase: 'error', error: describe(e) });
+        // 402 insufficient_credits says what to do about it: run this one locally.
+        setJob({ phase: 'error', error: describe(e), action: e instanceof RunError ? e.action ?? null : null });
         resolve();
         return;
       }
@@ -437,11 +472,6 @@ function runShot(ctx: RunCtx): Promise<void> {
       /* 4. Follow it. */
       let collected: OutputFile[] = [];
       let finished = false;
-      let costTimer: ReturnType<typeof setInterval> | null = null;
-
-      // What the backend billed, when it says (none of the backends here does yet).
-      const billed: { usd: number | null; gpuSeconds: number | null; gpu: string | null } = { usd: null, gpuSeconds: null, gpu: null };
-      const stopCostTimer = (): void => { if (costTimer) clearInterval(costTimer); costTimer = null; };
 
       /*
        * How much room is left on the card, while the card is busy.
@@ -477,6 +507,14 @@ function runShot(ctx: RunCtx): Promise<void> {
         // read by JobProgress to tell a grinding render from a dead one.
         setJ({ lastEventAt: Date.now(), lastEventLabel: ev.kind });
         switch (ev.kind) {
+          case 'meter':
+            // The server's own account: started executing at, and once done the time and derived credits.
+            setJ({
+              execStartedAt: ev.startedAt ? Date.parse(ev.startedAt) : null,
+              executionMs: ev.executionMs, timing: ev.timing, derivedCredits: ev.derivedCredits,
+              stage: ev.status === 'queued' ? 'queued' : ev.status === 'running' ? 'running' : useApp.getState().job.stage,
+            });
+            break;
           case 'queued':
             setJ({ phase: 'queued', message: `${tag}Queued on ${provider.label}` });
             break;
@@ -504,7 +542,6 @@ function runShot(ctx: RunCtx): Promise<void> {
           case 'error':
             if (finished) break;
             finished = true;
-            stopCostTimer();
             stopDeviceTimer();
             setJ({ phase: 'error', error: ev.message, message: 'Execution failed' });
             unsub();
@@ -518,7 +555,6 @@ function runShot(ctx: RunCtx): Promise<void> {
       async function finish(): Promise<void> {
         const setJ = useApp.getState().setJob;
         const s = useApp.getState().settings;
-        stopCostTimer();
         stopDeviceTimer();
 
         let outputs = collected;
@@ -599,6 +635,23 @@ function runShot(ctx: RunCtx): Promise<void> {
             if (placed) { setJ({ phase: 'error', error: placed }); unsub(); resolve(); return; }
           }
 
+          /*
+           * What it took. On Comfy API v2 the server reported the execution
+           * time and derived the credits from it; on a local ComfyUI the time
+           * comes from its history (execution_start → execution_success).
+           * Derived, never billed: no endpoint returns the cost of a job.
+           */
+          const wallMs = Date.now() - submittedAt;
+          const live = useApp.getState().job;
+          const executionMs = live.executionMs ?? (await provider.executionMs?.(jobId).catch(() => null)) ?? null;
+          const derivedCredits = resource.creditsPerHour === null ? null
+            : live.derivedCredits ?? (executionMs !== null ? (executionMs / 3_600_000) * resource.creditsPerHour : null);
+          setJ({ executionMs, derivedCredits, timing: live.executionMs !== null ? live.timing : executionMs !== null ? 'history' : null });
+          // v2 runs are in the server's history already; a local run is reported, for the next estimate.
+          if (resource.kind === 'local') void reportRun({ workflowId: record.id, resourceId: resource.id, wallMs, executionMs, slotSeconds, scaleWithSlot, jobId });
+          // The balance is read again after a job that bills; the billing report follows invoices, so it may not move yet.
+          if (resource.creditsPerHour !== null) void useResources.getState().loadCredits(true);
+
           const manifest: JobManifest = {
             generatedAt: new Date().toISOString(),
             comp: { name: comp.name, width: comp.width, height: comp.height, fps: comp.frameRate },
@@ -617,8 +670,14 @@ function runShot(ctx: RunCtx): Promise<void> {
             provider: {
               id: provider.id,
               label: provider.label,
-              gpu: undefined,
+              gpu: resource.gpuLabel ?? undefined,
             },
+            resource: {
+              id: resource.id, kind: resource.kind, label: resource.label, why: ctx.why,
+              gpu: resource.gpuLabel, creditsPerHour: resource.creditsPerHour,
+            },
+            executionMs,
+            derivedCredits,
             values,
             aeFilled,
             promptField: promptField ? `${promptField.nodeId}.${promptField.field}` : null,
@@ -638,13 +697,15 @@ function runShot(ctx: RunCtx): Promise<void> {
               : undefined,
             outputProfile: profile.id !== 'as-workflow' ? profile.id : undefined,
             tier: state.settings.pipeline.tier,
-            cost: billed.usd !== null || estimate
+            cost: resource.creditsPerHour !== null || estimate
               ? {
-                  usd: billed.usd,
-                  gpuSeconds: billed.gpuSeconds,
-                  gpu: billed.gpu,
-                  estimatedUsd: estimate && estimate.usdLow !== null ? [estimate.usdLow, estimate.usdHigh] : null,
+                  derivedCredits,
+                  basis: resource.creditsPerHour !== null ? 'execution_ms × rate (≈), not a billed amount' : 'your own GPU: no credits',
+                  gpuSeconds: executionMs !== null ? executionMs / 1000 : null,
+                  gpu: resource.gpuLabel,
+                  estimatedCredits: estimate && estimate.creditsLow !== null ? [estimate.creditsLow, estimate.creditsHigh] : null,
                   estimateBasis: estimate ? estimate.basis : null,
+                  estimateText: estimate?.text ?? null,
                 }
               : undefined,
           };
@@ -669,7 +730,10 @@ function runShot(ctx: RunCtx): Promise<void> {
             resultIsVideo: primary.isVideo,
             shotFolder: shot.root,
             createdAt: Date.now(),
-            costUsd: billed.usd ?? undefined,
+            resourceId: resource.id,
+            resourceLabel: resource.label,
+            credits: derivedCredits,
+            seconds: Math.round((executionMs ?? wallMs) / 100) / 10,
           };
           useApp.getState().pushHistory(entry);
 
@@ -682,13 +746,12 @@ function runShot(ctx: RunCtx): Promise<void> {
            * keeping.
            */
           if (spec.durationSeconds > 0) {
-            useApp.getState().recordRunCost(record.id, provider.id, {
+            useApp.getState().recordRunCost(record.id, resource.id, {
               slotSeconds: spec.durationSeconds,
-              renderSeconds: Math.round((Date.now() - submittedAt) / 1000),
+              renderSeconds: Math.round(wallMs / 1000),
               at: Date.now(),
-              costUsd: billed.usd ?? undefined,
-              gpuSeconds: billed.gpuSeconds ?? undefined,
-              gpu: billed.gpu ?? undefined,
+              gpuSeconds: executionMs !== null ? executionMs / 1000 : undefined,
+              gpu: resource.gpuLabel ?? undefined,
             });
           }
         } catch (e) {

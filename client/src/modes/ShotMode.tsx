@@ -33,6 +33,7 @@ import { DynamicForm } from '../components/DynamicForm';
 import { PromptBox } from '../components/PromptBox';
 import { GenerateButton } from '../components/GenerateButton';
 import { CostEstimateLine } from '../components/CostEstimateLine';
+import { ResourceChooser } from '../components/ResourceChooser';
 import { JobProgress } from '../components/JobProgress';
 import { SetupBar } from '../components/SetupBar';
 import { useGenerate } from '../generate/useGenerate';
@@ -116,6 +117,15 @@ export function ShotMode({ source }: Props): JSX.Element {
 
   const canGenerate = idle && shotCount > 0 && library.length > 0;
 
+  // What the estimate line and the resource chooser price: the ticked shots, each with its own workflow.
+  const recordKinds = useApp(useShallow((s) => Object.fromEntries(Object.entries(s.records).map(([id, r]) => [id, r.inspected.primaryOutputKind]))));
+  const estimateShots = useMemo(() => {
+    const list = playheadMode
+      ? [{ workflowId: activeIdAll, seconds: null as number | null }]
+      : segments.filter((sg) => selected.includes(sg.id)).map((sg) => ({ workflowId: shotWorkflowsAll[sg.id] || activeIdAll, seconds: sg.duration as number | null }));
+    return list.filter((x) => x.workflowId).map((x) => ({ ...x, scaleWithSlot: recordKinds[x.workflowId] !== 'image' }));
+  }, [playheadMode, segments, selected, shotWorkflowsAll, activeIdAll, recordKinds]);
+
   return (
     <div className="flex h-full flex-col gap-3 px-3.5 pb-10 pt-3.5">
       {hostError && (
@@ -178,20 +188,19 @@ export function ShotMode({ source }: Props): JSX.Element {
       />
 
       <div className="space-y-2 pt-1">
-        <GenerateButton
-          phase={job.phase}
-          disabled={!canGenerate}
-          onGenerate={() => void generate()}
-          onCancel={cancel}
-          customIdleLabel={shotCount > 1 ? `Generate ${shotCount} clips` : 'Generate clip'}
-        />
-        {idle && (
-          <CostEstimateLine
-            shots={playheadMode ? [] : segments
-              .filter((sg) => selected.includes(sg.id))
-              .map((sg) => ({ workflowId: shotWorkflowsAll[sg.id] || activeIdAll, slotSeconds: sg.duration }))}
-          />
-        )}
+        <div className="flex items-stretch gap-1.5">
+          <div className="min-w-0 flex-1">
+            <GenerateButton
+              phase={job.phase}
+              disabled={!canGenerate}
+              onGenerate={() => void generate()}
+              onCancel={cancel}
+              customIdleLabel={shotCount > 1 ? `Generate ${shotCount} clips` : 'Generate clip'}
+            />
+          </div>
+          <ResourceChooser shots={estimateShots} disabled={!idle} />
+        </div>
+        {idle && <CostEstimateLine shots={estimateShots} />}
         <JobProgress job={job} />
       </div>
     </div>

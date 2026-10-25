@@ -18,7 +18,7 @@
  * expressed as hooks rather than separate copies of the protocol.
  */
 
-import { extractOutputs, openComfyWebSocket } from './ComfyCloudProvider';
+import { extractOutputs, openComfyWebSocket } from './comfyProtocol';
 import { parseHistory } from './history';
 import { buildMultipart, nodeHttpAvailable, nodeRequest } from '../lib/httpNode';
 import type {
@@ -492,6 +492,30 @@ export class ComfyHttpProvider implements VideoProvider {
     const job = data[jobId];
     if (!job) return [];
     return extractOutputs({ outputs: job.outputs });
+  }
+
+  /**
+   * How long the job executed, from ComfyUI's own history: the timestamps of
+   * its execution_start and execution_success messages (ms). Null when the
+   * history does not carry them.
+   */
+  async executionMs(jobId: string): Promise<number | null> {
+    try {
+      const r = await this.req(`/api/history/${encodeURIComponent(jobId)}`, { timeoutMs: 10_000 });
+      if (!r.ok) return null;
+      const data = JSON.parse(r.text) as Record<string, { status?: { messages?: unknown[] } }>;
+      const at = (name: string): number | null => {
+        for (const m of data[jobId]?.status?.messages ?? []) {
+          if (Array.isArray(m) && m[0] === name && typeof (m[1] as { timestamp?: unknown } | undefined)?.timestamp === 'number') return (m[1] as { timestamp: number }).timestamp;
+        }
+        return null;
+      };
+      const start = at('execution_start');
+      const end = at('execution_success');
+      return start !== null && end !== null && end >= start ? end - start : null;
+    } catch {
+      return null;
+    }
   }
 
   async download(out: OutputFile): Promise<Blob> {

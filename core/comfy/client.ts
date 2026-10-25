@@ -314,6 +314,28 @@ export class ComfyClient {
     };
   }
 
+  /**
+   * How long the job executed, from ComfyUI's own history: the timestamps of its
+   * execution_start and execution_success messages (ms). Null when the history
+   * does not carry them.
+   */
+  async executionMs(jobId: string): Promise<number | null> {
+    try {
+      const h = await this.json<Record<string, { status?: { messages?: unknown[] } }>>(`/api/history/${encodeURIComponent(jobId)}`, { timeoutMs: 10_000 });
+      const at = (name: string): number | null => {
+        for (const m of h[jobId]?.status?.messages ?? []) {
+          if (Array.isArray(m) && m[0] === name && m[1] && typeof (m[1] as { timestamp?: unknown }).timestamp === 'number') return (m[1] as { timestamp: number }).timestamp;
+        }
+        return null;
+      };
+      const start = at('execution_start');
+      const end = at('execution_success');
+      return start !== null && end !== null && end >= start ? end - start : null;
+    } catch {
+      return null;
+    }
+  }
+
   async download(out: OutputFile): Promise<Uint8Array> {
     const q = new URLSearchParams({ filename: out.filename, subfolder: out.subfolder, type: out.type });
     const r = await this.req(`/api/view?${q.toString()}`, { timeoutMs: 600_000 });
