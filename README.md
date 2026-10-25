@@ -25,7 +25,7 @@ workflow and lands back in the project at its place, as a new version — never 
 ## What it does
 
 JustAE Flow is **JustAE Flow 2** — the After Effects panel that runs any ComfyUI workflow against the timeline —
-brought to EffectCraft. The interface is Flow 2's own: a **Flow window** with three tabs, opened from a panel docked in
+brought to EffectCraft. The interface is Flow 2's own: a **Flow window** with four tabs, opened from a panel docked in
 EffectCraft.
 
 | Tab | What you do in EffectCraft | What Flow does |
@@ -33,6 +33,7 @@ EffectCraft.
 | **Workflow** | — | lists the workflows on your ComfyUI (its workflow folder, searchable), reads each graph and builds a form from it; the comp fills canvas size, length and frame rate into the fields that take them. *Edit in ComfyUI* opens the editor in its own window with that workflow on the canvas; Ctrl+S there saves back to the same file. The *Pipeline* lists the stages of a production (draft or final presets, lossless output profiles) and whether their nodes are installed |
 | **Marker** | add comp markers in **pairs** around each gap to fill | one shot per pair, in time order; the clip comes out exactly as long as the gap. Or one clip at the playhead |
 | **Storyboard** | block the cut out with **adjustment layers** (eye on) | one shot per placeholder: its in and out points are the slot, its label colour comes back on the generated clip, and its eye is switched off once the clip is placed |
+| **Comp** | open the comp; set a work area or select a layer if you want | tools on the comp as a whole — **Reframe**, **Upscale**, **Cut-out** — each making something new beside it (see [The Comp tab](#the-comp-tab)) |
 
 Every shot row has its own workflow dropdown and, opened, its own prompt and that workflow's inputs: a frame or the
 work area from the comp, an attached file. Shots run in series with live progress and previews; each generation gets
@@ -47,7 +48,7 @@ the selected clip:
 | Layer tool | What it does |
 |---|---|
 | Cut out a subject (SAM 3) | tracks what you name through the clip; a matte layer above becomes the clip's luma track matte — the clip's pixels are untouched |
-| Reframe, generate the new space (Wan VACE 14B, or the 1.3B draft) | a new comp in 9:16, 4:5, 1:1 or 16:9 where the space the clip does not cover is generated around it, and the clip sits on top, untouched, with a soft edge. Clips longer than one run go through in runs that carry on from each other |
+| Reframe, generate the new space (Wan VACE 14B, or the 1.3B draft) | a new comp in 9:16, 4:5, 1:1, 16:9, 21:9 or 4:3 where the space the clip does not cover is generated around it, and the clip sits on top, untouched, with a soft edge. Clips longer than one run go through in runs that carry on from each other |
 | Auto crop (SAM 3) | crops to the new aspect instead: the clip at 100% in a new comp, with Position keyframes that follow the subject |
 | Upscale ×2 (SeedVR2) | laid exactly over the source, which is switched off — not deleted |
 
@@ -58,6 +59,58 @@ for all of Comfy's side, the credit balance in the header and an estimate under 
 
 PhotoCraft keeps its own storyboard (selections and placeholder layers, at http://127.0.0.1:5199/storyboard/, where the Flow
 window goes by itself when Settings ▸ App is PhotoCraft); a Flow window for PhotoCraft is not in this version.
+
+## The Comp tab
+
+The Storyboard tab makes things *inside* a comp; the Comp tab transforms the comp itself — or its work area, or the
+selected layer — into something new beside it. Nothing in your comp is changed or deleted: a result is a new comp
+("*&lt;Comp&gt;* · 9:16"), or a layer above with the original kept.
+
+**Source** (at the top): *Work area* (the default when one is set), *Whole comp*, or *Selected layer*. The work area and
+the whole comp are rendered by EffectCraft when the run starts — its render queue, ProRes 422 HQ — into the run's
+folder next to the project, and imported, so the result stands on exactly what the model saw. The render never lasts
+longer than **Settings ▸ Work-area render cap** (default 8 s); the tab says so, with the setting one click away, when
+the span is longer. *Selected layer* uses the layer's own file (a video clip).
+
+| Tool | What it runs | What it makes |
+|---|---|---|
+| **Reframe** — 9:16 · 4:5 · 1:1 · 16:9 · 21:9 · 4:3, *Draft* or *Final* | Wan2.1 VACE outpainting (`vace-reframe-draft` 1.3B / `vace-reframe` 14B) | a new comp "*&lt;Comp&gt;* · 9:16" at the delivery size: the generated video fills it, your render or clip sits on top, untouched, with a soft edge where it meets the new space. *Advanced ▸ Mode ▸ Crop with tracking* runs the SAM 3 auto crop instead (nothing generated) |
+| **Upscale** — ×2, or ×4 | SeedVR2 3B (`seedvr2-upscale`); ×4 is two ×2 passes, the second fed with the first's result | a new comp at the target size (stated before the run): the upscaled clip, and your original under it at the matching scale, switched off |
+| **Cut-out** | SAM 3 tracking (`sam3-matte`), the subject named in a word | from a layer: a matte layer above it, set as its luma track matte; from the comp: a new comp "*&lt;Comp&gt;* · cut-out" with the render and its matte. **Export with alpha** writes a ProRes 4444 `.mov` (the clip's colour, the matte as alpha) with ffmpeg, next to the project, and *Reveal .mov* shows it |
+
+Generation frames and delivery comps per format. The generation frame follows one rule
+(`core/reframe/outpaint.ts`, `vaceGenSize`): Wan 2.1's own frame where the format is its own (1280×720 for the 14B,
+832×480 for the 1.3B, and their portrait), otherwise the size with exactly that aspect, both sides multiples of 16 (the
+step `WanVaceToVideo` takes), whose pixel count is nearest to that frame's. The rule gives back every size the reframe
+shipped with; 21:9 and 4:3 are new. The delivery comp is 1080 px on its short side.
+
+| Format | Final (14B) | Draft (1.3B) | Comp |
+|---|---|---|---|
+| 9:16 | 720×1280 | 480×832 | 1080×1920 |
+| 4:5 | 832×1040 | 576×720 | 1080×1350 |
+| 1:1 | 960×960 | 624×624 | 1080×1080 |
+| 16:9 | 1280×720 | 832×480 | 1920×1080 |
+| 21:9 (7:3) | 1456×624 | 1008×432 | 2520×1080 |
+| 4:3 | 1088×816 | 704×528 | 1440×1080 |
+
+Each tool card shows the comp's own frame at the playhead (captured by EffectCraft) next to what it will make — for
+Reframe, a mock of the new frame with the generated area hatched — says what the run will make before it runs, and has
+the resource chooser and the estimate of the other tabs: each tool routes by its own row of *Settings ▸ Resources*
+(Reframe → *Generative reframe* or *Reframe draft*, Upscale → *Upscale*, Cut-out → *Cut-out / matte*), and a pick on the
+card holds for that tool. Technical choices (seed, crop mode, smoothing) are under *Advanced*.
+
+**Results** lists the runs of the comp: running ones with their phase, a bar and *Cancel*; finished ones with their
+time, the credits derived from it on a resource that bills (or *no credits*), *Open comp*, *Compare* (original ⇄
+result by hiding and showing layers — or taking a matte's track matte off and back — in EffectCraft; nothing is
+deleted) and the versions: running the same tool on the same source again makes the next version ("*&lt;Comp&gt;* ·
+9:16 v2"), never over the old one. Runs go through the engine's queue, one at a time, with the layer tools.
+
+Keys: **G** runs the open card, **Esc** cancels the running run, **Tab** compares the last result. The panel in
+EffectCraft has an *Open the Comp tab* button.
+
+Files: everything a run makes goes into `<project>.justae-flow/<run id>/` next to the `.ecproj`: the render of the
+comp (`…_work-area-1.0-4.0s_v001.mov`), the result, a picture of it, the exact graph submitted to ComfyUI
+(`submitted_<time>.api.json`) and the `job.json` (tool, source, sizes, resource, times, seed, model swaps).
 
 ## Workflows
 
@@ -256,7 +309,7 @@ it opens as a window of its own, next to which you place EffectCraft yourself.
                          JustAE Flow server (Node, 127.0.0.1:5199)
                          · host bridge: Flow 2's host functions run inside EffectCraft (script.run)
                          · files, HTTP and WebSocket relays for the Flow window (session token)
-                         · layer tools and the PhotoCraft storyboard: engine, queue, versions
+                         · layer tools, the Comp tab and the PhotoCraft storyboard: engine, queue, versions
                                                                │
  Flow window (React, Flow 2's interface) ──(HTTP + SSE)────────┘──(HTTP/WS, SDK)── ComfyUI, Comfy Cloud, deployments
 ```
@@ -267,8 +320,11 @@ host). Here the same interface runs in a window and the server stands in for bot
 - **The host.** EffectCraft's scripting follows After Effects scripting, so Flow 2's host file
   (`extensions/effectcraft/flow-host.jsx`) runs inside EffectCraft as it is, through the control channel's
   `script.run`: markers, adjustment layers, import at a time with the label colour, frame capture
-  (`saveFrameToPng`), work-area render, trims, the native Save/Open dialogs. Two changes: the project name
-  (`.ecproj`) and the temp folder, which EffectCraft's scripting does not expose and the server provides.
+  (`saveFrameToPng`), work-area render, trims, the native Save/Open dialogs. The changes: the project name
+  (`.ecproj`) and the temp folder, which EffectCraft's scripting does not expose (`Folder.temp` is null), so the
+  work-area render writes into a folder the caller names; and two differences measured on EffectCraft 0.11.1 — it
+  refuses to set a render-queue value it already has ("nothing to change"), and `renderQueue.item(j)` hands out a new
+  object each call, so the render's own item is known by its index.
 - **Files** go through the server, limited to your user folder and the temp folder; **HTTP** to ComfyUI or a cloud
   API goes through a relay, so no CORS and no token in a browser request; the ComfyUI **WebSocket** is relayed as
   server-sent events. Every one of these routes wants the session token the server writes into the page, and a request
@@ -278,9 +334,9 @@ host). Here the same interface runs in a window and the server stands in for bot
 ```
 client/      the Flow window (Flow 2's interface; bridge/ and lib/ are the parts that talk to the server)
 extensions/  the EffectCraft panel and the host file
-core/        host-independent: ComfyUI client, workflow conversion, manifests, storyboard types, reframe planning
+core/        host-independent: ComfyUI client, workflow conversion, manifests, storyboard types, reframe planning, the Comp tab tools
 hosts/       one adapter per host app for the engine (effectcraft: a timeline, photocraft: a canvas)
-server/      the host bridge and relays, the window dock, the engine (layer tools, PhotoCraft storyboard), settings, HTTP API
+server/      the host bridge and relays, the window dock, the engine (layer tools, Comp tab, PhotoCraft storyboard), settings, HTTP API
 workflows/   bundled workflows for the layer tools and PhotoCraft: <id>.json manifest + <id>.api.json graph
 scripts/     launch, build-workflows, verify-workflows, verify-effectcraft, selftest, scan-secrets
 ```
@@ -321,6 +377,12 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
 - A generative reframe takes time: on a 16 GB GPU the 1.3B draft needs about 6 minutes for 125 frames at 480p; one
   card makes at most four runs (about 20 s of a 24 fps clip).
 - Live previews depend on the model: ComfyUI sends them while sampling (`preview_method: auto` per job).
+- The Comp tab renders a work area or a comp as ProRes 422 HQ (about 76 Mb/s at 1280×704). Comfy Cloud takes uploads
+  up to 100 MiB (`max_upload_size` in its `/api/features`), so a longer or larger render is refused before it is sent
+  there; run it locally, or shorten the work area. The limit of a deployment is DA VERIFICARE.
+- Upscale past 4K (3840 px on the long side, e.g. ×4 of 1280×720) is not verified on a 16 GB GPU: the card says so.
+- Reframe *Final* (VACE 14B) takes minutes per sampling step on a 16 GB card; it was checked here up to the submitted
+  graph, not end to end (DA VERIFICARE: time and VRAM of a full run on this GPU).
 - Storyboards written under the project's former name (`*.shiftfield.json`) are still read, where they are.
 
 ## Licence
