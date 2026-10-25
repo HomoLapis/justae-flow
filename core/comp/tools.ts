@@ -15,7 +15,7 @@
  *            with alpha can be written from it
  *   extend   LTX-2.5 image-to-video from the source's last frame: a new layer that
  *            starts at the source's out point
- *   slowmo   frame interpolation (RIFE, FILM, GIMM-VFI): ×2 / ×4 slow motion, or
+ *   slowmo   frame interpolation (RIFE, FILM): ×2 / ×4 slow motion, or
  *            twice the frame rate, in a new comp
  *   social   several reframes (and their upscales, and masters) queued one after
  *            the other: orchestration of the tools above, no model of its own
@@ -75,6 +75,8 @@ export interface ToolPlan {
   choices?: Record<string, string[]>;
   /** A pack (the Social pack): the runs it queues, in order, each with its own plan. */
   members?: Array<{ tool: string; options: ToolOptions; plan: ToolPlan }>;
+  /** Extend: the motion it carries on from — the source's last frames that guide the model (none: one frame). */
+  motion?: { frames: number; seconds: number };
 }
 
 export interface ToolDef {
@@ -107,14 +109,29 @@ export const KEEP_COLOUR_DEFAULT = 'wavelet';
 export const EXTEND_SECONDS = [2, 4, 5] as const;
 
 /**
- * LTX-2.5 makes 8k + 1 frames. Extend asks for one more frame than it shows — the first, which repeats the
- * source's last frame, is trimmed off — so: the smallest 8k + 1 that is at least seconds × fps + 1.
+ * LTX-2.5 makes 8k + 1 frames. Extend from a single frame (a still, or a source too short to guide with) asks
+ * for one more frame than it shows — the first, which repeats the source's last frame, is trimmed off — so: the
+ * smallest 8k + 1 that is at least seconds × fps + 1.
  */
 export function ltxExtendFrames(seconds: number, fps: number): number {
-  return 8 * Math.ceil((seconds * fps) / 8) + 1;
+  return 8 * Math.ceil((seconds * fps - 1e-6) / 8) + 1;
 }
 
-/** Interpolation: frames out of n frames in, with N − 1 new frames between each pair (RIFE VFI, GIMM-VFI). */
+/**
+ * Extend with a video guide: the source's last `guide` frames (8n + 1, LTXVAddGuide's rule) sit at the start of
+ * the new latent and come back first; the new frames follow, a multiple of 8 so the whole stays 8k + 1.
+ * 2 s at 24 fps with a 17-frame guide: 17 + 48 = 65.
+ */
+export function ltxGuidedFrames(seconds: number, fps: number, guide: number): number {
+  return guide + 8 * Math.ceil((seconds * fps - 1e-6) / 8);
+}
+
+/** The guide lengths, longest first, that fit in `available` frames of the source; 9 is the shortest that guides motion. */
+export function extendGuide(available: number, lengths: readonly number[]): number | undefined {
+  return [...lengths].sort((a, b) => b - a).find((g) => g >= 9 && (g - 1) % 8 === 0 && g <= available);
+}
+
+/** Interpolation: frames out of n frames in, with N − 1 new frames between each pair (RIFE VFI). */
 export function interpolatedFrames(n: number, multiplier: number): number {
   return Math.max(1, (Math.max(1, n) - 1) * multiplier + 1);
 }
@@ -280,35 +297,51 @@ const matte: ToolDef = {
 const extend: ToolDef = {
   id: 'extend',
   name: 'Extend',
-  promise: '+2, 4 or 5 s after the end: what happens next, from the last frame.',
+  promise: '+2, 4 or 5 s after the end: what happens next, carrying on the motion of the last frames.',
   icon: '⟶',
   sources: ['workArea', 'comp', 'layer'],
   defaults: { seconds: 2 },
   renders: false,
   plan(src, o, manifest) {
     const seconds = opt(o, 'seconds', EXTEND_SECONDS, 2);
-    const workflowId = 'ltx25-i2v';
-    const m = manifest(workflowId);
+    const fps = src.kind === 'layer' ? src.fps : src.compFps ?? src.fps;
+    const [inPoint, out] = src.span ?? [0, src.seconds];
+    // The video guide: the source's last 17 (or 9) frames, when it is footage that has them and the workflow is here.
+    const guided = manifest('ltx25-extend');
+    const available = Math.floor((out - inPoint) * fps + 1e-3);
+    const guide = src.media === 'video' && guided?.guide ? extendGuide(available, guided.guide.frames) : undefined;
+    const workflowId = guide ? 'ltx25-extend' : 'ltx25-i2v';
+    const m = guide ? guided : manifest(workflowId);
     const plan: ToolPlan = {
       ok: true, workflowId, jobs: [], makes: '', notes: [], warnings: [], action: `Extend by ${seconds} s`,
       prompt: { label: 'What happens next', placeholder: 'Describe the next seconds as one shot: what moves, how the camera moves, the sound.' },
-      params: { '@seconds': seconds }, variant: `+${seconds}`,
+      params: { '@seconds': seconds, ...(guide ? { '@guide': guide } : {}) }, variant: guide ? `+${seconds}·g${guide}` : `+${seconds}`,
     };
     if (src.media === 'none') return { ...plan, ok: false, reason: 'The selected layer has no footage file (a solid, text or a shape): pick a clip, the work area or the whole comp.' };
-    if (!m) return { ...plan, ok: false, reason: 'The LTX-2.5 image-to-video workflow is missing from workflows/.' };
-    const fps = src.kind === 'layer' ? src.fps : src.compFps ?? src.fps;
-    const [, out] = src.span ?? [0, src.seconds];
+    if (!m) return { ...plan, ok: false, reason: 'The LTX-2.5 workflows (ltx25-extend, ltx25-i2v) are missing from workflows/.' };
     const size = planSize(m, { width: src.width, height: src.height });
     if (!size) return { ...plan, ok: false, reason: 'The source has no size.' };
-    const frames = ltxExtendFrames(seconds, fps);
+    const frames = guide ? ltxGuidedFrames(seconds, fps, guide) : ltxExtendFrames(seconds, fps);
     const lengthened = src.compSeconds !== undefined && out + seconds > src.compSeconds + 1e-3;
     plan.output = { width: size.width, height: size.height, seconds, fps };
     plan.jobs = [{ workflowId, seconds: frames / fps }];
-    plan.makes = `A new layer at ${fmt(out)} — the ${what(src)}'s out point — for ${seconds} s: LTX-2.5 carries on from the frame at ${Math.max(0, out - 1 / fps).toFixed(2)} s, `
-      + `at ${size.width}×${size.height}, ${Math.round(fps * 100) / 100} fps, ${src.kind === 'layer' ? 'laid over the clip\'s own size' : 'scaled to cover the comp'}. Your ${what(src)} is untouched.`;
-    plan.notes.push(`${frames} frames (LTX makes 8k + 1); the first repeats your last frame and is trimmed off, the layer ends after ${seconds} s.`);
+    const lay = src.kind === 'layer' ? 'laid over the clip at its own size' : 'laid over the comp at its size';
+    if (guide) {
+      const motion = Math.round((guide / fps) * 10) / 10;
+      plan.motion = { frames: guide, seconds: guide / fps };
+      plan.makes = `A new layer at ${fmt(out)} — the ${what(src)}'s out point — for ${seconds} s that continues the last ${motion.toFixed(1)} s of motion: `
+        + `LTX-2.5 at ${size.width}×${size.height}, ${Math.round(fps * 100) / 100} fps, ${lay}. Your ${what(src)} is untouched.`;
+      plan.notes.push(`Continues the last ${motion.toFixed(1)} s of motion: your ${what(src)}'s last ${guide} frames (${Math.max(0, out - guide / fps).toFixed(2)}–${out.toFixed(2)} s) guide the model from the first frame of the new clip (LTXVAddGuide), so speed and direction carry on.`);
+      plan.notes.push(`${frames} frames: those ${guide} come back first and are trimmed off, then ${frames - guide} new ones; the layer ends after ${seconds} s.`);
+    } else {
+      plan.makes = `A new layer at ${fmt(out)} — the ${what(src)}'s out point — for ${seconds} s: LTX-2.5 carries on from the frame at ${Math.max(0, out - 1 / fps).toFixed(2)} s, `
+        + `at ${size.width}×${size.height}, ${Math.round(fps * 100) / 100} fps, ${src.kind === 'layer' ? 'laid over the clip\'s own size' : 'scaled to cover the comp'}. Your ${what(src)} is untouched.`;
+      plan.notes.push(`${frames} frames (LTX makes 8k + 1); the first repeats your last frame and is trimmed off, the layer ends after ${seconds} s.`);
+      if (src.media === 'image') plan.notes.push('A still: the new clip starts from the still itself (one frame, no motion to carry on).');
+      else if (!guided?.guide) plan.notes.push('From the last frame only: the video-guided workflow (ltx25-extend) is not in workflows/.');
+      else plan.notes.push(`From the last frame only: the ${what(src)} has ${available} frame${available === 1 ? '' : 's'}, fewer than the 9 a motion guide needs.`);
+    }
     if (lengthened) plan.notes.push(`The comp gets longer to hold it: ${fmt(src.compSeconds!)} → ${fmt(out + seconds)}.`);
-    if (src.media === 'image') plan.notes.push('A still: the new clip starts from the still itself.');
     plan.notes.push('LTX-2.5 makes sound too: the new layer has its own audio track.');
     return plan;
   },
@@ -323,7 +356,8 @@ const slowmo: ToolDef = {
   defaults: { mode: 'slow2', engine: 'rife' },
   plan(src, o, manifest) {
     const mode = opt(o, 'mode', ['slow2', 'slow4', 'fps2'] as const, 'slow2');
-    const engine = opt(o, 'engine', ['rife', 'film', 'gimm'] as const, 'rife');
+    // RIFE (MIT) and FILM (Apache-2.0). GIMM-VFI (S-Lab 1.0, non-commercial) is not offered since 26 Oct.
+    const engine = opt(o, 'engine', ['rife', 'film'] as const, 'rife');
     const workflowId = `interp-${engine}`;
     const m = manifest(workflowId);
     const k = mode === 'slow4' ? 4 : 2;
@@ -343,12 +377,11 @@ const slowmo: ToolDef = {
     const out = interpolatedFrames(n, k);
     const seconds = out / fpsOut;
     plan.output = { width: src.width, height: src.height, seconds, fps: fpsOut };
-    const by = engine === 'rife' ? 'RIFE' : engine === 'film' ? 'FILM' : 'GIMM-VFI';
+    const by = engine === 'rife' ? 'RIFE' : 'FILM';
     plan.makes = mode === 'fps2'
       ? `A new comp at ${Math.round(fpsOut * 100) / 100} fps, ${src.width}×${src.height}: the same ${fmt(seconds)}, ${out} frames, every other one made by ${by}. The sound is kept.`
       : `A new comp, ${src.width}×${src.height} at ${Math.round(src.fps * 100) / 100} fps, ${fmt(seconds)} long (×${k}): ${out} frames, ${k - 1} of every ${k} made by ${by}. The sound is left out: it would not slow down with the picture.`;
     plan.notes.push(`${n} frames in → ${out} out ((n − 1) × ${k} + 1); your original goes into the comp too, switched off.`);
-    if (engine === 'gimm') plan.warnings.push('GIMM-VFI\'s licence (S-Lab License 1.0) allows non-commercial use only.');
     if (engine === 'film') plan.notes.push('FILM: the official template as it ships (ComfyUI core nodes).');
     return plan;
   },

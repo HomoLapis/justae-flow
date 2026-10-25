@@ -172,7 +172,7 @@ export class EffectCraftAdapter implements TimelineHost {
    * anchor, scale compensated for the new pixel size (an ×2 upscale lands at
    * half the scale), placed just above it. The source is left as it was.
    */
-  async matchLayer(targetLayer: number, targetItem: number, sourceLayer: number, sourceItem: number): Promise<void> {
+  async matchLayer(targetLayer: number, targetItem: number, sourceLayer: number, sourceItem: number, perAxis = false): Promise<void> {
     const [src, dst] = await Promise.all([this.itemInfo(sourceItem), this.itemInfo(targetItem)]);
     const get = (layer: number, path: string): Promise<number[] | null> =>
       this.exec<{ value: number[] }>('prop.get', { layer, path }).then((r) => r.value, () => null);
@@ -180,8 +180,9 @@ export class EffectCraftAdapter implements TimelineHost {
     const scale = await get(sourceLayer, 'transform/scale');
     const rot = await this.exec<{ value: number }>('prop.get', { layer: sourceLayer, path: 'transform/rotation' }).then((r) => r.value, () => null);
     const k = src?.width && dst?.width ? src.width / dst.width : 1;
+    const ky = perAxis && src?.height && dst?.height ? src.height / dst.height : k;
     if (pos) await this.exec('prop.set', { layer: targetLayer, path: 'transform/position', value: pos.slice(0, 2) }).catch(() => undefined);
-    if (scale) await this.exec('prop.set', { layer: targetLayer, path: 'transform/scale', value: scale.slice(0, 2).map((v) => Math.round(v * k * 1000) / 1000) }).catch(() => undefined);
+    if (scale) await this.exec('prop.set', { layer: targetLayer, path: 'transform/scale', value: [Math.round(scale[0] * k * 1000) / 1000, Math.round(scale[1] * ky * 1000) / 1000] }).catch(() => undefined);
     if (typeof rot === 'number' && rot !== 0) await this.exec('prop.set', { layer: targetLayer, path: 'transform/rotation', value: rot }).catch(() => undefined);
   }
 
@@ -192,6 +193,15 @@ export class EffectCraftAdapter implements TimelineHost {
     const k = Math.max(compW / info.width, compH / info.height);
     if (Math.abs(k - 1) < 1e-3) return;
     await this.exec('prop.set', { layer: layerId, path: 'transform/scale', value: [Math.round(k * 100000) / 1000, Math.round(k * 100000) / 1000] });
+  }
+
+  async fitComp(layerId: number, itemId: number, compW: number, compH: number): Promise<void> {
+    const info = await this.itemInfo(itemId);
+    if (!info?.width || !info.height) return;
+    const kx = compW / info.width;
+    const ky = compH / info.height;
+    if (Math.abs(kx - 1) < 1e-3 && Math.abs(ky - 1) < 1e-3) return;
+    await this.exec('prop.set', { layer: layerId, path: 'transform/scale', value: [Math.round(kx * 100000) / 1000, Math.round(ky * 100000) / 1000] });
   }
 
   async createPlaceholder(req: { name: string; width: number; height: number; fps: number; duration: number; time: number }): Promise<{ itemId: number; layerId: number }> {

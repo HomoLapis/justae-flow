@@ -316,7 +316,15 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
 
           {plan?.prompt && (
             <label className="block">
-              <span className="field-label">{plan.prompt.label}</span>
+              <span className="flex items-center justify-between gap-2">
+                <span className="field-label">{plan.prompt.label}</span>
+                {(plan.prompt.label === 'What happens next' || plan.prompt.label === 'Scene') && state.describe?.available && (
+                  <DescribeButton
+                    tool={tool.id} source={source} layerId={source === 'layer' ? state.picked?.layerId : undefined} cap={cap}
+                    model={state.describe.model} prompt={draft.prompt} setPrompt={(p) => set({ prompt: p })}
+                  />
+                )}
+              </span>
               <textarea
                 className="input resize-none text-xs leading-relaxed"
                 rows={plan.prompt.label === 'Scene' || plan.prompt.label === 'What happens next' ? 3 : 1}
@@ -357,10 +365,58 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
   );
 }
 
+/**
+ * "Describe the clip": Qwen3-VL on the local ComfyUI reads four frames of the source (the last 3 s for Extend, the
+ * whole span for a scene) and writes a paragraph into the prompt, for the user to edit. Nothing leaves the machine.
+ */
+function DescribeButton({ tool, source, layerId, cap, model, prompt, setPrompt }: {
+  tool: string; source: SourceKind; layerId?: number; cap: number; model?: string; prompt: string; setPrompt: (p: string) => void;
+}): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<{ before: string; secs: number | null; frames: number } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async (e: React.MouseEvent): Promise<void> => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await compApi.describe({ source, layerId, focus: tool === 'extend' ? 'end' : 'whole', cap });
+      setDone({ before: prompt, secs: r.executionMs !== null ? r.executionMs / 1000 : null, frames: r.frames });
+      setPrompt(tool === 'extend' ? `${r.text} Then: ` : r.text);
+    } catch (x) {
+      setErr(x instanceof Error ? x.message : String(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-ink-mute">
+      {done && !busy && (
+        <span className="truncate" data-testid="describe-done">
+          from {done.frames} frame{done.frames === 1 ? '' : 's'}{done.secs !== null ? ` · ${done.secs.toFixed(1)} s` : ''}
+          {' · '}<button type="button" className="underline hover:text-ink" onClick={(e) => { e.preventDefault(); setPrompt(done.before); setDone(null); }}>undo</button>
+        </span>
+      )}
+      {err && <span className="truncate text-err" title={err}>{err}</span>}
+      <button
+        type="button"
+        className="chip h-6 shrink-0 px-2 py-0 text-[11px]"
+        disabled={busy}
+        onClick={(e) => void go(e)}
+        title={`${tool === 'extend' ? 'Four frames of the last 3 s' : 'Four frames of the whole source'} → ${model ?? 'Qwen3-VL'} on your local ComfyUI writes what it sees into the prompt, for you to edit. Nothing leaves this machine.`}
+        data-testid="describe-clip"
+      >
+        {busy ? 'Describing…' : '✦ Describe the clip'}
+      </button>
+    </span>
+  );
+}
+
 function variantOf(r: CompRun): string {
   if (r.tool === 'reframe') return r.options.mode === 'crop' ? `crop:${String(r.options.aspect)}` : `${String(r.options.quality ?? 'draft')}:${String(r.options.aspect)}`;
   if (r.tool === 'upscale') return `x${Number(r.options.scale) === 4 ? 4 : 2}`;
-  if (r.tool === 'extend') return `+${Number(r.options.seconds) || 2}`;
+  if (r.tool === 'extend') return r.variant ?? `+${Number(r.options.seconds) || 2}`;
   if (r.tool === 'slowmo') return String(r.options.mode ?? 'slow2');
   return r.tool;
 }
@@ -464,7 +520,6 @@ function SlowmoControls({ options, setOpt, plan, fps }: { options: ToolOptions; 
         options={[
           { v: 'rife', label: 'RIFE', title: 'Fast, good on most shots (MIT)' },
           { v: 'film', label: 'FILM', title: 'The official ComfyUI template: core nodes, Google\'s FILM (Apache-2.0)' },
-          { v: 'gimm', label: 'GIMM-VFI', title: 'High quality on occlusions and crossing motion — non-commercial licence (S-Lab 1.0)' },
         ]}
         onChange={(v) => setOpt('engine', v)}
       />
@@ -583,8 +638,10 @@ function Advanced({ tool, draft, set, setOpt, plan }: {
           {tool === 'reframe' && ' · official template video_wan_vace_outpainting'}
           {tool === 'upscale' && ' · official template utility_seedvr2_3b_int8_upscale_video'}
           {tool === 'matte' && ' · official template utility_video_segment_sam3 (tracking)'}
-          {tool === 'extend' && ' · official template video_ltx2_5_i2v, from the last frame'}
-          {tool === 'slowmo' && ' · official template utility_video_frame_interpolation (RIFE and GIMM-VFI in place of its interpolator)'}
+          {tool === 'extend' && (plan?.workflowId === 'ltx25-extend'
+            ? ' · from the official template video_ltx2_5_flf2v: the last frames as a video guide (LTXVAddGuide at frame 0, LTXVCropGuides)'
+            : ' · official template video_ltx2_5_i2v, from the last frame')}
+          {tool === 'slowmo' && ' · official template utility_video_frame_interpolation (RIFE in place of its interpolator; FILM as it ships)'}
           {tool === 'social' && ' · one Reframe per format (video_wan_vace_outpainting), then SeedVR2'}
           . Every run keeps the graph it submitted and a job.json next to the project.
         </p>
@@ -672,9 +729,13 @@ function Preview({ tool, state, source, options, plan, frame, onRefresh }: {
     );
   } else if (tool === 'extend') {
     const s = Number(options.seconds) || 2;
+    const motion = plan?.ok ? plan.motion : undefined;
     to = (
-      <div className="flex flex-col justify-center gap-1 text-[11px]">
+      <div className="flex flex-col justify-center gap-1 text-[11px]" data-testid="extend-motion">
         <span className="font-mono text-ok">+{s} s</span>
+        {motion
+          ? <span className="text-[10px] text-ink">continues the last {(Math.round(motion.seconds * 10) / 10).toFixed(1)} s of motion</span>
+          : <span className="text-[10px] text-ink-mute">from the last frame</span>}
         <span className="text-[10px] text-ink-mute">a new layer from the out point</span>
       </div>
     );
@@ -781,7 +842,7 @@ const SOURCE_WORD: Record<SourceKind, string> = { workArea: 'work area', comp: '
 
 /** What tells two runs of one tool apart: Draft or Final, a crop, the engine. */
 function tagOf(r: CompRun): string | null {
-  if (r.tool === 'slowmo') return r.options.engine === 'gimm' ? 'GIMM-VFI' : r.options.engine === 'film' ? 'FILM' : 'RIFE';
+  if (r.tool === 'slowmo') return r.options.engine === 'gimm' ? 'GIMM-VFI (no longer offered)' : r.options.engine === 'film' ? 'FILM' : 'RIFE';
   // Runs made before the colour option (25 Oct) kept the template's "none": no tag rather than a wrong one.
   if (r.tool === 'upscale') return r.options.colour === undefined ? null : r.options.colour === 'model' ? 'Model colours' : 'Colours kept';
   if (r.tool !== 'reframe') return null;

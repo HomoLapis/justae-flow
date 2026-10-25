@@ -336,6 +336,30 @@ export class ComfyClient {
     }
   }
 
+  /** A job's entry in /api/history (null while it is not there yet): its status and its nodes' UI outputs. */
+  async history(jobId: string): Promise<{ status?: { status_str?: string; messages?: unknown[] }; outputs?: Record<string, Record<string, unknown>> } | null> {
+    const h = await this.json<Record<string, { status?: { status_str?: string; messages?: unknown[] }; outputs?: Record<string, Record<string, unknown>> }>>(
+      `/api/history/${encodeURIComponent(jobId)}`, { timeoutMs: 10_000 },
+    );
+    return h[jobId] ?? null;
+  }
+
+  /** The words of a describe job: wait for it in /api/history, then the text its PreviewAny node shows. */
+  async textOf(jobId: string, nodeId: string, timeoutMs = 600_000): Promise<string> {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      await sleep(1000);
+      let job;
+      try { job = await this.history(jobId); } catch { continue; }
+      if (!job) continue;
+      if (job.status?.status_str === 'error') throw new Error(describeHistoryError(job.status.messages));
+      const text = job.outputs?.[nodeId]?.text;
+      if (Array.isArray(text) && text.length) return text.map(String).join('\n');
+      if (job.status?.status_str === 'success') throw new Error('The describe job finished without text.');
+    }
+    throw new Error('The describe job did not finish in time.');
+  }
+
   async download(out: OutputFile): Promise<Uint8Array> {
     const q = new URLSearchParams({ filename: out.filename, subfolder: out.subfolder, type: out.type });
     const r = await this.req(`/api/view?${q.toString()}`, { timeoutMs: 600_000 });

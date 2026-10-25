@@ -41,6 +41,8 @@ export interface CompRun {
   options: ToolOptions;
   prompt: string;
   label: string;
+  variant?: string;
+  workflowId?: string;
   status: 'idle' | 'queued' | 'running' | 'done' | 'error' | 'canceled';
   error?: string;
   progress?: { value: number; max: number; phase: string; startedAt: number };
@@ -64,6 +66,8 @@ export interface CompState {
   /** The layer this tab picked as its source, if it is in the open comp. */
   picked: LayerSource | null;
   resultOf: { cardId: string; compId: number; compName: string | null } | null;
+  /** "Describe the clip" (Qwen3-VL on the local ComfyUI): offered only when its model file is there. */
+  describe?: { available: boolean; model?: string; reason?: string };
   tools: CompToolInfo[];
   runs: CompRun[];
   queue: { running: string | null; pending: string[] };
@@ -86,6 +90,9 @@ export interface ToolPlan {
   choices?: Record<string, string[]>;
   /** A pack: the runs it queues, in order. */
   members?: Array<{ tool: string; options: ToolOptions; plan: Omit<ToolPlan, 'source' | 'cap'> }>;
+  /** Extend: the source's last frames that guide the model (absent: it starts from one frame). */
+  motion?: { frames: number; seconds: number };
+  params?: ToolOptions;
   source: { kind: SourceKind; media: string; width: number; height: number; fps: number; seconds: number; requested: number; name: string };
   cap: number;
 }
@@ -179,6 +186,8 @@ export const compApi = {
   compare: (id: string, n?: number) => serverJson<{ showing: 'result' | 'original' }>('/api/comp/compare', { id, n }),
   open: (id: string, n?: number, which: 'result' | 'source' = 'result') => serverJson<{ ok: true }>('/api/comp/open', { id, n, which }),
   exportAlpha: (id: string, n?: number) => serverJson<{ path: string }>('/api/comp/export-alpha', { id, n }),
+  describe: (q: { source: SourceKind; layerId?: number; focus: 'end' | 'whole'; cap: number }) =>
+    serverJson<{ text: string; model: string; frames: number; times: number[]; executionMs: number | null; file: string }>('/api/comp/describe', q),
   cancel: (id: string) => serverJson<{ ok: true }>('/api/cancel', { id }),
   retry: (id: string) => serverJson<{ queued: number }>('/api/generate', { ids: [id] }),
   version: (id: string, n: number) => serverJson<{ ok: true }>(`/api/cards/${id}/version`, { n }),

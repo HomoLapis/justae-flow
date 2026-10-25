@@ -192,10 +192,15 @@ export interface TimelineHost extends HostBase {
   place(req: PlaceRequest): Promise<{ itemId: number; layerId: number }>;
   /** Swap the file under an item; the listed layers keep their on-screen box. */
   replaceFootage(itemId: number, file: string, layerIds?: number[]): Promise<void>;
-  /** Lay a result exactly over its source layer (position, rotation, scale for the new size). */
-  matchLayer(targetLayer: number, targetItem: number, sourceLayer: number, sourceItem: number): Promise<void>;
+  /**
+   * Lay a result exactly over its source layer (position, rotation, scale for the new size). perAxis: the width and
+   * the height are matched each on its own (a result made at a slightly different aspect, stretched back).
+   */
+  matchLayer(targetLayer: number, targetItem: number, sourceLayer: number, sourceItem: number, perAxis?: boolean): Promise<void>;
   /** Scale a placed layer so its media covers the comp frame. */
   coverComp(layerId: number, itemId: number, compW: number, compH: number): Promise<void>;
+  /** Scale a placed layer, width and height each on its own, so its media spans exactly the comp frame. */
+  fitComp(layerId: number, itemId: number, compW: number, compH: number): Promise<void>;
   createPlaceholder(req: { name: string; width: number; height: number; fps: number; duration: number; time: number }): Promise<{ itemId: number; layerId: number }>;
   sourceOfLayer(layerId: number): Promise<number | null>;
   itemInfo(itemId: number): Promise<ItemInfo | null>;

@@ -10,6 +10,8 @@
  *   POST /api/comp/compare          {id, n?} → original ⇄ result
  *   POST /api/comp/open             {id, n?, which?: result|source} → opens that comp in the host
  *   POST /api/comp/export-alpha     {id, n?} → a cut-out as ProRes 4444 with alpha
+ *   POST /api/comp/describe         {source, layerId?, focus: end|whole} → a paragraph about the clip (Qwen3-VL on the
+ *                                   local ComfyUI only), for the card's prompt
  *
  * Cancel is /api/cancel and a version is /api/cards/:id/version, as for every card.
  * Routes that queue work (which may spend credits) or write files want the page's
@@ -72,6 +74,9 @@ export function compRoutes(engine: Engine): Array<[string, RegExp, Handler]> {
       const { id, n, which } = await json<{ id: string; n?: number; which?: 'result' | 'source' }>(req);
       await engine.openResult(id, n, which === 'source' ? 'source' : 'result');
       send(res, 200, { ok: true });
+    }, true)],
+    ['POST', /^\/api\/comp\/describe$/, wrap(async (req, res) => {
+      send(res, 200, await engine.describeClip(await json<{ source: 'workArea' | 'comp' | 'layer'; layerId?: number; focus?: 'end' | 'whole'; cap?: number }>(req)));
     }, true)],
     ['POST', /^\/api\/comp\/export-alpha$/, wrap(async (req, res) => {
       const { id, n } = await json<{ id: string; n?: number }>(req);
