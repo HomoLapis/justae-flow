@@ -135,6 +135,20 @@ function sameOrigin(a: string, b: string): boolean {
 
 const TAIL = (s: string): string | null => (s.length >= 8 ? s.slice(-4) : null);
 
+/**
+ * A one-line secret file: its first non-blank line, trimmed (a byte-order mark
+ * or a trailing newline from a text editor included). '' when the file is
+ * missing, empty or blank.
+ */
+export function readSecret(file: string): string {
+  if (!existsSync(file)) return '';
+  try {
+    return readFileSync(file, 'utf8').split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export class ResourceRegistry {
   readonly dir: string;
   private file: string;
@@ -200,17 +214,16 @@ export class ResourceRegistry {
 
   /* ─── Secrets ──────────────────────────────────────────────────────── */
 
-  /** The platform API key: the key file, else COMFY_API_KEY in the environment (a headless setup). Never returned to a page. */
+  /**
+   * The platform API key: the key file, else COMFY_API_KEY in the environment (a headless setup). Never returned to a page.
+   * An empty or blank file is no key at all — a resource without one is "not set up", never a 401 waiting to happen.
+   */
   key(): string {
-    if (existsSync(this.keyFile)) {
-      const k = readFileSync(this.keyFile, 'utf8').split(/\r?\n/)[0]?.trim() ?? '';
-      if (k) return k;
-    }
-    return process.env.COMFY_API_KEY?.trim() ?? '';
+    return readSecret(this.keyFile) || (process.env.COMFY_API_KEY?.trim() ?? '');
   }
 
   proxyToken(): string {
-    return existsSync(this.proxyFile) ? (readFileSync(this.proxyFile, 'utf8').split(/\r?\n/)[0]?.trim() ?? '') : '';
+    return readSecret(this.proxyFile);
   }
 
   private writeSecret(file: string, value: string | null): void {

@@ -8,7 +8,7 @@
  */
 
 import { createServer, type IncomingMessage, type Server } from 'node:http';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { centsToCredits, creditsFor, describeEstimate, estimateRun, GPUS, sumEstimates, type RunRecord } from '../core/cost/estimate.ts';
@@ -225,6 +225,23 @@ export async function resourceChecks(check: Check, until: (fn: () => boolean, ms
   check('a refused key is said plainly, with no balance', !c3.ok && /not accepted/.test(c3.error ?? '') && c3.credits === null);
   reg.update({ apiKey: null });
   check('removing the key deletes its file', !existsSync(join(dir, 'comfy-api-key.txt')) && !reg.view().key.set);
+  {
+    // A key file the user created but has not filled yet (or filled with blanks) is no key at all.
+    const savedEnv = process.env.COMFY_API_KEY;
+    delete process.env.COMFY_API_KEY;
+    for (const body of ['', '\r\n', '   \n\t\n']) {
+      writeFileSync(join(dir, 'comfy-api-key.txt'), body);
+      const cloudNow = reg.view().resources.find((r) => r.id === 'cloud')!;
+      const c = await new Credits(reg, v2.url).get(true);
+      const before = v2.seen.length;
+      check(`an empty key file (${JSON.stringify(body)}) is no key: Cloud "not set up", no call made, no 401`,
+        !reg.view().key.set && !cloudNow.usable && /no API key/.test(cloudNow.reason ?? '') && !c.ok && /No API key/.test(c.error ?? '') && v2.seen.length === before);
+    }
+    writeFileSync(join(dir, 'comfy-api-key.txt'), '﻿\n  ' + FAKE_KEY + '  \r\n');
+    check('a key with a byte-order mark, a blank first line and spaces is read as the key', reg.key() === FAKE_KEY);
+    writeFileSync(join(dir, 'comfy-api-key.txt'), '');
+    if (savedEnv !== undefined) process.env.COMFY_API_KEY = savedEnv;
+  }
 
   v2.close();
 }

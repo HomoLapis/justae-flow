@@ -21,11 +21,12 @@
  * keep the output out of the repository.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir } from '../server/config.ts';
+import { readSecret } from '../server/resources.ts';
 
 const CLOUD_BASE = 'https://cloud.comfy.org';
 
@@ -54,7 +55,8 @@ const out = outArg > 0 ? process.argv[outArg + 1] : join(tmpdir(), 'JustAE Flow'
 mkdirSync(out, { recursive: true });
 
 const keyFile = join(configDir(), 'comfy-api-key.txt');
-const key = existsSync(keyFile) ? readFileSync(keyFile, 'utf8').split(/\r?\n/)[0].trim() : '';
+// A missing, empty or blank file is no key: then only the public endpoints are probed.
+const key = readSecret(keyFile);
 
 interface Answer { path: string; status: number; ms: number; body: unknown; text: string }
 
