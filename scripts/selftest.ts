@@ -23,8 +23,8 @@ import { getRef, modelFamily, planLength, planSize, resolveModels, setRef, split
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import type { CardStatus } from '../core/storyboard/types.ts';
 import type { Box, CanvasHost, CanvasPlaceRequest, CompRequest, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, RenderRequest, RenderResult, TimelineHost } from '../hosts/types.ts';
-import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, vaceGenSize } from '../core/reframe/outpaint.ts';
-import { toolById } from '../core/comp/tools.ts';
+import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, SEAM_GUARD, vaceGenSize } from '../core/reframe/outpaint.ts';
+import { KEEP_COLOUR_DEFAULT, ltxExtendFrames, toolById } from '../core/comp/tools.ts';
 import { compRoutes } from '../server/api-comp.ts';
 import type { Settings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
@@ -133,7 +133,12 @@ function maskPng(w: number, h: number, block: [number, number, number, number] |
 }
 {
   const p = planOutpaint({ width: 1344, height: 768, fps: 24, frames: 124 }, [720, 1280], DELIVERY['9:16'], 81);
-  check('outpaint 9:16: the clip fills the width, the space above and below is to be generated', p.scaled[0] === 720 && p.scaled[1] === 411 && p.pad[0] === 0 && p.pad[2] === 0 && p.pad[1] + p.pad[3] === 1280 - 411);
+  check('outpaint 9:16: the clip fills the width, the space above and below is to be generated', p.scaled[0] === 720 && p.scaled[1] === 411 && p.pad[0] === 0 && p.pad[2] === 0 && p.pad[1] + p.pad[3] === 1280 - 411 + p.inset[1] + p.inset[3]);
+  // The seam fix (26 Oct): the model is shown the clip less a margin where it meets new space, so its own edge
+  // (a bright line on the 21:9 draft of 25 Oct) lies under the opaque original in the comp.
+  const featherGen = p.feather * (720 / 1344);
+  check('outpaint: the model\'s edge is inside the clip by its soft edge (1.5 × feather) plus the guard, top and bottom only',
+    p.inset[0] === 0 && p.inset[2] === 0 && p.inset[1] === Math.ceil(1.5 * featherGen) + SEAM_GUARD && p.inset[3] === p.inset[1]);
   check('outpaint: a long clip in chained runs on the model\'s 4k+1 lattice, each carrying on from the last',
     JSON.stringify(p.segments) === JSON.stringify([{ start: 0, take: 81, frames: 81, overlap: 0 }, { start: 81, take: 43, frames: 53, overlap: 8 }]) && !p.cut && Math.abs(p.seconds - 124 / 24) < 1e-9);
   check('outpaint: a short clip is one run', JSON.stringify(planOutpaint({ width: 1344, height: 768, fps: 24, frames: 50 }, [720, 1280], DELIVERY['9:16'], 81).segments) === JSON.stringify([{ start: 0, take: 50, frames: 53, overlap: 0 }]));
@@ -149,7 +154,7 @@ function maskPng(w: number, h: number, block: [number, number, number, number] |
     check('the parts are joined without the frames they repeat', j['22'].inputs.batch_index === 8 && j['22'].inputs.length === 43 && JSON.stringify(j['1'].inputs.images) === '["23",0]' && j['1'].inputs.fps === 24);
   }
   check('outpaint: in the 1080×1920 comp the clip spans the width, centred where the model saw it',
-    Math.abs(p.clipScale - 1080 / 1344 * 100) < 0.01 && Math.abs(p.clipCentre[0] - 540) < 0.01 && Math.abs(p.clipCentre[1] - (p.pad[1] + 411 / 2) * 1.5) < 0.01 && p.bgScale === 150);
+    Math.abs(p.clipScale - 1080 / 1344 * 100) < 0.01 && Math.abs(p.clipCentre[0] - 540) < 0.01 && Math.abs(p.clipCentre[1] - (p.pad[1] - p.inset[1] + 411 / 2) * 1.5) < 0.01 && p.bgScale === 150);
   check('outpaint: the soft edge stays inside the clip where it meets new space, and off its outer edges',
     p.mask[1] > 0 && p.mask[1] + p.mask[3] < 768 && p.mask[0] < 0 && p.mask[0] + p.mask[2] > 1344);
   let same = false;
@@ -255,15 +260,18 @@ class FakeHost implements TimelineHost {
   mattes: Array<[number, number, string]> = [];
   reframes: ReframeRequest[] = [];
   outpaints: OutpaintRequest[] = [];
+  duration = 12;
+  frames: Array<{ time: number; out: string }> = [];
   async snapshot(): Promise<HostSnapshot> {
     return {
       app: 'effectcraft', version: 'fake', project: { path: join(projectDir, 'p.ecproj'), dirty: false },
-      comp: { id: this.compId, name: 'Comp', width: 1280, height: 720, fps: 24, duration: 12, workArea: this.workArea ?? [0, 12] },
+      comp: { id: this.compId, name: 'Comp', width: 1280, height: 720, fps: 24, duration: this.duration, workArea: this.workArea ?? [0, this.duration] },
       markers: this.markers.map((m, index) => ({ ...m, index })), layers: this.layers.map(({ item: _i, visible: _v, ...l }) => l),
       selectedLayers: this.selected, time: 0,
     };
   }
-  async frameAt(_t: number, out: string): Promise<string> { (await import('node:fs')).writeFileSync(out, 'png'); return out; }
+  async frameAt(t: number, out: string): Promise<string> { this.frames.push({ time: t, out }); (await import('node:fs')).writeFileSync(out, 'png'); return out; }
+  async setCompDuration(s: number): Promise<void> { this.duration = s; }
   async tagMarker(i: number, id: string): Promise<void> { this.markers[i].cardId = id; }
   async setMarkerComment(i: number, c: string): Promise<void> { this.markers[i].comment = c; }
   async setStatus(t: { markerIndex?: number; layerId?: number }, s: CardStatus): Promise<void> { this.labels.push(`${t.markerIndex ?? ''}/${t.layerId ?? ''}:${s}`); if (t.markerIndex !== undefined) this.markers[t.markerIndex].label = s; }
@@ -290,12 +298,19 @@ class FakeHost implements TimelineHost {
   }
   async sourceOfLayer(id: number): Promise<number | null> { return this.layers.find((l) => l.id === id)?.item ?? null; }
   async itemInfo(id: number): Promise<ItemInfo | null> { const it = this.items.get(id); return it ? { id, name: 'x', path: it.path, kind: 'video', width: it.width, height: it.height, duration: it.duration ?? 4, frameRate: 24, comment: '' } : null; }
+  /** A render that is a real (tiny) movie, for the ffmpeg masters. */
+  realRender = false;
   async renderRange(r: RenderRequest): Promise<RenderResult> {
     this.renders.push(r);
     const fs = await import('node:fs');
     fs.mkdirSync(r.dir, { recursive: true });
     const path = join(r.dir, `${r.name}.mp4`);
-    fs.writeFileSync(path, 'fake-render');
+    if (this.realRender) {
+      const { spawnSync } = await import('node:child_process');
+      spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=64x36:rate=24', '-t', '0.5', '-pix_fmt', 'yuv420p', path]);
+    } else {
+      fs.writeFileSync(path, 'fake-render');
+    }
     return { path, start: r.start, duration: Math.min(r.duration, r.cap), capped: r.duration > r.cap };
   }
   async importFile(path: string): Promise<number> {
@@ -527,7 +542,9 @@ console.log('comp tab');
   }
   check('the auto crop offers the same six formats', JSON.stringify(library.get('sam3-reframe')!.manifest.params?.[0].options) === JSON.stringify([...REFRAME_ASPECTS]) && Math.abs(ASPECTS['21:9'] - 7 / 3) < 1e-9);
   const wide = planOutpaint({ width: 1280, height: 704, fps: 24, frames: 72 }, vaceGenSize('21:9', '1.3b'), DELIVERY['21:9'], 125);
-  check('21:9 from a 1280×704 clip: the new space left and right, the clip the full height', wide.scaled[1] === 432 && wide.pad[1] === 0 && wide.pad[3] === 0 && wide.pad[0] + wide.pad[2] === 1008 - wide.scaled[0] && wide.bgScale === 250);
+  check('21:9 from a 1280×704 clip: the new space left and right, the clip the full height', wide.scaled[1] === 432 && wide.pad[1] === 0 && wide.pad[3] === 0 && wide.pad[0] + wide.pad[2] === 1008 - wide.scaled[0] + wide.inset[0] + wide.inset[2] && wide.bgScale === 250);
+  // The case of 25 Oct: the clip at x 111–895 of 1008; the model now sees it from x 111 + 28 to 895 − 28.
+  check('21:9: the model is shown the clip less 28 px left and right (the seam lands under the original)', JSON.stringify(wide.inset) === '[28,0,28,0]' && wide.pad[0] === 139 && wide.pad[2] === 140);
 
   // Plans, before anything runs.
   const man = (id: string) => library.get(id)?.manifest;
@@ -588,7 +605,7 @@ console.log('comp tab');
   await until(() => engine.state().cards.find((c) => c.id === rfId)?.versions.length === 2);
   check('the same reframe again is the same card\'s next version, "Comp · 9:16 v2"', again.id === rfId && host.outpaints.at(-1)?.name === 'Comp · 9:16 v2', `${again.id} ${rfId} ${host.outpaints.at(-1)?.name} ${engine.state().cards.find((c) => c.id === rfId)?.status} ${engine.state().cards.find((c) => c.id === rfId)?.error}`);
   const view = await engine.compView();
-  check('the Comp tab view: comp, work area, the three tools, this run', view.comp?.workAreaSet === true && JSON.stringify(view.comp?.workArea) === '[1,4]' && view.tools.map((t) => t.id).join() === 'reframe,upscale,matte' && view.runs.some((r) => r.id === rfId && r.versions.length === 2));
+  check('the Comp tab view: comp, work area, the six tools, this run', view.comp?.workAreaSet === true && JSON.stringify(view.comp?.workArea) === '[1,4]' && view.tools.map((t) => t.id).join() === 'reframe,upscale,matte,extend,slowmo,social' && view.runs.some((r) => r.id === rfId && r.versions.length === 2));
 
   // Upscale from the selected layer (the clip, 1344×768): a new comp at 2688×1536, the original kept, switched off.
   await host.openComp(1);
@@ -671,6 +688,128 @@ console.log('comp tab');
     console.log('  · ffmpeg is not on the PATH: the alpha master is not checked here');
   }
 
+  /* ── Phase 3: the pinned layer source, Upscale colours, Extend, Slow motion / fps, Social pack ── */
+  console.log('comp tab, phase 3');
+  // The layer source stays the one picked: EffectCraft selects every result it places.
+  await host.openComp(1);
+  host.selected = [901];
+  await engine.sync();
+  const pickedView = await engine.compView(901);
+  host.selected = [];
+  host.layers.push({ id: 950, index: host.layers.length + 1, name: 'a result', in: 0, out: 4, start: 0, label: 'Green', type: 'Footage', item: 900, visible: true });
+  host.selected = [950];
+  await engine.sync();
+  const later = await engine.compView(901);
+  const pinnedPlan = await engine.planComp({ tool: 'upscale', source: 'layer', layerId: 901, options: { scale: 2 }, cap: 8 });
+  check('the picked layer stays the source when EffectCraft selects another layer (offered, not taken)',
+    pickedView.picked?.layerId === 901 && later.picked?.layerId === 901 && later.selected?.layerId === 950 && pinnedPlan.source.name === 'clip.mov' && JSON.stringify(pinnedPlan.source.span) === '[1.5,5]');
+  let gone = false;
+  try { await engine.planComp({ tool: 'upscale', source: 'layer', layerId: 777, options: {}, cap: 8 }); } catch (e) { gone = /no longer in this comp/.test(String(e)); }
+  check('a picked layer that is gone is said, never swapped for the selection', gone);
+  host.layers = host.layers.filter((l) => l.id !== 950);
+  host.selected = [];
+  await engine.sync();
+
+  // Upscale: "Keep original colours" is SeedVR2's own colour correction; the template's "none" is the model's colours.
+  const keep = toolById('upscale')!.plan(compSrc, { scale: 2 }, man);
+  const model = toolById('upscale')!.plan(compSrc, { scale: 2, colour: 'model' }, man);
+  const seedM = library.get('seedvr2-upscale')!.manifest;
+  check('the colour choices are SeedVR2PostProcessing\'s own, read from object_info when the manifest was built', JSON.stringify(seedM.params?.find((p) => p.label === 'Colour')?.options) === '["lab","wavelet","adain","none"]');
+  check('Upscale keeps the original colours by default (wavelet, measured closest); "model colours" is the template\'s none',
+    keep.params['66:59.color_correction_method'] === KEEP_COLOUR_DEFAULT && KEEP_COLOUR_DEFAULT === 'wavelet' && model.params['66:59.color_correction_method'] === 'none' && !keep.choices?.method.includes('none'));
+
+  // Extend.
+  check('LTX extend frames: 8k + 1, one more than shown (24 fps 2 s → 49, 25 fps → 57, 30 fps → 65, 5 s → 121)',
+    ltxExtendFrames(2, 24) === 49 && ltxExtendFrames(2, 25) === 57 && ltxExtendFrames(2, 30) === 65 && ltxExtendFrames(5, 24) === 121);
+  const extPlan = toolById('extend')!.plan({ ...compSrc, kind: 'comp', span: [0, 12], compSeconds: 12, compFps: 24 }, { seconds: 2 }, man);
+  check('the Extend plan: LTX-2.5 i2v, a layer at the out point, the comp lengthened, the frame it starts from',
+    extPlan.ok && extPlan.workflowId === 'ltx25-i2v' && /new layer at 12\.0 s/.test(extPlan.makes) && extPlan.notes.some((n) => /12\.0 s → 14\.0 s/.test(n)) && extPlan.output?.height === 704);
+  host.workArea = [1, 4];
+  await engine.sync();
+  const extWa = await engine.planComp({ tool: 'extend', source: 'workArea', options: { seconds: 2 }, cap: 1 });
+  check('Extend takes only a frame: the render cap is not warned about', extWa.ok && !extWa.warnings.some((w) => /render stops/.test(w)));
+  const beforeFrames = host.frames.length;
+  const { id: exId } = await engine.runCompTool({ tool: 'extend', source: 'workArea', options: { seconds: 2 }, cap: 8, prompt: 'the boat sails on' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === exId)?.status ?? ''));
+  const exc = engine.state().cards.find((c) => c.id === exId)!;
+  const exSent = submits.at(-1)!.prompt as never;
+  const ltxM = library.get('ltx25-i2v')!.manifest;
+  const exLayer = host.layers.find((l) => l.id === exc.placed?.layerId);
+  const lengthExpr = Object.values(exSent as Record<string, { class_type: string; inputs: Record<string, unknown> }>).find((n) => n.class_type === 'ComfyMathExpression' && Array.isArray(n.inputs['values.a']) && (n.inputs['values.a'] as unknown[])[0] === '398:362');
+  check('an Extend run finishes', exc.status === 'done' && exc.versions.length === 1, exc.error);
+  check('…from the work area\'s last frame (4 s − 1 frame), nothing rendered', host.frames.slice(beforeFrames).some((f) => Math.abs(f.time - (4 - 1 / 24)) < 1e-9) && host.renders.every((r) => !r.dir.endsWith(exId)));
+  check('…LTX-2.5 asked for exactly 49 frames at 24 fps, 1280×704, from the uploaded frame',
+    lengthExpr?.inputs.expression === '49' && getRef(exSent, ltxM.bindings.fps) === 24 && getRef(exSent, ltxM.bindings.width) === 1280 && getRef(exSent, ltxM.bindings.height) === 704 && getRef(exSent, ltxM.bindings.image) === 'uploaded.png');
+  check('…a new layer from the out point, its first frame (the repeat) trimmed off, 2 s long',
+    !!exLayer && exLayer.in === 4 && exLayer.out === 6 && Math.abs(exLayer.start - (4 - 1 / 24)) < 1e-9 && exc.versions[0].compare?.result[0][0] === exLayer.id);
+  host.workArea = undefined;
+  await engine.sync();
+  const { id: ex2 } = await engine.runCompTool({ tool: 'extend', source: 'comp', options: { seconds: 4 }, cap: 8, prompt: 'the boat sails on' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === ex2)?.status ?? ''));
+  check('Extend from the whole comp lengthens it: 12 s → 16 s, the layer at 12 s', host.duration === 16 && host.layers.some((l) => l.id === engine.state().cards.find((c) => c.id === ex2)?.placed?.layerId && l.in === 12 && l.out === 16));
+  host.duration = 12;
+  await engine.sync();
+
+  // Slow motion / fps.
+  const sp = toolById('slowmo')!.plan({ ...compSrc, seconds: 2 }, { mode: 'slow2', engine: 'rife' }, man);
+  check('slow ×2 plan: 48 frames → 95 ((n − 1) × 2 + 1), same rate, about twice as long, no sound',
+    sp.ok && sp.workflowId === 'interp-rife' && /95 frames/.test(sp.makes) && sp.output?.fps === 24 && Math.abs(sp.output.seconds - 95 / 24) < 1e-9 && sp.params['@audio'] === false && sp.params['16:9.value'] === 2 && sp.params['16:13.value'] === false);
+  const fp2 = toolById('slowmo')!.plan({ ...compSrc, fps: 25, seconds: 2 }, { mode: 'fps2', engine: 'film' }, man);
+  check('25 → 50 fps plan: the same length, sound kept, FILM is the template as it ships', fp2.ok && fp2.output?.fps === 50 && fp2.workflowId === 'interp-film' && fp2.params['16:13.value'] === true && fp2.params['@audio'] === true);
+  check('GIMM-VFI says its licence is non-commercial', toolById('slowmo')!.plan(compSrc, { engine: 'gimm' }, man).warnings.some((w) => /non-commercial/.test(w)));
+  check('the interpolation manifests: the official template, RIFE and GIMM-VFI in place of its interpolator',
+    ['interp-rife', 'interp-film', 'interp-gimm'].every((id) => library.get(id)?.manifest.source.template === 'utility_video_frame_interpolation')
+    && library.graph('interp-rife')!['16:2'].class_type === 'RIFE VFI' && library.graph('interp-gimm')!['16:2'].class_type === 'GIMMVFI_interpolate' && library.graph('interp-film')!['16:2'].class_type === 'FrameInterpolate');
+  const { id: smId } = await engine.runCompTool({ tool: 'slowmo', source: 'comp', options: { mode: 'slow2', engine: 'rife' }, cap: 8 });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === smId)?.status ?? ''));
+  const smc = engine.state().cards.find((c) => c.id === smId)!;
+  const smSent = submits.at(-1)!.prompt as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  check('slow ×2 runs: RIFE ×2, the frame rate not multiplied, the sound left out', smc.status === 'done' && smSent['16:9'].inputs.value === 2 && smSent['16:13'].inputs.value === false && !('audio' in smSent['16:5'].inputs), smc.error);
+  check('…into a new comp "Comp · ×2 slow" at 24 fps, the original under it switched off', host.comps.at(-1)?.name === 'Comp · ×2 slow' && host.comps.at(-1)?.fps === 24 && host.comps.at(-1)?.layers[1].visible === false);
+  const { id: fpsId } = await engine.runCompTool({ tool: 'slowmo', source: 'comp', options: { mode: 'fps2', engine: 'rife' }, cap: 8 });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === fpsId)?.status ?? ''));
+  const fpsSent = submits.at(-1)!.prompt as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  check('24 → 48 fps: a comp "Comp · 48 fps" at 48 fps, the sound kept', host.comps.at(-1)?.name === 'Comp · 48 fps' && host.comps.at(-1)?.fps === 48 && fpsSent['16:13'].inputs.value === true && 'audio' in fpsSent['16:5'].inputs);
+
+  // Social pack: the reframes in series, each one's upscale queued after it, one group.
+  const pack = toolById('social')!.plan(compSrc, { formats: '9:16,1:1,16:9', quality: 'draft', upscale: true }, man);
+  check('a pack plan leaves out the format the source already has, and lists reframe + upscale per format',
+    pack.ok && pack.members?.map((x) => `${x.tool}:${x.options.aspect ?? ''}`).join() === 'reframe:9:16,upscale:,reframe:1:1,upscale:' && pack.notes.some((n) => /16:9/.test(n)) && pack.jobs.length === 4);
+  const sub0 = submits.length;
+  const { id: gId, queued } = await engine.runCompTool({ tool: 'social', source: 'comp', options: { formats: '9:16,1:1', quality: 'draft', upscale: true, masters: 'none' }, cap: 8, prompt: 'a calm lake at dawn' });
+  // The upscales work on the result comps, so the sidecar (not the open comp's view) says when the pack is done.
+  const allCards = (): import('../core/storyboard/types.ts').Card[] => (engine as unknown as { sidecar: { cards: import('../core/storyboard/types.ts').Card[] } }).sidecar.cards;
+  await until(() => {
+    const g = allCards().filter((c) => c.tool?.group?.id === gId);
+    return g.length === 4 && g.every((c) => c.status === 'done' || c.status === 'error');
+  }, 60000);
+  const members = allCards().filter((c) => c.tool?.group?.id === gId);
+  const reframes = members.filter((c) => c.tool?.id === 'reframe');
+  const ups = members.filter((c) => c.tool?.id === 'upscale');
+  check('a Social pack queues one reframe per format (2), one after the other', queued === 2 && reframes.length === 2 && reframes.every((c) => c.status === 'done'), members.map((c) => `${c.tool?.id} ${c.status} ${c.error ?? ''}`).join('; '));
+  check('…and each reframe\'s result comp is upscaled ×2 after it, in the same group', ups.length === 2 && ups.every((u) => u.status === 'done' && reframes.some((r) => r.versions.at(-1)?.compId === u.compId))
+    && submits.slice(sub0).filter((x) => Object.values(x.prompt).some((n) => (n as { class_type: string }).class_type === 'SeedVR2PostProcessing')).length === 2,
+    `${ups.map((u) => `${u.status} ${u.compId} ${u.progress?.phase ?? ''} ${u.error ?? ''}`).join('; ')} | ${reframes.map((r) => r.versions.at(-1)?.compId).join(',')} | ${submits.length - sub0} ${submits.slice(sub0).map((x) => Object.values(x.prompt).map((n) => (n as { class_type: string }).class_type).filter((c) => /Vace|SeedVR2Post|LoadVideo/.test(c)).join('+')).join(' / ')}`);
+  const gv = await engine.compView();
+  check('the Comp tab shows the pack\'s four runs together (the upscales belong to other comps)', gv.runs.filter((r) => r.group?.id === gId).length === 4);
+  // A pack's master: EffectCraft renders the last comp, ffmpeg writes ProRes 4444 (only with ffmpeg on the PATH).
+  const { spawnSync: run } = await import('node:child_process');
+  if (run('ffmpeg', ['-version']).status === 0) {
+    host.realRender = true;
+    const { id: g2 } = await engine.runCompTool({ tool: 'social', source: 'comp', options: { formats: '9:16', quality: 'draft', upscale: false, masters: 'prores4444' }, cap: 8, prompt: 'a calm lake at dawn' });
+    await until(() => engine.state().cards.some((c) => c.tool?.group?.id === g2 && (c.status === 'done' || c.status === 'error') && (c.versions.at(-1)?.exports?.length || c.error)), 15000);
+    const mc2 = engine.state().cards.find((c) => c.tool?.group?.id === g2)!;
+    const ex = mc2.versions.at(-1)?.exports?.at(-1);
+    const probe = ex ? run('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name,profile', '-of', 'compact', ex.path], { encoding: 'utf8' }).stdout : '';
+    check('a pack with masters: the last comp rendered and written as ProRes 4444', !!ex && ex.kind === 'prores4444' && /prores/.test(probe) && /4444/.test(probe), mc2.error ?? probe);
+    host.realRender = false;
+  } else {
+    console.log('  · ffmpeg is not on the PATH: the pack master is not checked here');
+  }
+  host.workArea = [1, 4];
+  await host.openComp(1);
+  await engine.sync();
+
   // Relinking after a save: a reframe version must not take over the item a matte was placed on.
   host.relinks.length = 0;
   (engine as unknown as { relinkMoved(media: string): void }).relinkMoved(s.mediaDir);
@@ -700,7 +839,7 @@ console.log('comp routes');
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
   const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
   const get = await (await fetch(`${base}/api/comp`)).json() as { comp: { name: string; workArea: number[] }; tools: unknown[]; runs: unknown[] };
-  check('GET /api/comp: the comp with its work area, the tools, the runs', get.comp?.name === 'Comp' && get.comp.workArea[0] === 1 && get.tools.length === 3 && get.runs.length >= 4);
+  check('GET /api/comp: the comp with its work area, the tools, the runs', get.comp?.name === 'Comp' && get.comp.workArea[0] === 1 && get.tools.length === 6 && get.runs.length >= 4);
   const pl = await (await fetch(`${base}/api/comp/plan`, { method: 'POST', body: JSON.stringify({ tool: 'reframe', source: 'comp', options: { aspect: '4:3' }, cap: 8 }) })).json() as { ok: boolean; makes: string; warnings: string[] };
   check('POST /api/comp/plan: 4:3 from the whole comp, capped at 8 s, said', pl.ok && /1440×1080/.test(pl.makes) && pl.warnings.some((w) => /12\.0 s/.test(w)));
   const no = await fetch(`${base}/api/comp/run`, { method: 'POST', body: JSON.stringify({ tool: 'upscale', source: 'comp', options: { scale: 2 } }) });

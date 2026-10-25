@@ -8,7 +8,7 @@
  *   cuePoint) · comp.addMarker · file.import · layer.addItem · layer.timing ·
  *   file.replaceFootage · file.importPlaceholder · layer.revealSource ·
  *   item.metadata · edit.label · layer.setComment · layer.rename ·
- *   layer.setTrackMatte · comp.new · comp.open · prop.get · prop.set · prop.addKey ·
+ *   layer.setTrackMatte · comp.new · comp.open · comp.settings · prop.get · prop.set · prop.addKey ·
  *   layer.addMask · layer.mask.set · layer.setSwitch · footage.relink · script.run
  *   (the work-area render, through the host script's renderWorkAreaToFile)
  *
@@ -293,6 +293,11 @@ export class EffectCraftAdapter implements TimelineHost {
 
   async openComp(compId: number): Promise<void> {
     await this.exec('comp.open', { comp: compId });
+  }
+
+  /** comp.settings {duration} (Composition Settings…), on the active comp. */
+  async setCompDuration(seconds: number): Promise<void> {
+    await this.exec('comp.settings', { duration: seconds });
   }
 
   /**

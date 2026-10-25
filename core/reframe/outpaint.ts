@@ -69,7 +69,12 @@ export interface OutpaintPlan {
   gen: [number, number];
   /** The clip scaled into it… */
   scaled: [number, number];
-  /** …and the space around it: left, top, right, bottom. */
+  /**
+   * …of which the model is shown all but this margin on each side that meets new space (left, top, right,
+   * bottom; 0 where the clip meets the frame's own edge)…
+   */
+  inset: [number, number, number, number];
+  /** …and the space it fills around what it is shown: left, top, right, bottom (the margin included). */
   pad: [number, number, number, number];
   /** One run per segment; each later run starts from the last frames the one before made. */
   segments: Segment[];
@@ -100,6 +105,14 @@ export interface Segment {
 /** Frames carried from one run into the next. */
 export const OVERLAP = 8;
 
+/**
+ * How far past the clip's soft edge the model's own edge is kept, generation pixels. Measured on the 21:9 draft
+ * of 25 Oct (1008×432, clip 785×432 at x 111–895): the model drew a bright line 1–2 px wide at x 899–900, just
+ * outside the edge it was given, where the original never covers it (the left edge, at x 111, stayed clean).
+ * Whatever the model does at its edge now happens under the opaque part of the original.
+ */
+export const SEAM_GUARD = 8;
+
 export function planSegments(total: number, maxFrames: number, maxSegments: number, overlap = OVERLAP): Segment[] {
   const lattice = (n: number): number => 4 * Math.ceil((Math.max(1, n) - 1) / 4) + 1;
   const cap = 4 * Math.floor((maxFrames - 1) / 4) + 1;
@@ -128,7 +141,7 @@ export function planOutpaint(
   if (gw - sw < 8 && gh - sh < 8) throw new Error('The clip already has this shape: there is no new space to generate.');
   const left = Math.floor((gw - sw) / 2);
   const top = Math.floor((gh - sh) / 2);
-  const pad: [number, number, number, number] = [left, top, gw - sw - left, gh - sh - top];
+  const around: [number, number, number, number] = [left, top, gw - sw - left, gh - sh - top];
 
   const total = Math.max(1, Math.round(src.frames));
   const segments = planSegments(total, maxFrames, maxSegments);
@@ -139,8 +152,17 @@ export function planOutpaint(
   const sy = dh / gh;
   const clipScale = (sw * sx) / src.width;
   const feather = Math.max(4, Math.round(Math.min(src.width, src.height) * 0.03));
-  const padX = pad[0] + pad[2] >= 8;
-  const padY = pad[1] + pad[3] >= 8;
+  const padX = around[0] + around[2] >= 8;
+  const padY = around[1] + around[3] >= 8;
+  // The original's edge in the comp is soft: its mask sits feather/2 inside, feathered by `feather` (1.5 × feather
+  // of its own pixels until it is opaque, however the feather is spread about the mask's edge). The model's edge
+  // goes that far in, and SEAM_GUARD more. Only where the clip meets new space; a side on the frame's edge is whole.
+  const margin = Math.ceil(1.5 * feather * k) + SEAM_GUARD;
+  const inset: [number, number, number, number] = [
+    padX && around[0] > 0 ? margin : 0, padY && around[1] > 0 ? margin : 0,
+    padX && around[2] > 0 ? margin : 0, padY && around[3] > 0 ? margin : 0,
+  ];
+  const pad: [number, number, number, number] = [around[0] + inset[0], around[1] + inset[1], around[2] + inset[2], around[3] + inset[3]];
   const mask: [number, number, number, number] = [
     padX ? feather / 2 : -2 * feather,
     padY ? feather / 2 : -2 * feather,
@@ -148,7 +170,7 @@ export function planOutpaint(
     padY ? src.height - feather : src.height + 4 * feather,
   ];
   return {
-    gen, scaled: [sw, sh], pad, segments, seconds: covered / src.fps, cut: total > covered, delivery,
+    gen, scaled: [sw, sh], inset, pad, segments, seconds: covered / src.fps, cut: total > covered, delivery,
     bgScale: round3(Math.max(sx, sy) * 100),
     clipCentre: [round3((left + sw / 2) * sx), round3((top + sh / 2) * sy)],
     clipScale: round3(clipScale * 100),

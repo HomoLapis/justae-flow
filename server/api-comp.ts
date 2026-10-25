@@ -1,9 +1,10 @@
 /**
  * HTTP routes of the Flow window's Comp tab.
  *
- *   GET  /api/comp                  the active comp (size, fps, length, work area), the selected layer,
+ *   GET  /api/comp[?layer=<id>]     the active comp (size, fps, length, work area), the selected layer,
+ *                                   the layer the tab picked as its source (if it is in this comp),
  *                                   the tools, and the runs of this comp with their versions
- *   POST /api/comp/plan             {tool, source, options, cap} → what it would make, before it runs
+ *   POST /api/comp/plan             {tool, source, layerId?, options, cap} → what it would make, before it runs
  *   POST /api/comp/frame            {force?} → the comp's frame at the playhead (for the previews)
  *   POST /api/comp/run              {tool, source, options, cap, prompt, resource, seed} → queues it
  *   POST /api/comp/compare          {id, n?} → original ⇄ result
@@ -51,7 +52,10 @@ function wrap(fn: Handler, guard: boolean): Handler {
 
 export function compRoutes(engine: Engine): Array<[string, RegExp, Handler]> {
   return [
-    ['GET', /^\/api\/comp$/, wrap(async (_q, res) => send(res, 200, await engine.compView()), false)],
+    ['GET', /^\/api\/comp$/, wrap(async (_q, res, _m, url) => {
+      const layer = Number(url.searchParams.get('layer'));
+      send(res, 200, await engine.compView(Number.isInteger(layer) && layer > 0 ? layer : undefined));
+    }, false)],
     ['POST', /^\/api\/comp\/plan$/, wrap(async (req, res) => send(res, 200, await engine.planComp(await json<CompPlanRequest>(req))), false)],
     ['POST', /^\/api\/comp\/frame$/, wrap(async (req, res) => {
       const { force } = await json<{ force?: boolean }>(req);

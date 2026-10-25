@@ -44,6 +44,10 @@ export interface CompTool {
   plan?: { makes: string; width?: number; height?: number; seconds?: number; note?: string };
   /** The result's name: "<Comp> · 9:16". */
   label?: string;
+  /** A run queued by a pack (the Social pack): the pack's id and name; Results shows its runs together. */
+  group?: { id: string; label: string; at: string };
+  /** What follows when this run is done (the Social pack): an upscale of its result comp, and a master of the last comp. */
+  then?: { upscale?: boolean; masters?: 'none' | 'prores4444' | 'png16' };
 }
 
 /** Original/result, switched by showing and hiding layers (and a track matte), never by deleting anything. */

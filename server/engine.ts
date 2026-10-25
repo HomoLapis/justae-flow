@@ -18,13 +18,13 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative } from 'node:path';
 import { ComfyClient, type ComfyHealth } from '../core/comfy/client.ts';
 import type { ObjectInfo, OutputFile, WorkflowJson } from '../core/comfy/types.ts';
-import { getRef, planLength, planSize, resolveModels, setRef, type ModelCheck, type WorkflowManifest } from '../core/workflows/manifest.ts';
+import { getRef, planLength, planSize, resolveModels, setRef, splitRef, type ModelCheck, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { newCardId, type Box, type Card, type CardStatus, type CompareState, type Sidecar, type Version } from '../core/storyboard/types.ts';
 import { layerNameFromPrompt, slugFromPrompt } from '../core/lib/filenames.ts';
 import { decodePngGrey } from '../core/lib/png.ts';
 import { ASPECTS, planReframe, subjectOf, type ReframePlan, type Smoothing, type SubjectFrame } from '../core/reframe/plan.ts';
 import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/outpaint.ts';
-import { COMP_TOOLS, resultName, toolById, type SourceInfo, type SourceKind, type ToolOptions, type ToolPlan } from '../core/comp/tools.ts';
+import { COMP_TOOLS, ltxExtendFrames, resultName, toolById, type SourceInfo, type SourceKind, type ToolDef, type ToolOptions, type ToolPlan } from '../core/comp/tools.ts';
 import { EffectCraftAdapter } from '../hosts/effectcraft/adapter.ts';
 import { PhotoCraftAdapter } from '../hosts/photocraft/adapter.ts';
 import type { CanvasHost, HostAdapter, HostLayer, HostSnapshot, ItemInfo, TimelineHost } from '../hosts/types.ts';
@@ -101,6 +101,8 @@ export interface CompRunView {
   activeVersion: number | null;
   versions: Array<Pick<Version, 'n' | 'compId' | 'compName' | 'createdAt' | 'elapsedMs' | 'executionMs' | 'derivedCredits' | 'resource' | 'width' | 'height' | 'seconds' | 'exports'>
     & { thumb: string | null; showing: CompareState['showing'] | null; canExport: boolean; file: string }>;
+  /** A run of a pack (the Social pack): Results shows the pack's runs together. */
+  group?: { id: string; label: string; at: string };
   updatedAt: string;
 }
 
@@ -109,7 +111,13 @@ export interface CompView {
   host: { ok: boolean; app: string; error?: string; kind: 'timeline' | 'canvas' };
   comp: (NonNullable<HostSnapshot['comp']> & { workAreaSet: boolean }) | null;
   time: number;
-  selected: { layerId: number; name: string; media: SourceInfo['media']; width: number; height: number; fps: number; seconds: number; path: string | null } | null;
+  selected: LayerSourceView | null;
+  /**
+   * The layer the Comp tab picked as its source (GET /api/comp?layer=<id>), as the project has it now; null when
+   * it is not in this comp. A run keeps to it: EffectCraft selects every result it places, so "the selected
+   * layer" changes under the user's feet (25 Oct: a reframe ran on the ×2 result instead of the clip).
+   */
+  picked: LayerSourceView | null;
   /** The active comp is a result of one of the runs: where it came from. */
   resultOf: { cardId: string; compId: number; compName: string | null } | null;
   tools: Array<{ id: string; name: string; promise: string; icon: string; sources: SourceKind[]; defaults: ToolOptions }>;
@@ -118,10 +126,15 @@ export interface CompView {
   mediaDir: string;
 }
 
+/** A layer as a Comp tab source: its footage, as the project has it, and its span in the comp. */
+export interface LayerSourceView { layerId: number; name: string; media: SourceInfo['media']; width: number; height: number; fps: number; seconds: number; path: string | null; in: number; out: number }
+
 /** A plan request from the Comp tab. */
 export interface CompPlanRequest {
   tool: string;
   source: SourceKind;
+  /** source 'layer': the layer the Comp tab picked (default: the host's selection now). */
+  layerId?: number;
   options?: ToolOptions;
   /** The work-area render cap, seconds. */
   cap?: number;
@@ -942,12 +955,18 @@ export class Engine {
   private lastFrame: { key: string; at: number; view: { file: string; time: number; compId: number; rev: number } } | null = null;
   private frameRev = 0;
 
-  /** The (first) selected layer, with its footage as the project has it. Read again every few seconds at most. */
-  private async selectedInfo(): Promise<(NonNullable<CompView['selected']> & { itemId: number | null; label: string }) | null> {
+  /** The (first) selected layer, with its footage as the project has it. */
+  private async selectedInfo(): Promise<(LayerSourceView & { itemId: number | null; label: string }) | null> {
+    return this.layerInfo(this.snap?.selectedLayers[0]);
+  }
+
+  /** A layer of the active comp, with its footage as the project has it. Read again every few seconds at most. */
+  private async layerInfo(layerId: number | undefined): Promise<(LayerSourceView & { itemId: number | null; label: string }) | null> {
     const snap = this.snap;
-    const layerId = snap?.selectedLayers[0];
     if (!snap?.comp || layerId === undefined || this.host.kind !== 'timeline') return null;
     const layer = snap.layers.find((l) => l.id === layerId);
+    // Not in this comp (deleted, or another comp is open): not a source.
+    if (!layer) return null;
     let hit = this.selInfo.get(layerId);
     if (!hit || Date.now() - hit.at > 4000) {
       const itemId = await this.host.sourceOfLayer(layerId);
@@ -963,23 +982,33 @@ export class Engine {
     return {
       layerId, itemId: hit.itemId, name: layer?.name ?? info?.name ?? `Layer ${layerId}`, label: layer?.label ?? 'None', media,
       width: info?.width ?? 0, height: info?.height ?? 0, fps: info?.frameRate || snap.comp.fps,
-      seconds: info?.duration || (layer ? layer.out - layer.in : 0), path: info?.path ?? null,
+      seconds: info?.duration || layer.out - layer.in, path: info?.path ?? null, in: layer.in, out: layer.out,
     };
   }
 
   /** The input a Comp tab run would get from this source, as the host has it now. */
-  private async compSource(kind: SourceKind, cap: number): Promise<{ info: SourceInfo; range?: [number, number]; layer?: Awaited<ReturnType<Engine['selectedInfo']>> }> {
+  private async compSource(kind: SourceKind, cap: number, layerId?: number): Promise<{ info: SourceInfo; range?: [number, number]; layer?: Awaited<ReturnType<Engine['selectedInfo']>> }> {
     const comp = this.snap?.comp;
     if (!comp || this.host.kind !== 'timeline') throw new Error('Open a composition in EffectCraft first.');
     if (kind === 'layer') {
-      const sel = await this.selectedInfo();
-      if (!sel) throw new Error('Select a layer in EffectCraft first.');
-      return { info: { kind, media: sel.media, width: sel.width, height: sel.height, fps: sel.fps, seconds: sel.seconds, requested: sel.seconds, name: sel.name }, layer: sel };
+      // The layer the Comp tab picked — never whatever EffectCraft happens to have selected by now.
+      const sel = layerId !== undefined ? await this.layerInfo(layerId) : await this.selectedInfo();
+      if (!sel) throw new Error(layerId !== undefined ? 'The layer picked as the source is no longer in this comp: pick it again.' : 'Select a layer in EffectCraft first.');
+      return {
+        info: {
+          kind, media: sel.media, width: sel.width, height: sel.height, fps: sel.fps, seconds: sel.seconds, requested: sel.seconds, name: sel.name,
+          span: [sel.in, sel.out], compSeconds: comp.duration, compFps: comp.fps,
+        },
+        layer: sel,
+      };
     }
     const [s, e] = kind === 'workArea' ? (comp.workArea ?? [0, comp.duration]) : [0, comp.duration];
     const requested = Math.max(0, e - s);
     return {
-      info: { kind, media: 'video', width: comp.width, height: comp.height, fps: comp.fps, seconds: Math.min(requested, cap), requested, name: comp.name },
+      info: {
+        kind, media: 'video', width: comp.width, height: comp.height, fps: comp.fps, seconds: Math.min(requested, cap), requested, name: comp.name,
+        span: [s, e], compSeconds: comp.duration, compFps: comp.fps,
+      },
       range: [s, e],
     };
   }
@@ -990,9 +1019,10 @@ export class Engine {
     if (!tool) throw new Error(`No Comp tool "${req.tool}".`);
     if (!tool.sources.includes(req.source)) throw new Error(`${tool.name} does not work from that source.`);
     const cap = renderCap(req.cap);
-    const { info } = await this.compSource(req.source, cap);
+    const { info } = await this.compSource(req.source, cap, req.layerId);
     const plan = tool.plan(info, { ...tool.defaults, ...(req.options ?? {}) }, (id) => this.library.get(id)?.manifest);
-    if (req.source !== 'layer' && info.requested > cap + 1e-3) {
+    // Extend takes only the last frame: the render cap does not apply to it.
+    if (req.source !== 'layer' && tool.renders !== false && info.requested > cap + 1e-3) {
       plan.warnings.unshift(`The ${req.source === 'workArea' ? 'work area' : 'comp'} lasts ${info.requested.toFixed(1)} s: the render stops at ${cap} s (Work-area render cap).`);
     }
     if (req.source !== 'layer' && info.requested <= 0) return { ...plan, ok: false, reason: 'The work area has no length.', source: info, cap };
@@ -1017,11 +1047,38 @@ export class Engine {
     if (plan.prompt && !prompt) throw new Error(`Write the ${plan.prompt.label.toLowerCase()} first.`);
     if (req.resource && req.resource !== 'default' && req.resource !== 'auto' && !this.services.resources.get(req.resource)) throw new Error(`No resource "${req.resource}".`);
     const options = { ...tool.defaults, ...(req.options ?? {}) };
-    const src = await this.compSource(req.source, plan.cap);
+    const src = await this.compSource(req.source, plan.cap, req.layerId);
+    if (tool.id === 'social') {
+      // A pack: one run per format, queued one after the other; each one's upscale and master follow it (afterTool).
+      const group = { id: `g_${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`, label: resultName(req.source === 'layer' ? src.info.name : comp.name, 'social', options), at: new Date().toISOString() };
+      const then = { upscale: options.upscale === true, masters: (['prores4444', 'png16'].includes(String(options.masters)) ? options.masters : 'none') as 'none' | 'prores4444' | 'png16' };
+      const ids: string[] = [];
+      for (const member of plan.members ?? []) {
+        if (member.tool !== 'reframe') continue;
+        const card = this.compCard(toolById('reframe')!, req, member.plan, { ...toolById('reframe')!.defaults, ...member.options }, src, prompt, comp);
+        card.tool!.group = group;
+        card.tool!.then = then;
+        ids.push(card.id);
+      }
+      if (!ids.length) throw new Error('No format of this pack can be made from this source.');
+      this.changed(true);
+      return { id: group.id, queued: this.enqueue(ids) };
+    }
+    const card = this.compCard(tool, req, plan, options, src, prompt, comp);
+    this.changed(true);
+    return { id: card.id, queued: this.enqueue([card.id]) };
+  }
+
+  /**
+   * The card of a Comp tab run: one per tool, variant and source (and layer), so running the same thing again is
+   * its next version. Refuses one that is already queued or running.
+   */
+  private compCard(tool: ToolDef, req: CompPlanRequest & { resource?: string | null; seed?: number | null }, plan: ToolPlan, options: ToolOptions,
+    src: Awaited<ReturnType<Engine['compSource']>>, prompt: string, comp: NonNullable<HostSnapshot['comp']>): Card {
     const layerId = src.layer?.layerId;
     let card = this.sidecar.cards.find((c) => c.tool && c.compId === comp.id && c.tool.id === tool.id && c.tool.source === req.source
       && c.tool.variant === plan.variant && (req.source !== 'layer' || (c.origin.kind === 'layer' && c.origin.layerId === layerId)));
-    if (card && (card.status === 'queued' || card.status === 'running')) throw new Error('This one is already in the queue: cancel it first, or wait for it.');
+    if (card && (card.status === 'queued' || card.status === 'running')) throw new Error(`${resultName(req.source === 'layer' ? src.info.name : comp.name, tool.id, options, plan)} is already in the queue: cancel it first, or wait for it.`);
     const now = new Date().toISOString();
     if (!card) {
       let origin: Card['origin'];
@@ -1043,8 +1100,8 @@ export class Engine {
       card.origin.end = src.range![1];
     }
     card.tool = {
-      id: tool.id, source: req.source, options, cap: plan.cap, variant: plan.variant, compName: comp.name,
-      label: resultName(req.source === 'layer' ? src.info.name : comp.name, tool.id, options),
+      id: tool.id, source: req.source, options, cap: renderCap(req.cap), variant: plan.variant, compName: comp.name,
+      label: resultName(req.source === 'layer' ? src.info.name : comp.name, tool.id, options, plan),
       plan: { makes: plan.makes, width: plan.output?.width, height: plan.output?.height, seconds: plan.output?.seconds, note: plan.notes[0] },
     };
     card.prompt = prompt;
@@ -1053,8 +1110,7 @@ export class Engine {
     card.seed = typeof req.seed === 'number' && Number.isFinite(req.seed) ? Math.round(req.seed) : null;
     card.resource = req.resource && req.resource !== 'default' ? req.resource : undefined;
     card.updatedAt = now;
-    this.changed(true);
-    return { id: card.id, queued: this.enqueue([card.id]) };
+    return card;
   }
 
   private runView(c: Card): CompRunView {
@@ -1068,30 +1124,37 @@ export class Engine {
         seconds: v.seconds, exports: v.exports, file: v.file, thumb: v.thumb ?? null, showing: v.compare?.showing ?? null,
         canExport: v.workflowId === 'sam3-matte' && !!v.source?.file,
       })),
+      group: t.group,
       updatedAt: c.updatedAt,
     };
   }
 
   /** Everything the Comp tab shows. */
-  async compView(): Promise<CompView> {
+  async compView(pickedLayer?: number): Promise<CompView> {
     const st = this.state();
     const comp = this.snap?.comp ?? null;
     const selected = comp && this.host.kind === 'timeline' ? await this.selectedInfo().catch(() => null) : null;
+    const pickedInfo = comp && this.host.kind === 'timeline' && pickedLayer !== undefined
+      ? (pickedLayer === selected?.layerId ? selected : await this.layerInfo(pickedLayer).catch(() => null)) : null;
     // This comp's runs, the runs whose result is this comp — and every run still in the queue, wherever it is from.
     const mine = (c: Card): boolean => c.status === 'queued' || c.status === 'running'
       || (!!comp && (c.compId === comp.id || c.versions.some((v) => v.compId === comp.id || v.compare?.compId === comp.id)));
-    const runs = this.sidecar.cards.filter((c) => c.tool && mine(c)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => this.runView(c));
+    // A pack's runs stay together: its upscales belong to the reframes' comps, not to this one.
+    const groups = new Set(this.sidecar.cards.filter((c) => c.tool?.group && mine(c)).map((c) => c.tool!.group!.id));
+    const runs = this.sidecar.cards.filter((c) => c.tool && (mine(c) || (!!c.tool.group && groups.has(c.tool.group.id))))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => this.runView(c));
     const from = comp ? this.sidecar.cards.find((c) => c.tool && c.compId !== comp.id && c.versions.some((v) => v.compId === comp.id)) : undefined;
-    let sel: CompView['selected'] = null;
-    if (selected) {
-      const { itemId: _item, label: _label, ...rest } = selected;
-      sel = rest;
-    }
+    const bare = (x: typeof selected): LayerSourceView | null => {
+      if (!x) return null;
+      const { itemId: _item, label: _label, ...rest } = x;
+      return rest;
+    };
     return {
       host: { ok: st.host.ok, app: st.host.app, error: st.host.error, kind: st.host.kind },
       comp: comp ? { ...comp, workAreaSet: !!comp.workArea && (comp.workArea[0] > 1e-3 || comp.workArea[1] < comp.duration - 1e-3) } : null,
       time: this.snap?.time ?? 0,
-      selected: sel,
+      selected: bare(selected),
+      picked: bare(pickedInfo),
       resultOf: from ? { cardId: from.id, compId: from.compId, compName: from.tool?.compName ?? null } : null,
       tools: this.host.kind === 'timeline' ? COMP_TOOLS.map(({ id, name, promise, icon, sources, defaults }) => ({ id, name, promise, icon, sources, defaults })) : [],
       runs,
@@ -1186,8 +1249,8 @@ export class Engine {
   }
 
   enqueue(ids?: string[]): number {
-    const pool = this.state().cards.filter((c) => !c.orphan);
-    const chosen = ids?.length ? pool.filter((c) => ids.includes(c.id)) : this.pendingCards();
+    // Cards named by id may belong to another comp than the open one (a pack's upscale works on a result comp).
+    const chosen = ids?.length ? this.sidecar.cards.filter((c) => !c.orphan && ids.includes(c.id)) : this.pendingCards();
     let n = 0;
     for (const c of chosen) {
       if (this.queue.includes(c.id) || this.running?.cardId === c.id) continue;
@@ -1264,6 +1327,17 @@ export class Engine {
     this.running = { cardId: next, jobId: null, stop: null, cancelled: false, runner: null, why: '', meter: { executionMs: 0, credits: 0, timed: false, billed: false }, graphs: [] };
     try {
       await this.generate(card);
+      // A pack's run is followed by its upscale, or by the master of its last comp. If that fails, the run itself
+      // still stands: the card stays done and says what did not follow.
+      if (card.status === 'done' && card.tool?.then) {
+        try {
+          await this.afterTool(card);
+        } catch (e) {
+          if (this.running?.cancelled) throw e;
+          card.error = `Done, but what follows did not: ${e instanceof Error ? e.message : String(e)}`;
+          this.notice = `${card.tool.label ?? 'A pack run'}: ${card.error}`;
+        }
+      }
     } catch (e) {
       if (!this.running?.cancelled) {
         card.status = 'error';
@@ -1682,6 +1756,8 @@ export class Engine {
   /** A Comp tab run: its source first, then what its tool makes of it. */
   private async generateTool(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, t0: number): Promise<void> {
     const m = entry.manifest;
+    // Extend needs only the source's last frame, not a render of it.
+    if (card.tool?.id === 'extend') return this.extendTool(card, entry, api, seed, t0);
     const src = await this.toolClip(card);
     if (m.task === 'outpaint-video') return this.outpaint(card, entry, api, seed, t0, src);
     this.phase(card, 'Uploading');
@@ -1690,7 +1766,246 @@ export class Engine {
     if (m.task === 'reframe') return this.reframe(card, entry, api, seed, models, t0, src);
     if (m.task === 'upscale-video') return this.upscaleToComp(card, entry, api, seed, models, t0, src);
     if (m.task === 'matte-video') return this.matteTool(card, entry, api, seed, models, t0, src);
+    if (m.task === 'interpolate-video') return this.interpolateTool(card, entry, api, seed, models, t0, src);
     throw new Error(`${m.title} is not one of the Comp tab's tools.`);
+  }
+
+  /**
+   * Extend: the source's last frame into LTX-2.5 image-to-video, and the clip that comes back as a new layer that
+   * starts at the source's out point — in the same comp, the source untouched. The first generated frame repeats
+   * the last one of the source, so it is trimmed off: the layer starts one frame early and its in point is the
+   * out point. A comp too short to hold it is lengthened.
+   */
+  private async extendTool(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, t0: number): Promise<void> {
+    const host = this.tl();
+    const m = entry.manifest;
+    await this.ensureComp(card.compId);
+    const comp = this.snap?.comp;
+    if (!comp || comp.id !== card.compId) throw new Error('The comp this run is for is not open in EffectCraft.');
+    const seconds = Number(card.tool?.options.seconds) || 2;
+    const n = (card.versions.at(-1)?.n ?? 0) + 1;
+    const dir = join(this.mediaDir, card.id);
+    mkdirSync(dir, { recursive: true });
+    const frameRel = `${card.id}/last-frame_v${String(n).padStart(3, '0')}.png`;
+    let input = join(this.mediaDir, frameRel);
+    let out: number;
+    let fps: number;
+    let width: number;
+    let height: number;
+    let name: string;
+    let layer: HostLayer | undefined;
+    let item: number | undefined;
+    let how: string;
+    this.phase(card, 'Taking the last frame');
+    if (card.origin.kind === 'layer') {
+      const clip = await this.layerClip(card);
+      layer = this.snap?.layers.find((l) => l.id === (card.origin as { layerId: number }).layerId);
+      if (!layer) throw new Error('The layer this run is for is no longer in the comp.');
+      item = clip.itemId;
+      out = layer.out;
+      fps = clip.info.frameRate || comp.fps;
+      width = clip.info.width;
+      height = clip.info.height;
+      name = clip.name;
+      if (clip.info.kind === 'still' || /\.(png|jpe?g|webp|tiff?|exr|bmp)$/i.test(clip.path)) {
+        input = clip.path;
+        how = 'the still itself';
+      } else {
+        // The clip's own frame under its out point (its own pixels, not the comp's composite).
+        const at = Math.max(0, out - layer.start - 1 / fps);
+        if (await frameOf(clip.path, at, input)) how = `frame at ${at.toFixed(3)} s of ${basename(clip.path)} (ffmpeg)`;
+        else {
+          await host.frameAt(Math.max(layer.in, out - 1 / comp.fps), input);
+          how = 'the comp\'s frame under the out point (ffmpeg not on the PATH)';
+        }
+      }
+    } else if (card.origin.kind === 'comp') {
+      const [s, e] = card.origin.range === 'workArea' ? (comp.workArea ?? [0, comp.duration]) : [0, comp.duration];
+      card.origin.start = s;
+      card.origin.end = e;
+      out = e;
+      fps = comp.fps;
+      width = comp.width;
+      height = comp.height;
+      name = card.origin.range === 'workArea' ? `${comp.name} · work area ${secs(s)}–${secs(e)} s` : comp.name;
+      await host.frameAt(Math.max(s, e - 1 / fps), input);
+      how = `the comp's frame at ${(e - 1 / fps).toFixed(3)} s (render.frame)`;
+    } else {
+      throw new Error('Extend starts from the comp, its work area or a layer.');
+    }
+    this.throwIfCancelled();
+    const size = planSize(m, { width, height });
+    if (!size) throw new Error('The source has no size.');
+    setRef(api, m.bindings.width, size.width);
+    setRef(api, m.bindings.height, size.height);
+    setRef(api, m.bindings.fps, fps);
+    setRef(api, m.bindings.seconds, Math.ceil(seconds));
+    const frames = ltxExtendFrames(seconds, fps);
+    if (!setLtxLength(api, m, frames)) throw new Error(`${m.title}: no length to set (the seconds × fps + 1 expression is not in the graph).`);
+    this.phase(card, 'Uploading');
+    const upFile = input;
+    setRef(api, m.bindings.image, await this.runner().uploadFile(upFile, () => readFileSync(upFile), `flow_${card.id}${extname(upFile)}`, extname(upFile).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg'));
+    const models = this.checkModels(api, m);
+    const result = await this.runJob(card, api, m, undefined, this.meta(m, frames / fps));
+    const saved = this.saveVersion(card, m, result, slugFromPrompt(card.tool?.label ?? name, 28));
+
+    this.phase(card, 'Placing in EffectCraft');
+    await this.ensureComp(card.compId);
+    const before = this.snap?.comp?.duration ?? comp.duration;
+    const end = out + seconds;
+    let lengthened: [number, number] | undefined;
+    if (end > before + 1e-3) {
+      await host.setCompDuration(end);
+      lengthened = [before, end];
+      this.snap = await this.host.snapshot();
+    }
+    const comment = `${SLUG} card=${card.id} v${saved.n} · ${m.title} · +${seconds} s from ${secs(out)} s${seed !== null ? ` · seed ${seed}` : ''}\n${card.prompt}`;
+    let placedLayer: number;
+    const still = card.placed && this.snap?.layers.some((l) => l.id === card.placed!.layerId);
+    if (card.placed && still) {
+      // The next version replaces the footage of the layer it made; its place and timing stay.
+      await host.replaceFootage(card.placed.itemId, saved.abs, [card.placed.layerId]);
+      await host.setLayerComment(card.placed.layerId, comment).catch(() => undefined);
+      placedLayer = card.placed.layerId;
+    } else {
+      const placed = await host.place({
+        file: saved.abs, time: out, endTime: end, sourceStart: out - 1 / fps,
+        name: `${TAG} +${seconds} s · ${layerNameFromPrompt(card.prompt || name, 40)}`, comment, index: layer ? layer.index : 1,
+      });
+      card.placed = placed;
+      placedLayer = placed.layerId;
+      if (layer && item !== undefined) await host.matchLayer(placed.layerId, placed.itemId, layer.id, item).catch(() => undefined);
+      else await host.coverComp(placed.layerId, placed.itemId, comp.width, comp.height).catch(() => undefined);
+    }
+    card.placedVersion = saved.n;
+    const thumb = await this.resultThumb(card, saved.stem, out + seconds / 2);
+    this.notice = `Extended "${name}" by ${seconds} s: a new layer from ${secs(out)} s in "${comp.name}"`
+      + (lengthened ? `; the comp is now ${secs(lengthened[1])} s long (it was ${secs(lengthened[0])} s).` : '.');
+    this.recordVersion(card, m, {
+      n: saved.n, file: saved.rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed, width: size.width, height: size.height, seconds,
+      jobId: result.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0, remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`),
+      thumb, compName: comp.name,
+      source: { kind: card.origin.kind === 'layer' ? 'layer' : card.origin.range, file: input === join(this.mediaDir, frameRel) ? frameRel : input, start: out - 1 / fps, end: out, name },
+      compare: { compId: card.compId, showing: 'result', result: [[placedLayer, true]], original: [[placedLayer, false]] },
+    }, saved.stem, { comp: comp.name, tool: card.tool, at: out, seconds, frames, fps, lastFrame: how, lengthened, size: `${size.width}×${size.height}` });
+    await this.setHostStatus(card, 'done');
+  }
+
+  /**
+   * Slow motion / frame rate: the interpolated clip in a new comp — at the source's rate for slow motion (×2 or ×4
+   * as long), or at twice the rate (as long as before) — with the original under it, switched off.
+   */
+  private async interpolateTool(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, models: ModelCheck, t0: number, src: ClipSource): Promise<void> {
+    const host = this.tl();
+    const m = entry.manifest;
+    const it = m.interpolate;
+    if (!it) throw new Error(`${m.title} has no interpolation settings in its manifest.`);
+    const mode = String(card.tool?.options.mode ?? 'slow2');
+    const k = Number(getRef(api, it.multiplier)) || 2;
+    if (card.params['@audio'] === false) {
+      // Slow motion: the sound would not stretch with the picture.
+      const { nodeId, field } = splitRef(it.audio);
+      if (api[nodeId]) delete api[nodeId].inputs[field];
+    }
+    const srcFps = src.info.frameRate || this.snap?.comp?.fps || 24;
+    const result = await this.runJob(card, api, m, undefined, this.meta(m, src.info.duration || null));
+    const saved = this.saveVersion(card, m, result, slugFromPrompt(card.tool?.label ?? src.name, 28));
+
+    this.phase(card, 'Building the comp');
+    const upItem = await host.importFile(saved.abs);
+    const up = await host.itemInfo(upItem);
+    const fps = mode === 'fps2' ? srcFps * 2 : srcFps;
+    const inFrames = Math.max(1, Math.round((src.info.duration || 1) * srcFps));
+    const outFrames = up?.duration && up.frameRate ? Math.round(up.duration * up.frameRate) : (inFrames - 1) * k + 1;
+    const duration = up?.duration || outFrames / fps;
+    const width = up?.width || src.info.width;
+    const height = up?.height || src.info.height;
+    const compName = this.toolCompName(card, saved.n);
+    const by = /rife/.test(m.id) ? 'RIFE' : /gimm/.test(m.id) ? 'GIMM-VFI' : 'FILM';
+    const comment = `${SLUG} card=${card.id} v${saved.n} · ${m.title} · ${mode === 'fps2' ? `${srcFps} → ${fps} fps` : `×${k} slow`}`;
+    const built = await host.buildComp({
+      name: compName, width, height, fps, duration,
+      layers: [
+        { itemId: upItem, name: `${TAG} ${mode === 'fps2' ? `${Math.round(fps * 100) / 100} fps` : `×${k} slow`} · ${src.name}`, comment },
+        { itemId: src.itemId, name: `${src.name} (original)`, scale: Math.round((width / src.info.width) * 100000) / 1000, visible: false },
+      ],
+    });
+    const [upLayer, original] = built.layers;
+    const thumb = await this.resultThumb(card, saved.stem, duration / 2);
+    this.notice = mode === 'fps2'
+      ? `"${src.name}" at ${Math.round(fps * 100) / 100} fps in the new comp "${compName}": ${outFrames} frames, every other one made by ${by}.`
+      : `"${src.name}" ×${k} slower in the new comp "${compName}" (${secs(duration)} s, ${outFrames} frames by ${by}); your original is in it too, switched off.`;
+    this.recordVersion(card, m, {
+      n: saved.n, file: saved.rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed, width, height, seconds: duration,
+      jobId: result.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0,
+      remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId: built.compId, itemId: upItem,
+      thumb, compName, source: this.sourceRecord(src),
+      compare: { compId: built.compId, showing: 'result', result: [[upLayer, true], [original, false]], original: [[upLayer, false], [original, true]] },
+    }, saved.stem, { comp: compName, mode, multiplier: k, fps: { in: srcFps, out: fps }, frames: { in: inFrames, out: outFrames }, tool: card.tool, source: this.sourceRecord(src) });
+    await this.setHostStatus(card, 'done');
+  }
+
+  /**
+   * What follows a pack's run once it is done: a reframe's result comp is upscaled ×2 (a run of its own, queued
+   * behind the others), and the last comp of each format is written as a master (rendered by EffectCraft, ProRes
+   * 422 HQ, then ffmpeg: ProRes 4444 or a PNG 16-bit sequence), kept with that version.
+   */
+  private async afterTool(card: Card): Promise<void> {
+    const t = card.tool!;
+    const v = card.versions.at(-1);
+    if (!t.then || !v) return;
+    const resultComp = v.compId ?? v.compare?.compId;
+    if (t.id === 'reframe' && t.then.upscale && resultComp !== undefined) {
+      const upTool = toolById('upscale')!;
+      const options = { ...upTool.defaults, scale: 2 };
+      const w = v.compare ? DELIVERY[String(t.options.aspect)]?.[0] : undefined;
+      const h = v.compare ? DELIVERY[String(t.options.aspect)]?.[1] : undefined;
+      const seconds = v.seconds ?? t.plan?.seconds ?? 1;
+      const plan = upTool.plan({ kind: 'comp', media: 'video', width: w ?? 1080, height: h ?? 1920, fps: this.snap?.comp?.fps ?? 24, seconds, requested: seconds, name: v.compName ?? 'Comp' }, options, (id) => this.library.get(id)?.manifest);
+      if (!plan.ok) throw new Error(`The pack's upscale of "${v.compName}" cannot run: ${plan.reason}`);
+      const now = new Date().toISOString();
+      let up = this.sidecar.cards.find((c) => c.tool?.id === 'upscale' && c.compId === resultComp && c.tool.source === 'comp' && c.tool.variant === plan.variant);
+      if (up && (up.status === 'queued' || up.status === 'running')) return;
+      if (!up) {
+        up = {
+          id: newCardId(), compId: resultComp, origin: { kind: 'comp', range: 'comp', start: 0, end: seconds, width: w, height: h }, prompt: '', workflowId: plan.workflowId,
+          seed: null, params: {}, versions: [], activeVersion: null, status: 'idle', createdAt: now, updatedAt: now,
+        };
+        this.sidecar.cards.push(up);
+      } else if (up.origin.kind === 'comp') {
+        up.origin.end = seconds;
+      }
+      up.tool = {
+        id: 'upscale', source: 'comp', options, cap: t.cap, variant: plan.variant, compName: v.compName,
+        label: resultName(v.compName ?? 'Comp', 'upscale', options, plan),
+        plan: { makes: plan.makes, width: plan.output?.width, height: plan.output?.height, seconds: plan.output?.seconds, note: plan.notes[0] },
+        group: t.group, then: { masters: t.then.masters },
+      };
+      up.workflowId = plan.workflowId;
+      up.params = { ...plan.params };
+      up.resource = card.resource;
+      up.updatedAt = now;
+      this.enqueue([up.id]);
+      return;
+    }
+    if (t.then.masters && t.then.masters !== 'none' && resultComp !== undefined) await this.writeMaster(card, v, resultComp, t.then.masters);
+  }
+
+  /** A version's comp as a delivery master: EffectCraft renders it (ProRes 422 HQ), ffmpeg writes the master next to it. */
+  private async writeMaster(card: Card, v: Version, compId: number, kind: 'prores4444' | 'png16'): Promise<void> {
+    const host = this.tl();
+    this.phase(card, 'Rendering the master');
+    await this.ensureComp(compId);
+    const comp = this.snap?.comp;
+    if (!comp) throw new Error('The comp to write a master of is not open.');
+    const stem = `${basename(v.file, extname(v.file))}_master`;
+    const r = await host.renderRange({ start: 0, duration: comp.duration, cap: Math.max(comp.duration, card.tool?.cap ?? 8), dir: join(this.mediaDir, card.id), name: `${stem}_prores422hq`, format: 'prores' });
+    this.phase(card, kind === 'prores4444' ? 'Writing ProRes 4444' : 'Writing PNG 16-bit');
+    const out = kind === 'prores4444' ? join(this.mediaDir, card.id, `${stem}_4444.mov`) : undefined;
+    const done = await master({ src: r.path, kind, out });
+    if (!done.ok || !done.path) throw new Error(`The master of "${comp.name}" was not written: ${done.reason ?? 'ffmpeg failed'}`);
+    v.exports = [...(v.exports ?? []).filter((x) => x.path !== done.path), { kind, path: done.path, at: new Date().toISOString() }];
+    card.updatedAt = new Date().toISOString();
   }
 
   /**
@@ -1783,7 +2098,17 @@ export class Engine {
     setRef(api, m.bindings.fps, fps);
     setRef(api, o.scale[0], plan.scaled[0]);
     setRef(api, o.scale[1], plan.scaled[1]);
-    o.pad.forEach((ref, i) => setRef(api, ref, plan.pad[i]));
+    // The model is shown the clip less a margin where it meets new space, so the model's own edge (a bright
+    // line on the 21:9 draft of 25 Oct) lies under the original in the comp. A manifest without the crop shows it all.
+    const [il, it, ir, ib] = o.crop ? plan.inset : [0, 0, 0, 0];
+    if (o.crop) {
+      setRef(api, o.crop.x, il);
+      setRef(api, o.crop.y, it);
+      setRef(api, o.crop.width, plan.scaled[0] - il - ir);
+      setRef(api, o.crop.height, plan.scaled[1] - it - ib);
+    }
+    const pad = o.crop ? plan.pad : plan.pad.map((v, i) => v - plan.inset[i]);
+    o.pad.forEach((ref, i) => setRef(api, ref, pad[i]));
 
     this.phase(card, 'Uploading');
     const sourcePath = src.path;
@@ -2040,6 +2365,33 @@ function eightBitVideo(api: WorkflowJson): void {
   for (const node of Object.values(api)) {
     if (node.class_type === 'CreateVideo' && Array.isArray(node.inputs.bit_depth)) node.inputs.bit_depth = 8;
   }
+}
+
+/**
+ * LTX-2.5's length is seconds × fps + 1 (a ComfyMathExpression fed by the seconds and fps primitives). Extend needs
+ * an exact 8k + 1 count at any frame rate, so that expression is set to the number itself. False when it is not there.
+ */
+function setLtxLength(api: WorkflowJson, m: WorkflowManifest, frames: number): boolean {
+  if (!m.bindings.seconds || !m.bindings.fps) return false;
+  const sec = splitRef(m.bindings.seconds).nodeId;
+  const fps = splitRef(m.bindings.fps).nodeId;
+  const link = (v: unknown, id: string): boolean => Array.isArray(v) && v[0] === id;
+  for (const node of Object.values(api)) {
+    if (node.class_type === 'ComfyMathExpression' && link(node.inputs['values.a'], sec) && link(node.inputs['values.b'], fps)) {
+      node.inputs.expression = String(frames);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** One frame of a clip, at `seconds`, as a PNG (ffmpeg on the PATH); false when ffmpeg is not there or fails. */
+function frameOf(src: string, seconds: number, out: string): Promise<boolean> {
+  return new Promise((done) => {
+    const p = spawn('ffmpeg', ['-v', 'error', '-y', '-ss', seconds.toFixed(4), '-i', src, '-frames:v', '1', out], { windowsHide: true });
+    p.on('error', () => done(false));
+    p.on('close', (code) => done(code === 0 && existsSync(out)));
+  });
 }
 
 /** A 480-px wide JPEG of a still; false when ffmpeg is not there or fails. */

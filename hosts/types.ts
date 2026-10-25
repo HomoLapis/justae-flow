@@ -210,6 +210,8 @@ export interface TimelineHost extends HostBase {
   /** A new comp: the generated frame below, the original clip above it; it is left open. */
   buildOutpaint(req: OutpaintRequest): Promise<{ compId: number; fillLayer: number; fillItem: number; clipLayer: number }>;
   openComp(compId: number): Promise<void>;
+  /** Lengthen (or shorten) the active comp, seconds — Extend makes room after the last frame. */
+  setCompDuration(seconds: number): Promise<void>;
   /** Render a span of the active comp to an H.264 file with the host's own render queue. */
   renderRange(req: RenderRequest): Promise<RenderResult>;
   /** Import a file into the project; its footage item id. */
