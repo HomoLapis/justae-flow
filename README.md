@@ -142,7 +142,11 @@ characters.
 
 One key — from [platform.comfy.org ▸ API Keys](https://platform.comfy.org/profile/api-keys) — serves Comfy Cloud
 and your deployments (docs.comfy.org, *Comfy API v2 Overview* ▸ Base URLs; *v1 Cloud API Overview* ▸
-Authentication). It goes over https only, or over plain http to this machine.
+Authentication). It goes over https only, or over plain http to this machine. Running jobs on Comfy Cloud by API
+needs a paid Cloud plan (*v1 Cloud API Overview*, "Subscription required"): measured on 25 Oct 2026, a free-tier
+key reads billing, nodes and models but every submit is refused with 403 "API key authentication is not available
+for free tier accounts". JustAE Flow shows those words, offers to run locally, and stops routing jobs to Cloud until
+the key changes or **Check** is pressed.
 
 **Comfy API v2 runs on the server, through the official SDK** (`@comfyorg/sdk` 0.5.0): inputs go up as assets
 addressed by their blake3 hash (bytes the platform already has are not sent again), each Generate is one submission
@@ -164,7 +168,10 @@ the execution time and the derived credits.
 and the model files its loaders offer, as `npm run verify:workflows` does); on Comfy Cloud the v1 `/api/object_info`
 (with the key) and `/api/experiment/models/{folder}` (public). A deployment and the proxy have no node catalogue on
 v2 (measured on `comfy-api-proxy` 0.1.6: `/api/object_info` answers 404), so they are "unknown until a workflow has
-finished there". What we found on Comfy Cloud is in [docs/CLOUD_PROBE_2026-10-25.md](docs/CLOUD_PROBE_2026-10-25.md).
+finished there" — except a proxy marked as standing in front of the local ComfyUI (its documented default), which is
+judged by that ComfyUI's catalogue and gets its model precisions. What we found on Comfy Cloud is in
+[docs/CLOUD_PROBE_2026-10-25.md](docs/CLOUD_PROBE_2026-10-25.md); the tests of the day, with their settings and
+results, are in [docs/TEST_LOG_2026-10-25.md](docs/TEST_LOG_2026-10-25.md).
 
 **Credits.** When the resource of the next Generate bills, the header shows the account's balance, read from the v1
 billing report `GET /api/billing/usage/timeseries` (`summary.balance`, in **cents** despite the `_micros` suffix,

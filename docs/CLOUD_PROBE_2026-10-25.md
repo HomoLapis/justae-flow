@@ -31,6 +31,13 @@ Sources for every endpoint: the v1 Cloud OpenAPI document (`https://docs.comfy.o
 So the v2 surface accepts the key; a "check connection" on Cloud cannot list jobs and uses `GET /api/user` (v1)
 instead. JustAE Flow does exactly that.
 
+**Submitting a job is another matter.** Later the same day a Z-Image submit (`POST /api/v2/jobs`, through the SDK)
+was refused: **403 `forbidden` — "API key authentication is not available for free tier accounts"**. No job was
+created and no credit spent. This matches the docs' note that API access needs a paid Comfy Cloud subscription
+(*v1 Cloud API Overview*, "Subscription required"). On this account (top-up credit, no plan credit) Cloud can be
+read but not run by API; everything below says what *would* run with a paid plan. JustAE Flow now remembers such a
+refusal and routes around Cloud until the key changes or Check is pressed.
+
 ## 3. Billing: `GET /api/billing/usage/timeseries`
 
 Query parameters, from the spec and tried one by one (all answered 200):
