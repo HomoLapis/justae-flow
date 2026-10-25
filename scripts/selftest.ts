@@ -873,6 +873,15 @@ console.log('comp tab');
   const r2 = sideCards().find((c) => c.id === q2)!.versions.at(-1)?.compId;
   check('a queued run leaves the comp the user is on in front, and says where its result is',
     r1 !== undefined && r2 !== undefined && r1 !== r2 && host.compId === r1 && /ready — Open comp in Results/.test(engine.state().notice ?? ''), `front ${host.compId}, r1 ${r1}, r2 ${r2}, ${engine.state().notice}`);
+  // The user goes to another comp while a run works (the run did not open it): that comp stays in front at the end.
+  await host.openComp(1);
+  await engine.sync();
+  const { id: q3 } = await engine.runCompTool({ tool: 'slowmo', source: 'comp', options: { mode: 'slow2', engine: 'film' }, cap: 8 });
+  await until(() => /Queued|Starting|Working|Saving|Sampling/.test(sideCards().find((c) => c.id === q3)?.progress?.phase ?? ''), 10000);
+  await host.openComp(55);
+  await engine.sync();
+  await until(() => ['done', 'error'].includes(sideCards().find((c) => c.id === q3)?.status ?? ''), 30000);
+  check('a comp the user opens during a run stays in front when it ends', host.compId === 55 && sideCards().find((c) => c.id === q3)?.status === 'done', `front ${host.compId}`);
   await host.openComp(1);
   await engine.sync();
 

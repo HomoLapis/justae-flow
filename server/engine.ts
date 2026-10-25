@@ -198,6 +198,8 @@ export class Engine {
    * on before the runs opened theirs — or one they opened themselves meanwhile.
    */
   private userComp: number | undefined;
+  private hostBusy = 0;
+  private trackedHosts = new WeakMap<TimelineHost, TimelineHost>();
 
   constructor(settings: Settings, library: WorkflowLibrary, services: Services, host?: HostAdapter) {
     this.settings = settings;
@@ -226,7 +228,38 @@ export class Engine {
 
   private tl(): TimelineHost {
     if (this.host.kind !== 'timeline') throw new Error(`${this.host.label} has no timeline.`);
-    return this.host;
+    return this.tracked(this.host);
+  }
+
+  /**
+   * The timeline host, with the calls that bring a comp to the front counted: while a run is going, the comps it
+   * opens or builds are its own (settleFocus), and while such a call is under way the poll does not read the active
+   * comp as the user's choice.
+   */
+  private tracked(host: TimelineHost): TimelineHost {
+    let t = this.trackedHosts.get(host);
+    if (t) return t;
+    const opens = new Set(['openComp', 'buildComp', 'buildReframe', 'buildOutpaint']);
+    t = new Proxy(host, {
+      get: (target, key, receiver) => {
+        const v = Reflect.get(target, key, receiver) as unknown;
+        if (typeof v !== 'function') return v;
+        if (!opens.has(String(key))) return (v as (...a: unknown[]) => unknown).bind(target);
+        return async (...args: unknown[]) => {
+          this.hostBusy++;
+          try {
+            const res = await (v as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+            const id = key === 'openComp' ? args[0] : (res as { compId?: unknown } | undefined)?.compId;
+            if (this.running && typeof id === 'number') this.opened.add(id);
+            return res;
+          } finally {
+            this.hostBusy--;
+          }
+        };
+      },
+    });
+    this.trackedHosts.set(host, t);
+    return t;
   }
 
   private cv(): CanvasHost {
@@ -442,8 +475,12 @@ export class Engine {
       this.hostError = undefined;
       const previousComp = this.snap?.comp?.id;
       this.snap = snap;
-      // No run going: the active comp is the one the user is on.
+      // No run going: the active comp is the one the user is on. During a run: a comp the run did not open, seen
+      // while the run is not opening one, is one the user went to.
       if (!this.running && !this.queue.length) this.userComp = snap.comp?.id;
+      else if (this.running && snap.comp && this.hostBusy === 0 && !this.opened.has(snap.comp.id) && this.card(this.running.cardId)?.compId !== snap.comp.id) {
+        this.userComp = snap.comp.id;
+      }
       this.attachProject(snap.project.path, snap.comp?.name ?? null, snap.comp?.id);
       if (snap.comp) {
         if (this.host.kind === 'timeline') this.reconcileTimeline(snap);
@@ -1283,7 +1320,10 @@ export class Engine {
     const card = this.card(id);
     if (!card) throw new Error('No such run.');
     const v = card.versions.find((x) => x.n === (n ?? card.activeVersion)) ?? card.versions.at(-1);
-    await this.tl().openComp(which === 'source' ? card.compId : v?.compId ?? v?.compare?.compId ?? card.compId);
+    const target = which === 'source' ? card.compId : v?.compId ?? v?.compare?.compId ?? card.compId;
+    await this.tl().openComp(target);
+    // Opened by the user from Results: theirs, even while a run is going.
+    this.userComp = target;
     await this.sync();
   }
 
