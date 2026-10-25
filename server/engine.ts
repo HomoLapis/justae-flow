@@ -12,22 +12,24 @@
  * layers). Queue, storage, versions and the ComfyUI job are shared.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative } from 'node:path';
 import { ComfyClient, type ComfyHealth } from '../core/comfy/client.ts';
 import type { ObjectInfo, OutputFile, WorkflowJson } from '../core/comfy/types.ts';
 import { getRef, planLength, planSize, resolveModels, setRef, type ModelCheck, type WorkflowManifest } from '../core/workflows/manifest.ts';
-import { newCardId, type Box, type Card, type CardStatus, type Sidecar, type Version } from '../core/storyboard/types.ts';
+import { newCardId, type Box, type Card, type CardStatus, type CompareState, type Sidecar, type Version } from '../core/storyboard/types.ts';
 import { layerNameFromPrompt, slugFromPrompt } from '../core/lib/filenames.ts';
 import { decodePngGrey } from '../core/lib/png.ts';
 import { ASPECTS, planReframe, subjectOf, type ReframePlan, type Smoothing, type SubjectFrame } from '../core/reframe/plan.ts';
 import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/outpaint.ts';
+import { COMP_TOOLS, resultName, toolById, type SourceInfo, type SourceKind, type ToolOptions, type ToolPlan } from '../core/comp/tools.ts';
 import { EffectCraftAdapter } from '../hosts/effectcraft/adapter.ts';
 import { PhotoCraftAdapter } from '../hosts/photocraft/adapter.ts';
-import type { CanvasHost, HostAdapter, HostSnapshot, TimelineHost } from '../hosts/types.ts';
+import type { CanvasHost, HostAdapter, HostLayer, HostSnapshot, ItemInfo, TimelineHost } from '../hosts/types.ts';
 import { HostError } from '../hosts/types.ts';
 import { LEGACY_PRODUCT_DIR, LEGACY_SLUG, PRODUCT, SLUG, TAG } from '../core/brand.ts';
+import { master } from './bridge.ts';
 import { saveSettings, type Settings } from './config.ts';
 import type { LibraryEntry, WorkflowLibrary } from './library.ts';
 import { taskOf, type Resource } from './resources.ts';
@@ -67,6 +69,63 @@ export interface CardView extends Card {
 
 const MAX_MARKER_SLOT = 20;
 
+/** The input of a Comp tab run (or a layer tool's clip): a footage item and its file, as the host has them now. */
+interface ClipSource {
+  kind: SourceKind;
+  itemId: number;
+  path: string;
+  info: ItemInfo;
+  /** The layer's name, or the comp's with the span ("Comp · work area 1.0–4.0 s"). */
+  name: string;
+  /** A layer source: the layer, as the last snapshot of its comp has it. */
+  layer?: HostLayer;
+  start?: number;
+  end?: number;
+}
+
+/** What the Comp tab shows about one of its runs. */
+export interface CompRunView {
+  id: string;
+  tool: string;
+  source: SourceKind;
+  options: ToolOptions;
+  prompt: string;
+  /** The result's name (its comp), or what it will be called. */
+  label: string;
+  status: CardStatus;
+  error?: string;
+  progress?: Card['progress'];
+  runsOn: CardView['runsOn'];
+  compId: number;
+  activeVersion: number | null;
+  versions: Array<Pick<Version, 'n' | 'compId' | 'compName' | 'createdAt' | 'elapsedMs' | 'executionMs' | 'derivedCredits' | 'resource' | 'width' | 'height' | 'seconds' | 'exports'>
+    & { thumb: string | null; showing: CompareState['showing'] | null; canExport: boolean; file: string }>;
+  updatedAt: string;
+}
+
+/** The Comp tab's view of the host: the active comp, its work area, the selected layer, the runs. */
+export interface CompView {
+  host: { ok: boolean; app: string; error?: string; kind: 'timeline' | 'canvas' };
+  comp: (NonNullable<HostSnapshot['comp']> & { workAreaSet: boolean }) | null;
+  time: number;
+  selected: { layerId: number; name: string; media: SourceInfo['media']; width: number; height: number; fps: number; seconds: number; path: string | null } | null;
+  /** The active comp is a result of one of the runs: where it came from. */
+  resultOf: { cardId: string; compId: number; compName: string | null } | null;
+  tools: Array<{ id: string; name: string; promise: string; icon: string; sources: SourceKind[]; defaults: ToolOptions }>;
+  runs: CompRunView[];
+  queue: EngineState['queue'];
+  mediaDir: string;
+}
+
+/** A plan request from the Comp tab. */
+export interface CompPlanRequest {
+  tool: string;
+  source: SourceKind;
+  options?: ToolOptions;
+  /** The work-area render cap, seconds. */
+  cap?: number;
+}
+
 export function comfyFor(s: Pick<Settings, 'comfyUrl' | 'comfyToken' | 'comfyGpu'>): ComfyClient {
   return new ComfyClient(s.comfyUrl, { token: s.comfyToken, gpu: s.comfyGpu });
 }
@@ -98,6 +157,8 @@ export class Engine {
     runner: Runner | null; why: string;
     /** Summed over the generation's jobs (a long reframe is several). */
     meter: { executionMs: number; credits: number; timed: boolean; billed: boolean };
+    /** The graphs this generation submitted, as written next to its versions (relative to the media folder). */
+    graphs: string[];
   } | null = null;
   readonly services: Services;
   private paused = false;
@@ -105,7 +166,7 @@ export class Engine {
   private previewRev = new Map<string, number>();
   private thumbQueue = new Set<string>();
   private listeners = new Set<() => void>();
-  private syncing = false;
+  private syncing: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private notice: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -151,7 +212,7 @@ export class Engine {
   start(): void {
     if (!this.sidecarPath) this.attachProject(null, null);
     void this.checkComfy();
-    this.timer = setInterval(() => void this.sync(), Math.max(500, this.settings.pollSeconds * 1000));
+    this.timer = setInterval(() => this.tick(), Math.max(500, this.settings.pollSeconds * 1000));
     setInterval(() => void this.checkComfy(), 10_000);
     void this.sync();
   }
@@ -290,8 +351,20 @@ export class Engine {
   /** Timeline: point the project's footage at the moved copies so the folder travels as one. */
   private relinkMoved(media: string): void {
     const moves = this.sidecar.cards.flatMap((c) => {
-      const v = c.versions.find((x) => x.n === c.activeVersion);
-      return c.placed && v ? [{ itemId: c.placed.itemId, path: join(media, v.file) }] : [];
+      const out: Array<{ itemId: number; path: string }> = [];
+      // The placed item shows the version last placed on it. A reframe version opens a comp of its own and
+      // leaves the placed item as it was — relinking that item to the reframe's file swapped a matte for a
+      // reframe in the test project of 25 October.
+      const shown = c.versions.find((x) => x.n === c.placedVersion)
+        ?? [...c.versions].reverse().find((x) => x.compId === undefined && (c.activeVersion === null || x.n <= c.activeVersion))
+        ?? [...c.versions].reverse().find((x) => x.compId === undefined);
+      if (c.placed && shown) out.push({ itemId: c.placed.itemId, path: join(media, shown.file) });
+      // Items a version imported itself: a generated fill, an upscale, a render of the comp.
+      for (const v of c.versions) {
+        if (v.itemId !== undefined) out.push({ itemId: v.itemId, path: join(media, v.file) });
+        if (v.source?.itemId !== undefined && v.source.file && !/^([a-z]:|[\\/])/i.test(v.source.file)) out.push({ itemId: v.source.itemId, path: join(media, v.source.file) });
+      }
+      return out;
     });
     void (async () => {
       let ok = 0;
@@ -320,9 +393,23 @@ export class Engine {
 
   /* ─── Sync with the host ──────────────────────────────────────────── */
 
+  /**
+   * Read the host now. A read already under way is waited for and the host is
+   * read once more: a caller (a run being queued, a comp just opened) wants what
+   * is true now, not what the poll saw a moment ago.
+   */
   async sync(): Promise<void> {
-    if (this.syncing) return;
-    this.syncing = true;
+    while (this.syncing) await this.syncing.catch(() => undefined);
+    this.syncing = this.readHost().finally(() => { this.syncing = null; });
+    return this.syncing;
+  }
+
+  /** The poll: skipped while a read is under way, so slow answers never pile up. */
+  private tick(): void {
+    if (!this.syncing) void this.sync();
+  }
+
+  private async readHost(): Promise<void> {
     try {
       const snap = await this.host.snapshot();
       this.hostError = undefined;
@@ -342,8 +429,6 @@ export class Engine {
         this.hostError = msg;
         this.changed(false);
       }
-    } finally {
-      this.syncing = false;
     }
   }
 
@@ -403,6 +488,8 @@ export class Engine {
   private followLayers(snap: HostSnapshot, here: Card[], claimed: Set<string>, now: string): void {
     this.layerOf.clear();
     for (const c of here) {
+      // A run on the comp itself lives as long as the comp does.
+      if (c.origin.kind === 'comp') { claimed.add(c.id); continue; }
       if (c.origin.kind !== 'placeholder' && c.origin.kind !== 'layer') continue;
       const layerId = c.origin.layerId;
       const layer = snap.layers.find((l) => l.id === layerId);
@@ -498,11 +585,13 @@ export class Engine {
 
   private timeOf(card: Card): number {
     if (card.origin.kind === 'marker') return card.origin.time;
+    if (card.origin.kind === 'comp') return card.origin.start;
     return this.layerOf.get(card.id)?.in ?? 0;
   }
 
   private slotOf(card: Card): { start: number; end: number | null } {
     if (this.host.kind === 'canvas') return { start: 0, end: null };
+    if (card.origin.kind === 'comp') return { start: card.origin.start, end: card.origin.end };
     const start = this.timeOf(card);
     if (card.origin.kind !== 'marker') {
       const l = this.layerOf.get(card.id);
@@ -519,6 +608,7 @@ export class Engine {
       case 'marker': return 'Marker';
       case 'placeholder': return 'Placeholder';
       case 'selection': return 'Selection';
+      case 'comp': return 'Comp';
       default: return 'Layer';
     }
   }
@@ -549,7 +639,7 @@ export class Engine {
       cards,
       queue: {
         running: this.running?.cardId ?? null, pending: [...this.queue], paused: this.paused, recovered: this.recovered,
-        ready: cards.filter((c) => !c.orphan && this.ready(c) && (c.versions.length === 0 || c.status === 'error')
+        ready: cards.filter((c) => !c.orphan && !c.tool && this.ready(c) && (c.versions.length === 0 || c.status === 'error')
           && c.status !== 'queued' && c.status !== 'running').length,
       },
       settings: { ...this.settings, comfyToken: '', comfyTokenSet: !!this.settings.comfyToken },
@@ -580,6 +670,10 @@ export class Engine {
   }
 
   private planOf(card: Card, slotSeconds: number | null): CardView['plan'] {
+    if (card.tool?.plan) {
+      const p = card.tool.plan;
+      return { width: p.width, height: p.height, sizeNote: p.makes, seconds: p.seconds, lengthNote: p.note };
+    }
     const entry = this.library.get(card.workflowId);
     const comp = this.snap?.comp;
     if (!entry || !comp) return {};
@@ -699,6 +793,7 @@ export class Engine {
       await this.host.openComp(v.compId);
     } else if (card.placed) {
       await this.host.replaceFootage(card.placed.itemId, join(this.mediaDir, v.file), [card.placed.layerId]);
+      card.placedVersion = n;
     }
     card.activeVersion = n;
     card.updatedAt = new Date().toISOString();
@@ -840,11 +935,248 @@ export class Engine {
     this.changed(true);
   }
 
+  /* ─── The Comp tab ─────────────────────────────────────────────────── */
+
+  private selInfo = new Map<number, { at: number; itemId: number | null; info: ItemInfo | null }>();
+  private lastFrame: { key: string; at: number; view: { file: string; time: number; compId: number; rev: number } } | null = null;
+  private frameRev = 0;
+
+  /** The (first) selected layer, with its footage as the project has it. Read again every few seconds at most. */
+  private async selectedInfo(): Promise<(NonNullable<CompView['selected']> & { itemId: number | null; label: string }) | null> {
+    const snap = this.snap;
+    const layerId = snap?.selectedLayers[0];
+    if (!snap?.comp || layerId === undefined || this.host.kind !== 'timeline') return null;
+    const layer = snap.layers.find((l) => l.id === layerId);
+    let hit = this.selInfo.get(layerId);
+    if (!hit || Date.now() - hit.at > 4000) {
+      const itemId = await this.host.sourceOfLayer(layerId);
+      const info = itemId !== null ? await this.host.itemInfo(itemId) : null;
+      hit = { at: Date.now(), itemId, info };
+      this.selInfo.set(layerId, hit);
+    }
+    const info = hit.info;
+    // item.metadata says "video" or "still" (measured on EffectCraft 0.11.1); a solid or a comp has no file.
+    const media: SourceInfo['media'] = !info?.path ? 'none'
+      : info.kind === 'video' ? 'video' : info.kind === 'still' ? 'image'
+        : /\.(png|jpe?g|webp|tiff?|exr|bmp|gif)$/i.test(info.path) ? 'image' : 'video';
+    return {
+      layerId, itemId: hit.itemId, name: layer?.name ?? info?.name ?? `Layer ${layerId}`, label: layer?.label ?? 'None', media,
+      width: info?.width ?? 0, height: info?.height ?? 0, fps: info?.frameRate || snap.comp.fps,
+      seconds: info?.duration || (layer ? layer.out - layer.in : 0), path: info?.path ?? null,
+    };
+  }
+
+  /** The input a Comp tab run would get from this source, as the host has it now. */
+  private async compSource(kind: SourceKind, cap: number): Promise<{ info: SourceInfo; range?: [number, number]; layer?: Awaited<ReturnType<Engine['selectedInfo']>> }> {
+    const comp = this.snap?.comp;
+    if (!comp || this.host.kind !== 'timeline') throw new Error('Open a composition in EffectCraft first.');
+    if (kind === 'layer') {
+      const sel = await this.selectedInfo();
+      if (!sel) throw new Error('Select a layer in EffectCraft first.');
+      return { info: { kind, media: sel.media, width: sel.width, height: sel.height, fps: sel.fps, seconds: sel.seconds, requested: sel.seconds, name: sel.name }, layer: sel };
+    }
+    const [s, e] = kind === 'workArea' ? (comp.workArea ?? [0, comp.duration]) : [0, comp.duration];
+    const requested = Math.max(0, e - s);
+    return {
+      info: { kind, media: 'video', width: comp.width, height: comp.height, fps: comp.fps, seconds: Math.min(requested, cap), requested, name: comp.name },
+      range: [s, e],
+    };
+  }
+
+  /** What a tool would make from a source, said before it runs. */
+  async planComp(req: CompPlanRequest): Promise<ToolPlan & { source: SourceInfo; cap: number }> {
+    const tool = toolById(req.tool);
+    if (!tool) throw new Error(`No Comp tool "${req.tool}".`);
+    if (!tool.sources.includes(req.source)) throw new Error(`${tool.name} does not work from that source.`);
+    const cap = renderCap(req.cap);
+    const { info } = await this.compSource(req.source, cap);
+    const plan = tool.plan(info, { ...tool.defaults, ...(req.options ?? {}) }, (id) => this.library.get(id)?.manifest);
+    if (req.source !== 'layer' && info.requested > cap + 1e-3) {
+      plan.warnings.unshift(`The ${req.source === 'workArea' ? 'work area' : 'comp'} lasts ${info.requested.toFixed(1)} s: the render stops at ${cap} s (Work-area render cap).`);
+    }
+    if (req.source !== 'layer' && info.requested <= 0) return { ...plan, ok: false, reason: 'The work area has no length.', source: info, cap };
+    return { ...plan, source: info, cap };
+  }
+
+  /**
+   * Queue a Comp tab run. One card per tool, variant and source (a second
+   * "Reframe 9:16 from the work area" is that card's next version); the queue
+   * is the engine's, serial, shared with the layer tools.
+   */
+  async runCompTool(req: CompPlanRequest & { prompt?: string; resource?: string | null; seed?: number | null }): Promise<{ id: string; queued: number }> {
+    if (this.host.kind !== 'timeline') throw new Error('The Comp tab works on an EffectCraft comp.');
+    await this.sync();
+    const comp = this.snap?.comp;
+    if (!comp) throw new Error('Open a composition in EffectCraft first.');
+    const tool = toolById(req.tool);
+    if (!tool) throw new Error(`No Comp tool "${req.tool}".`);
+    const plan = await this.planComp(req);
+    if (!plan.ok) throw new Error(plan.reason ?? 'This tool cannot run on this source.');
+    const prompt = (req.prompt ?? '').trim();
+    if (plan.prompt && !prompt) throw new Error(`Write the ${plan.prompt.label.toLowerCase()} first.`);
+    if (req.resource && req.resource !== 'default' && req.resource !== 'auto' && !this.services.resources.get(req.resource)) throw new Error(`No resource "${req.resource}".`);
+    const options = { ...tool.defaults, ...(req.options ?? {}) };
+    const src = await this.compSource(req.source, plan.cap);
+    const layerId = src.layer?.layerId;
+    let card = this.sidecar.cards.find((c) => c.tool && c.compId === comp.id && c.tool.id === tool.id && c.tool.source === req.source
+      && c.tool.variant === plan.variant && (req.source !== 'layer' || (c.origin.kind === 'layer' && c.origin.layerId === layerId)));
+    if (card && (card.status === 'queued' || card.status === 'running')) throw new Error('This one is already in the queue: cancel it first, or wait for it.');
+    const now = new Date().toISOString();
+    if (!card) {
+      let origin: Card['origin'];
+      if (req.source === 'layer') {
+        const sel = src.layer!;
+        if (sel.itemId === null) throw new Error('The selected layer has no footage item.');
+        origin = { kind: 'layer', layerId: sel.layerId, itemId: sel.itemId, sourcePath: sel.path, width: sel.width, height: sel.height, labelBefore: sel.label };
+      } else {
+        origin = { kind: 'comp', range: req.source, start: src.range![0], end: src.range![1], width: comp.width, height: comp.height };
+      }
+      card = {
+        id: newCardId(), compId: comp.id, origin, prompt, workflowId: plan.workflowId, seed: null, params: {},
+        versions: [], activeVersion: null, status: 'idle', createdAt: now, updatedAt: now,
+      };
+      this.sidecar.cards.push(card);
+    } else if (card.origin.kind === 'comp') {
+      // The work area may have moved since the last run.
+      card.origin.start = src.range![0];
+      card.origin.end = src.range![1];
+    }
+    card.tool = {
+      id: tool.id, source: req.source, options, cap: plan.cap, variant: plan.variant, compName: comp.name,
+      label: resultName(req.source === 'layer' ? src.info.name : comp.name, tool.id, options),
+      plan: { makes: plan.makes, width: plan.output?.width, height: plan.output?.height, seconds: plan.output?.seconds, note: plan.notes[0] },
+    };
+    card.prompt = prompt;
+    card.workflowId = plan.workflowId;
+    card.params = { ...plan.params };
+    card.seed = typeof req.seed === 'number' && Number.isFinite(req.seed) ? Math.round(req.seed) : null;
+    card.resource = req.resource && req.resource !== 'default' ? req.resource : undefined;
+    card.updatedAt = now;
+    this.changed(true);
+    return { id: card.id, queued: this.enqueue([card.id]) };
+  }
+
+  private runView(c: Card): CompRunView {
+    const t = c.tool!;
+    return {
+      id: c.id, tool: t.id, source: t.source, options: t.options, prompt: c.prompt, label: t.label ?? t.id,
+      status: c.status, error: c.error, progress: c.progress, runsOn: this.routeView(c), compId: c.compId, activeVersion: c.activeVersion,
+      versions: c.versions.map((v) => ({
+        n: v.n, compId: v.compId ?? v.compare?.compId, compName: v.compName, createdAt: v.createdAt, elapsedMs: v.elapsedMs,
+        executionMs: v.executionMs ?? null, derivedCredits: v.derivedCredits ?? null, resource: v.resource, width: v.width, height: v.height,
+        seconds: v.seconds, exports: v.exports, file: v.file, thumb: v.thumb ?? null, showing: v.compare?.showing ?? null,
+        canExport: v.workflowId === 'sam3-matte' && !!v.source?.file,
+      })),
+      updatedAt: c.updatedAt,
+    };
+  }
+
+  /** Everything the Comp tab shows. */
+  async compView(): Promise<CompView> {
+    const st = this.state();
+    const comp = this.snap?.comp ?? null;
+    const selected = comp && this.host.kind === 'timeline' ? await this.selectedInfo().catch(() => null) : null;
+    // This comp's runs, the runs whose result is this comp — and every run still in the queue, wherever it is from.
+    const mine = (c: Card): boolean => c.status === 'queued' || c.status === 'running'
+      || (!!comp && (c.compId === comp.id || c.versions.some((v) => v.compId === comp.id || v.compare?.compId === comp.id)));
+    const runs = this.sidecar.cards.filter((c) => c.tool && mine(c)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => this.runView(c));
+    const from = comp ? this.sidecar.cards.find((c) => c.tool && c.compId !== comp.id && c.versions.some((v) => v.compId === comp.id)) : undefined;
+    let sel: CompView['selected'] = null;
+    if (selected) {
+      const { itemId: _item, label: _label, ...rest } = selected;
+      sel = rest;
+    }
+    return {
+      host: { ok: st.host.ok, app: st.host.app, error: st.host.error, kind: st.host.kind },
+      comp: comp ? { ...comp, workAreaSet: !!comp.workArea && (comp.workArea[0] > 1e-3 || comp.workArea[1] < comp.duration - 1e-3) } : null,
+      time: this.snap?.time ?? 0,
+      selected: sel,
+      resultOf: from ? { cardId: from.id, compId: from.compId, compName: from.tool?.compName ?? null } : null,
+      tools: this.host.kind === 'timeline' ? COMP_TOOLS.map(({ id, name, promise, icon, sources, defaults }) => ({ id, name, promise, icon, sources, defaults })) : [],
+      runs,
+      queue: st.queue,
+      mediaDir: this.mediaDir,
+    };
+  }
+
+  /** The comp's frame at the playhead, for the tool cards' previews (kept a few seconds: the playhead rarely moves alone). */
+  async compFrame(force = false): Promise<{ file: string; time: number; compId: number; rev: number }> {
+    const comp = this.snap?.comp;
+    if (!comp || this.host.kind !== 'timeline') throw new Error('Open a composition in EffectCraft first.');
+    const time = this.snap?.time ?? 0;
+    const key = `${comp.id}@${time.toFixed(3)}`;
+    if (!force && this.lastFrame?.key === key && Date.now() - this.lastFrame.at < 15_000) return this.lastFrame.view;
+    const rel = `_comp/frame_${comp.id}.png`;
+    mkdirSync(join(this.mediaDir, '_comp'), { recursive: true });
+    await this.host.frameAt(time, join(this.mediaDir, rel));
+    const view = { file: rel, time, compId: comp.id, rev: ++this.frameRev };
+    this.lastFrame = { key, at: Date.now(), view };
+    return view;
+  }
+
+  /** Open a run's result comp (or, with `which: 'source'`, the comp it was made from). */
+  async openResult(id: string, n?: number, which: 'result' | 'source' = 'result'): Promise<void> {
+    const card = this.card(id);
+    if (!card) throw new Error('No such run.');
+    const v = card.versions.find((x) => x.n === (n ?? card.activeVersion)) ?? card.versions.at(-1);
+    await this.tl().openComp(which === 'source' ? card.compId : v?.compId ?? v?.compare?.compId ?? card.compId);
+    await this.sync();
+  }
+
+  /**
+   * Original ⇄ result, by showing and hiding layers — or taking a matte's track
+   * matte off and putting it back, or (a crop) opening the source comp and the
+   * result in turn. Nothing is deleted; the state is remembered with the version.
+   */
+  async compare(id: string, n?: number): Promise<{ showing: CompareState['showing'] }> {
+    const card = this.card(id);
+    const v = card?.versions.find((x) => x.n === (n ?? card.activeVersion));
+    if (!card || !v?.compare) throw new Error('This result has nothing to compare.');
+    const host = this.tl();
+    const c = v.compare;
+    const next: CompareState['showing'] = c.showing === 'result' ? 'original' : 'result';
+    if (c.openOriginal !== undefined) {
+      await host.openComp(next === 'original' ? c.openOriginal : c.compId);
+    } else {
+      if (this.snap?.comp?.id !== c.compId) await host.openComp(c.compId);
+      for (const [layer, visible] of c[next]) await host.setLayerVisible(layer, visible);
+      if (c.matte) await host.setTrackMatte(c.matte.layer, next === 'result' ? c.matte.matte : null, 'luma');
+    }
+    c.showing = next;
+    card.updatedAt = new Date().toISOString();
+    this.changed(true);
+    void this.sync();
+    return { showing: next };
+  }
+
+  /**
+   * A cut-out as a ProRes 4444 master with alpha: the clip the matte was made
+   * from, with the matte as its alpha, through the same ffmpeg master the Flow
+   * window uses for its lossless saves (server/bridge.ts). Written into the
+   * run's folder next to the project.
+   */
+  async exportAlpha(id: string, n?: number): Promise<{ path: string }> {
+    const card = this.card(id);
+    const v = card?.versions.find((x) => x.n === (n ?? card.activeVersion));
+    if (!card || !v) throw new Error('No such version.');
+    if (v.workflowId !== 'sam3-matte' || !v.source?.file) throw new Error('Only a cut-out can be exported with alpha.');
+    const clip = /^([a-z]:|[\\/])/i.test(v.source.file) ? v.source.file : join(this.mediaDir, v.source.file);
+    if (!existsSync(clip)) throw new Error(`The clip this matte was made from is no longer at ${clip}.`);
+    const out = join(this.mediaDir, card.id, `${basename(v.file, extname(v.file))}_alpha_4444.mov`);
+    const r = await master({ src: clip, kind: 'prores4444', matte: join(this.mediaDir, v.file), out });
+    if (!r.ok || !r.path) throw new Error(r.reason ?? 'ffmpeg did not write the master.');
+    v.exports = [...(v.exports ?? []).filter((x) => x.path !== r.path), { kind: 'prores4444', path: r.path, at: new Date().toISOString() }];
+    card.updatedAt = new Date().toISOString();
+    this.changed(true);
+    return { path: r.path };
+  }
+
   /* ─── Queue ────────────────────────────────────────────────────────── */
 
   /** Cards "Generate all" would run: ready to go and not generated yet (or failed last time). */
   pendingCards(): Card[] {
-    return this.state().cards.filter((c) => !c.orphan && this.ready(c) && (c.versions.length === 0 || c.status === 'error'));
+    // A Comp tab run is started from its own card there, never by "Generate all".
+    return this.state().cards.filter((c) => !c.orphan && !c.tool && this.ready(c) && (c.versions.length === 0 || c.status === 'error'));
   }
 
   private ready(c: Card): boolean {
@@ -928,7 +1260,7 @@ export class Engine {
     if (!next) return;
     const card = this.card(next);
     if (!card) return void this.pump();
-    this.running = { cardId: next, jobId: null, stop: null, cancelled: false, runner: null, why: '', meter: { executionMs: 0, credits: 0, timed: false, billed: false } };
+    this.running = { cardId: next, jobId: null, stop: null, cancelled: false, runner: null, why: '', meter: { executionMs: 0, credits: 0, timed: false, billed: false }, graphs: [] };
     try {
       await this.generate(card);
     } catch (e) {
@@ -1052,6 +1384,14 @@ export class Engine {
     const label = (phase: string): string => (part ? `${part} · ${phase}` : phase);
     this.phase(card, label(runner.resource.kind === 'local' ? 'Queued in ComfyUI' : `Queued on ${runner.resource.label}`));
     const submittedAt = Date.now();
+    if (this.host.id === 'effectcraft') eightBitVideo(api);
+    // The exact graph that goes out, kept next to the versions: what ran can always be read back (and re-run in ComfyUI).
+    const graphRel = `${card.id}/submitted_${new Date(submittedAt).toISOString().replace(/[:.]/g, '-')}${part ? `_${slugFromPrompt(part, 24)}` : ''}.api.json`;
+    try {
+      mkdirSync(join(this.mediaDir, card.id), { recursive: true });
+      writeFileSync(join(this.mediaDir, graphRel), JSON.stringify(api, null, 1));
+      this.running?.graphs.push(graphRel);
+    } catch { /* provenance is a courtesy; the run goes on */ }
     const jobId = await runner.submit(api, meta, { previewMethod: 'auto' });
     if (this.running) this.running.jobId = jobId;
     if (this.running?.cancelled) {
@@ -1108,9 +1448,9 @@ export class Engine {
   }
 
   /** Save a result as the card's next version (descriptive name: hosts show it), with its job record. */
-  private saveVersion(card: Card, m: WorkflowManifest, result: { bytes: Uint8Array; filename: string }): { n: number; rel: string; abs: string; stem: string } {
+  private saveVersion(card: Card, m: WorkflowManifest, result: { bytes: Uint8Array; filename: string }, base?: string): { n: number; rel: string; abs: string; stem: string } {
     const n = (card.versions.at(-1)?.n ?? 0) + 1;
-    const stem = `${slugFromPrompt(card.prompt || m.title, 28)}_v${String(n).padStart(3, '0')}`;
+    const stem = `${base ?? slugFromPrompt(card.prompt || m.title, 28)}_v${String(n).padStart(3, '0')}`;
     const rel = `${card.id}/${stem}${extname(result.filename).toLowerCase()}`;
     const abs = join(this.mediaDir, rel);
     writeFileSync(abs, result.bytes);
@@ -1133,7 +1473,7 @@ export class Engine {
         cost: rate !== null ? { executionMs: v.executionMs, derivedCredits: v.derivedCredits, basis: 'execution_ms × rate (≈)' } : undefined,
       },
       comfy: r.kind === 'local' ? { url: this.settings.comfyUrl, version: this.comfyHealth.version } : undefined,
-      workflow: { id: m.id, template: m.source, license: m.license },
+      workflow: { id: m.id, template: m.source, license: m.license, submitted: this.running?.graphs ?? [] },
     }, null, 2));
     card.versions.push(v);
     card.activeVersion = v.n;
@@ -1148,7 +1488,8 @@ export class Engine {
     const m = entry.manifest;
     const comp = this.snap!.comp!;
     const { api, seed } = this.fill(card, entry);
-    if (m.task === 'outpaint-video') return this.outpaint(card, entry, api, seed, t0);
+    if (card.tool) return this.generateTool(card, entry, api, seed, t0);
+    if (m.task === 'outpaint-video') return this.outpaint(card, entry, api, seed, t0, await this.layerClip(card));
     const slot = this.slotOf(card);
 
     // Size and length, from the slot.
@@ -1188,13 +1529,14 @@ export class Engine {
       this.phase(card, 'Uploading');
       setRef(api, m.bindings.image, await this.runner().uploadFile(src, () => readFileSync(src), `flow_${card.id}${extname(src)}`, 'image/png'));
     } else if (m.input === 'video') {
-      const source = card.origin.kind === 'layer' ? card.origin.sourcePath : null;
-      if (!source) throw new Error('This workflow needs a video: select a clip layer in EffectCraft, then press "Use selected layers".');
+      if (card.origin.kind !== 'layer') throw new Error('This workflow needs a video: select a clip layer in EffectCraft, then press "Use selected layers".');
+      // The item's file as the project has it now: footage may have been relinked or replaced since the card was made.
+      const source = (await this.layerClip(card)).path;
       this.phase(card, 'Uploading');
-      setRef(api, m.bindings.video, await this.runner().uploadFile(source, () => readFileSync(source), `flow_${card.id}${extname(source)}`, 'video/mp4'));
+      setRef(api, m.bindings.video, await this.runner().uploadFile(source, () => readFileSync(source), `flow_${card.id}${extname(source)}`, videoMime(source)));
     }
     const models = this.checkModels(api, m);
-    if (m.task === 'reframe') return this.reframe(card, entry, api, seed, models, t0);
+    if (m.task === 'reframe') return this.reframe(card, entry, api, seed, models, t0, await this.layerClip(card));
 
     const result = await this.runJob(card, api, m, undefined, this.meta(m, length?.seconds ?? null));
     const { n, rel, abs, stem } = this.saveVersion(card, m, result);
@@ -1233,6 +1575,7 @@ export class Engine {
         if (idx !== undefined) await host.tagMarker(idx, card.id).catch(() => undefined);
       }
     }
+    card.placedVersion = n;
     this.recordVersion(card, m, {
       n, file: rel, kind: m.output, workflowId: m.id, prompt: card.prompt, seed,
       width: m.bindings.width ? size?.width : undefined, height: m.bindings.width ? size?.height : undefined,
@@ -1242,18 +1585,116 @@ export class Engine {
     await this.setHostStatus(card, 'done');
   }
 
+  /** A layer card's clip: its item and file as the project has them now (footage may have been relinked or replaced). */
+  private async layerClip(card: Card): Promise<ClipSource> {
+    const origin = card.origin;
+    if (origin.kind !== 'layer') throw new Error('This works on a clip: select its layer in EffectCraft, then press "Use selected layers".');
+    const info = await this.tl().itemInfo(origin.itemId);
+    if (!info?.width || !info.height) throw new Error('EffectCraft did not report the clip\'s size.');
+    const path = info.path ?? origin.sourcePath;
+    if (!path) throw new Error('This layer has no footage file to work from.');
+    if (path !== origin.sourcePath) origin.sourcePath = path;
+    const layer = this.snap?.layers.find((l) => l.id === origin.layerId);
+    return { kind: 'layer', itemId: origin.itemId, path, info, name: layer?.name ?? info.name, layer };
+  }
+
+  /** Make `compId` the active comp (a run that waited in the queue may find another one open), and read it again. */
+  private async ensureComp(compId: number): Promise<void> {
+    if (this.snap?.comp?.id === compId) return;
+    await this.tl().openComp(compId);
+    this.snap = await this.host.snapshot();
+  }
+
+  /**
+   * The input of a Comp tab run. A layer: its own file. The comp: a render of
+   * its span (the work area, or all of it — never longer than the cap), made now
+   * by the host's render queue into the card's folder next to the project, and
+   * imported, so the result can stand on exactly what the model saw.
+   */
+  private async toolClip(card: Card): Promise<ClipSource> {
+    const host = this.tl();
+    await this.ensureComp(card.compId);
+    if (card.origin.kind === 'layer') return this.layerClip(card);
+    if (card.origin.kind !== 'comp') throw new Error('A Comp tab run starts from the comp or from a layer.');
+    const comp = this.snap?.comp;
+    if (!comp || comp.id !== card.compId) throw new Error('The comp this run is for is not open in EffectCraft.');
+    const origin = card.origin;
+    const n = (card.versions.at(-1)?.n ?? 0) + 1;
+    const span = origin.range === 'workArea' ? `work-area-${secs(origin.start)}-${secs(origin.end)}s` : 'whole-comp';
+    this.phase(card, 'Rendering the comp');
+    const r = await host.renderRange({
+      start: origin.start, duration: Math.max(0, origin.end - origin.start), cap: card.tool?.cap ?? 8,
+      dir: join(this.mediaDir, card.id), name: `${slugFromPrompt(comp.name, 24)}_${span}_v${String(n).padStart(3, '0')}`, format: 'prores',
+    });
+    this.throwIfCancelled();
+    // Comfy Cloud takes uploads up to 100 MiB (its /api/features: max_upload_size 104857600, measured 25 Oct 2026).
+    const route = this.running?.runner?.resource;
+    const size = existsSync(r.path) ? statSync(r.path).size : 0;
+    if (route?.kind === 'cloud' && size > 104_857_600) {
+      throw new Error(`The render is ${Math.round(size / 1048576)} MB and Comfy Cloud takes uploads up to 100 MiB: shorten the work area (or lower the cap), or run it locally.`);
+    }
+    this.phase(card, 'Importing the render');
+    const itemId = await host.importFile(r.path);
+    const info = await host.itemInfo(itemId);
+    if (!info?.width || !info.height) throw new Error('EffectCraft did not report the size of the render.');
+    const end = r.start + r.duration;
+    const name = origin.range === 'workArea' ? `${comp.name} · work area ${secs(r.start)}–${secs(end)} s` : `${comp.name} · whole comp`;
+    return {
+      kind: origin.range, itemId, path: r.path, name, start: r.start, end,
+      info: { ...info, frameRate: info.frameRate || comp.fps, duration: info.duration || r.duration },
+    };
+  }
+
+  /** The result's name: "<Comp> · 9:16", then "<Comp> · 9:16 v2" for the next versions. */
+  private toolCompName(card: Card, n: number): string {
+    const base = card.tool?.label ?? resultName(this.snap?.comp?.name ?? 'Comp', card.tool?.id ?? 'tool', card.tool?.options ?? {});
+    return n > 1 ? `${base} v${n}` : base;
+  }
+
+  /** What a Comp tab version records about its input. */
+  private sourceRecord(src: ClipSource): NonNullable<Version['source']> {
+    const rel = relative(this.mediaDir, src.path);
+    const inside = !rel.startsWith('..') && !/^[a-z]:/i.test(rel);
+    return {
+      kind: src.kind, file: inside ? rel.replace(/\\/g, '/') : src.path, start: src.start, end: src.end,
+      itemId: src.kind === 'layer' ? undefined : src.itemId, name: src.name,
+    };
+  }
+
+  /** A frame of the result as the host composites it now (the comp just built is the open one). */
+  private async resultThumb(card: Card, stem: string, time: number): Promise<string | undefined> {
+    const rel = `${card.id}/${stem}.thumb.png`;
+    try {
+      await this.tl().frameAt(Math.max(0, time), join(this.mediaDir, rel));
+      return rel;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** A Comp tab run: its source first, then what its tool makes of it. */
+  private async generateTool(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, t0: number): Promise<void> {
+    const m = entry.manifest;
+    const src = await this.toolClip(card);
+    if (m.task === 'outpaint-video') return this.outpaint(card, entry, api, seed, t0, src);
+    this.phase(card, 'Uploading');
+    setRef(api, m.bindings.video, await this.runner().uploadFile(src.path, () => readFileSync(src.path), `flow_${card.id}${extname(src.path)}`, videoMime(src.path)));
+    const models = this.checkModels(api, m);
+    if (m.task === 'reframe') return this.reframe(card, entry, api, seed, models, t0, src);
+    if (m.task === 'upscale-video') return this.upscaleToComp(card, entry, api, seed, models, t0, src);
+    if (m.task === 'matte-video') return this.matteTool(card, entry, api, seed, models, t0, src);
+    throw new Error(`${m.title} is not one of the Comp tab's tools.`);
+  }
+
   /**
    * The workflow tracks the subject and returns a small mask per frame; the
    * framing is built here, on the original footage, as a new comp with
    * Position keyframes. Nothing in the source comp changes.
    */
-  private async reframe(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, models: ModelCheck, t0: number): Promise<void> {
+  private async reframe(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, models: ModelCheck, t0: number, src: ClipSource): Promise<void> {
     const host = this.tl();
     const m = entry.manifest;
-    const origin = card.origin;
-    if (origin.kind !== 'layer') throw new Error('Reframe works on a clip: select its layer in EffectCraft, then press "Use selected layers".');
-    const info = await host.itemInfo(origin.itemId);
-    if (!info?.width || !info.height) throw new Error('EffectCraft did not report the clip\'s size.');
+    const info = src.info;
     const aspectName = String(card.params['@aspect'] ?? '9:16');
     const aspect = ASPECTS[aspectName] ?? ASPECTS['9:16'];
     const smoothing: Smoothing = card.params['@smooth'] === 'steady' || card.params['@smooth'] === 'locked' ? card.params['@smooth'] : 'gentle';
@@ -1278,14 +1719,16 @@ export class Engine {
     }
 
     const n = (card.versions.at(-1)?.n ?? 0) + 1;
-    const stem = `${slugFromPrompt(card.prompt, 20)}_${aspectName.replace(':', 'x')}_v${String(n).padStart(3, '0')}`;
+    const stem = card.tool
+      ? `${slugFromPrompt(card.tool.label ?? src.name, 28)}_v${String(n).padStart(3, '0')}`
+      : `${slugFromPrompt(card.prompt, 20)}_${aspectName.replace(':', 'x')}_v${String(n).padStart(3, '0')}`;
     writeFileSync(join(this.mediaDir, card.id, `${stem}.track.json`), JSON.stringify({ aspect: aspectName, smoothing, source: info, frames, plan }, null, 1));
     this.phase(card, 'Building the comp');
-    const sourceName = this.snap?.layers.find((l) => l.id === origin.layerId)?.name ?? info.name;
-    const compName = `${sourceName.replace(/\.[a-z0-9]{2,4}$/i, '')} · ${aspectName} v${String(n).padStart(3, '0')}`;
+    const sourceName = src.name;
+    const compName = card.tool ? this.toolCompName(card, n) : `${sourceName.replace(/\.[a-z0-9]{2,4}$/i, '')} · ${aspectName} v${String(n).padStart(3, '0')}`;
     const duration = info.duration || masks.length / fps;
     const built = await host.buildReframe({
-      name: compName, width: plan.width, height: plan.height, fps, duration, itemId: origin.itemId,
+      name: compName, width: plan.width, height: plan.height, fps, duration, itemId: src.itemId,
       layerName: `${TAG} reframe · ${layerNameFromPrompt(card.prompt, 32)}`, keys: plan.keys,
       comment: `${SLUG} card=${card.id} v${n} · ${m.title} · ${aspectName} · ${smoothing}\n${card.prompt}`,
     });
@@ -1301,7 +1744,12 @@ export class Engine {
       n, file: rel, kind: 'image', workflowId: m.id, prompt: card.prompt, seed,
       width: plan.width, height: plan.height, seconds: duration, jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0,
       remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId: built.compId,
-    }, stem, { comp: compName, aspect: aspectName, smoothing, keys: plan.keys.length, found: plan.found, frames: plan.frames });
+      ...(card.tool ? {
+        thumb: rel, compName, source: this.sourceRecord(src),
+        // A crop has no generated layer to hide: compare opens the source comp and the result in turn.
+        compare: { compId: built.compId, showing: 'result' as const, result: [], original: [], openOriginal: card.compId },
+      } : {}),
+    }, stem, { comp: compName, aspect: aspectName, smoothing, keys: plan.keys.length, found: plan.found, frames: plan.frames, ...(card.tool ? { tool: card.tool, source: this.sourceRecord(src) } : {}) });
     await this.setHostStatus(card, 'done');
   }
 
@@ -1311,15 +1759,12 @@ export class Engine {
    * where the generated video fills the frame and the original clip sits on
    * top, untouched, softened only where it meets the new space.
    */
-  private async outpaint(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, t0: number): Promise<void> {
+  private async outpaint(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, t0: number, src: ClipSource): Promise<void> {
     const host = this.tl();
     const m = entry.manifest;
     const o = m.outpaint;
-    const origin = card.origin;
     if (!o) throw new Error(`${m.title} has no outpaint settings in its manifest.`);
-    if (origin.kind !== 'layer' || !origin.sourcePath) throw new Error('Reframe works on a clip: select its layer in EffectCraft, then press "Use selected layers".');
-    const info = await host.itemInfo(origin.itemId);
-    if (!info?.width || !info.height) throw new Error('EffectCraft did not report the clip\'s size.');
+    const info = src.info;
     const fps = info.frameRate || this.snap?.comp?.fps || 24;
     const aspectName = String(card.params['@aspect'] ?? '9:16');
     const gen = o.sizes[aspectName] ?? o.sizes['9:16'];
@@ -1334,8 +1779,8 @@ export class Engine {
     o.pad.forEach((ref, i) => setRef(api, ref, plan.pad[i]));
 
     this.phase(card, 'Uploading');
-    const sourcePath = origin.sourcePath;
-    setRef(api, m.bindings.video, await this.runner().uploadFile(sourcePath, () => readFileSync(sourcePath), `flow_${card.id}${extname(sourcePath)}`, 'video/mp4'));
+    const sourcePath = src.path;
+    setRef(api, m.bindings.video, await this.runner().uploadFile(sourcePath, () => readFileSync(sourcePath), `flow_${card.id}${extname(sourcePath)}`, videoMime(sourcePath)));
     const models = this.checkModels(api, m);
 
     // One run per segment; each later run carries on from the frames the one before made.
@@ -1363,18 +1808,19 @@ export class Engine {
       if (!out) throw new Error('Joining the parts finished without a video.');
       result = { bytes: await this.runner().download(out), filename: out.filename, jobId: joined.jobId };
     }
-    const { n, rel, abs, stem } = this.saveVersion(card, m, result);
+    const { n, rel, abs, stem } = this.saveVersion(card, m, result, card.tool ? slugFromPrompt(card.tool.label ?? src.name, 28) : undefined);
 
     this.phase(card, 'Building the comp');
-    const sourceName = this.snap?.layers.find((l) => l.id === origin.layerId)?.name ?? info.name;
-    const compName = `${sourceName.replace(/\.[a-z0-9]{2,4}$/i, '')} · ${aspectName} v${String(n).padStart(3, '0')}`;
+    const sourceName = src.name;
+    const compName = card.tool ? this.toolCompName(card, n) : `${sourceName.replace(/\.[a-z0-9]{2,4}$/i, '')} · ${aspectName} v${String(n).padStart(3, '0')}`;
     const comment = `${SLUG} card=${card.id} v${n} · ${m.title} · ${aspectName}${seed !== null ? ` · seed ${seed}` : ''}\n${card.prompt}`;
     const built = await host.buildOutpaint({
       name: compName, width: plan.delivery[0], height: plan.delivery[1], fps, duration: plan.seconds,
       file: abs, fillScale: plan.bgScale, fillName: `${TAG} reframe · ${layerNameFromPrompt(card.prompt, 32)}`,
-      itemId: origin.itemId, clipName: sourceName, clipScale: plan.clipScale, clipCentre: plan.clipCentre,
+      itemId: src.itemId, clipName: sourceName, clipScale: plan.clipScale, clipCentre: plan.clipCentre,
       mask: plan.mask, feather: plan.feather, comment,
     });
+    const thumb = card.tool ? await this.resultThumb(card, stem, plan.seconds / 2) : undefined;
     this.notice = `Reframed to ${aspectName} in the new comp "${compName}": the space ${plan.pad[0] + plan.pad[2] > plan.pad[1] + plan.pad[3] ? 'left and right' : 'above and below'} `
       + `is generated, your clip sits on top of it untouched.`
       + (count > 1 ? ` The clip went through in ${count} runs, each carrying on from the last.` : '')
@@ -1383,7 +1829,132 @@ export class Engine {
       n, file: rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed,
       width: plan.gen[0], height: plan.gen[1], seconds: plan.seconds, jobId: result.jobId, createdAt: new Date().toISOString(),
       elapsedMs: Date.now() - t0, remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId: built.compId,
-    }, stem, { comp: compName, aspect: aspectName, plan });
+      itemId: built.fillItem,
+      ...(card.tool ? {
+        thumb, compName, source: this.sourceRecord(src),
+        // Original: the clip alone in the new frame (the generated layer hidden); result: both.
+        compare: { compId: built.compId, showing: 'result' as const, result: [[built.fillLayer, true]] as Array<[number, boolean]>, original: [[built.fillLayer, false]] as Array<[number, boolean]> },
+      } : {}),
+    }, stem, { comp: compName, aspect: aspectName, plan, ...(card.tool ? { tool: card.tool, source: this.sourceRecord(src), delivery: plan.delivery } : {}) });
+    await this.setHostStatus(card, 'done');
+  }
+
+  /**
+   * Upscale into a new comp at the target size: the upscaled clip on top, the
+   * original under it at the matching scale, switched off — never deleted. ×4 is
+   * two ×2 passes, the second fed with the first's result (uploaded, as a
+   * reframe's next run is fed with the one before).
+   */
+  private async upscaleToComp(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, models: ModelCheck, t0: number, src: ClipSource): Promise<void> {
+    const host = this.tl();
+    const m = entry.manifest;
+    const scale = Number(card.tool?.options.scale) === 4 ? 4 : 2;
+    const seconds = src.info.duration || null;
+    let result = await this.runJob(card, api, m, scale === 4 ? 'Pass 1 of 2' : undefined, this.meta(m, seconds));
+    if (scale === 4) {
+      this.phase(card, 'Pass 2 of 2 · Uploading');
+      const first = await this.runner().upload(result.bytes, `flow_${card.id}_pass1.mp4`, 'video/mp4');
+      const g = structuredClone(api);
+      setRef(g, m.bindings.video, first);
+      result = await this.runJob(card, g, m, 'Pass 2 of 2', this.meta(m, seconds, ':pass2'));
+    }
+    const { n, rel, abs, stem } = this.saveVersion(card, m, result, slugFromPrompt(card.tool?.label ?? src.name, 28));
+
+    this.phase(card, 'Building the comp');
+    const upItem = await host.importFile(abs);
+    const up = await host.itemInfo(upItem);
+    const width = up?.width || src.info.width * scale;
+    const height = up?.height || src.info.height * scale;
+    const fps = src.info.frameRate || up?.frameRate || this.snap?.comp?.fps || 24;
+    const duration = up?.duration || src.info.duration || 1;
+    const compName = this.toolCompName(card, n);
+    const comment = `${SLUG} card=${card.id} v${n} · ${m.title} · ×${scale}${seed !== null ? ` · seed ${seed}` : ''}`;
+    const built = await host.buildComp({
+      name: compName, width, height, fps, duration,
+      layers: [
+        { itemId: upItem, name: `${TAG} ×${scale} · ${src.name}`, comment },
+        { itemId: src.itemId, name: `${src.name} (original)`, scale: Math.round((width / src.info.width) * 100000) / 1000, visible: false },
+      ],
+    });
+    const [upLayer, original] = built.layers;
+    const thumb = await this.resultThumb(card, stem, duration / 2);
+    this.notice = `Upscaled ×${scale} into the new comp "${compName}" (${width}×${height}); your original is in it too, switched off.`;
+    this.recordVersion(card, m, {
+      n, file: rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed, width, height, seconds: duration,
+      jobId: result.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0,
+      remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId: built.compId, itemId: upItem,
+      thumb, compName, source: this.sourceRecord(src),
+      compare: { compId: built.compId, showing: 'result', result: [[upLayer, true], [original, false]], original: [[upLayer, false], [original, true]] },
+    }, stem, { comp: compName, scale, passes: scale === 4 ? 2 : 1, tool: card.tool, source: this.sourceRecord(src) });
+    await this.setHostStatus(card, 'done');
+  }
+
+  /**
+   * A subject matte from the Comp tab. From a layer: above it in its comp, as its
+   * luma track matte (the panel's cut-out). From a render of the comp: a new comp
+   * holding the render with the matte as its luma track matte.
+   */
+  private async matteTool(card: Card, entry: LibraryEntry, api: WorkflowJson, seed: number | null, models: ModelCheck, t0: number, src: ClipSource): Promise<void> {
+    const host = this.tl();
+    const m = entry.manifest;
+    const result = await this.runJob(card, api, m, undefined, this.meta(m, src.info.duration || null));
+    const { n, rel, abs, stem } = this.saveVersion(card, m, result, slugFromPrompt(card.tool?.label ?? src.name, 28));
+    const comment = `${SLUG} card=${card.id} v${n} · ${m.title}\n${card.prompt}`;
+    const fps = src.info.frameRate || this.snap?.comp?.fps || 24;
+    const duration = src.info.duration || 1;
+    let compare: CompareState;
+    let compName: string;
+    let compId: number | undefined;
+    let itemId: number | undefined;
+    let thumb: string | undefined;
+    if (src.kind === 'layer' && src.layer) {
+      this.phase(card, 'Placing in EffectCraft');
+      await this.ensureComp(card.compId);
+      const layer = this.snap?.layers.find((l) => l.id === src.layer!.id) ?? src.layer;
+      let matteLayer: number;
+      if (card.placed) {
+        // A new version replaces the matte's footage; the layer, its place and its role stay.
+        await host.replaceFootage(card.placed.itemId, abs, [card.placed.layerId]);
+        matteLayer = card.placed.layerId;
+      } else {
+        const placed = await host.place({
+          file: abs, time: layer.in, endTime: layer.out, sourceStart: layer.start,
+          name: `${TAG} matte · ${layerNameFromPrompt(card.prompt, 40)}`, comment, index: layer.index,
+        });
+        card.placed = placed;
+        await host.matchLayer(placed.layerId, placed.itemId, layer.id, src.itemId).catch(() => undefined);
+        matteLayer = placed.layerId;
+      }
+      card.placedVersion = n;
+      await host.setTrackMatte(layer.id, matteLayer, 'luma');
+      compName = this.snap?.comp?.name ?? 'the comp';
+      compare = { compId: card.compId, showing: 'result', result: [], original: [], matte: { layer: layer.id, matte: matteLayer } };
+      thumb = await this.resultThumb(card, stem, layer.in + (layer.out - layer.in) / 2);
+    } else {
+      this.phase(card, 'Building the comp');
+      itemId = await host.importFile(abs);
+      compName = this.toolCompName(card, n);
+      const built = await host.buildComp({
+        name: compName, width: src.info.width, height: src.info.height, fps, duration,
+        layers: [
+          { itemId, name: `${TAG} matte · ${layerNameFromPrompt(card.prompt, 40)}`, comment },
+          { itemId: src.itemId, name: src.name },
+        ],
+      });
+      const [matteLayer, clip] = built.layers;
+      await host.setTrackMatte(clip, matteLayer, 'luma');
+      compId = built.compId;
+      compare = { compId: built.compId, showing: 'result', result: [], original: [], matte: { layer: clip, matte: matteLayer } };
+      thumb = await this.resultThumb(card, stem, duration / 2);
+    }
+    this.notice = src.kind === 'layer'
+      ? `Cut out "${card.prompt}": the matte is above "${src.name}" as its luma track matte. "Export with alpha" writes a ProRes 4444 master.`
+      : `Cut out "${card.prompt}" in the new comp "${compName}". "Export with alpha" writes a ProRes 4444 master.`;
+    this.recordVersion(card, m, {
+      n, file: rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed, width: src.info.width, height: src.info.height, seconds: duration,
+      jobId: result.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0,
+      remaps: models.remaps.map((r) => `${r.wanted} → ${r.using}`), compId, itemId, thumb, compName, source: this.sourceRecord(src), compare,
+    }, stem, { comp: compName, tool: card.tool, source: this.sourceRecord(src) });
     await this.setHostStatus(card, 'done');
   }
 
@@ -1450,6 +2021,34 @@ export class Engine {
     }, stem, { document: doc.name, box: liveBox });
     await this.setHostStatus(card, 'done');
   }
+}
+
+/**
+ * EffectCraft 0.11.1 decodes 8-bit H.264 only (measured: "H.264 (High 10) isn't supported
+ * by the built-in decoder"). A template that carries its input's bit depth over — SeedVR2's
+ * CreateVideo takes it from GetVideoComponents — makes a 10-bit file of a 10-bit source, such
+ * as the Comp tab's ProRes renders; for EffectCraft it is set to 8 (CreateVideo offers auto, 8, 10).
+ */
+function eightBitVideo(api: WorkflowJson): void {
+  for (const node of Object.values(api)) {
+    if (node.class_type === 'CreateVideo' && Array.isArray(node.inputs.bit_depth)) node.inputs.bit_depth = 8;
+  }
+}
+
+/** The type a clip goes up as: the Comp tab's renders are ProRes .mov. */
+function videoMime(path: string): string {
+  return /\.mov$/i.test(path) ? 'video/quicktime' : /\.webm$/i.test(path) ? 'video/webm' : /\.mkv$/i.test(path) ? 'video/x-matroska' : 'video/mp4';
+}
+
+/** Seconds as the Comp tab names spans: "1.0", "12.5". */
+function secs(v: number): string {
+  return (Math.round(v * 10) / 10).toFixed(1);
+}
+
+/** The work-area render cap, seconds: the Flow window's setting (1–60, default 8). */
+export function renderCap(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.min(60, Math.max(1, n)) : 8;
 }
 
 async function inPool<T>(items: T[], size: number, fn: (item: T, index: number) => Promise<void>): Promise<void> {

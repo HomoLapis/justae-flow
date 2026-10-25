@@ -22,8 +22,10 @@ import type { ObjectInfo } from '../core/comfy/types.ts';
 import { getRef, modelFamily, planLength, planSize, resolveModels, setRef, splitRef, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import type { CardStatus } from '../core/storyboard/types.ts';
-import type { Box, CanvasHost, CanvasPlaceRequest, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, TimelineHost } from '../hosts/types.ts';
-import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/outpaint.ts';
+import type { Box, CanvasHost, CanvasPlaceRequest, CompRequest, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, RenderRequest, RenderResult, TimelineHost } from '../hosts/types.ts';
+import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, vaceGenSize } from '../core/reframe/outpaint.ts';
+import { toolById } from '../core/comp/tools.ts';
+import { compRoutes } from '../server/api-comp.ts';
 import type { Settings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
@@ -159,6 +161,7 @@ function maskPng(w: number, h: number, block: [number, number, number, number] |
 const seenHeaders: Array<{ path: string; auth: string | undefined; gpu: string | undefined }> = [];
 const submits: Array<{ prompt: Record<string, { inputs: Record<string, unknown> }>; extra_data?: { preview_method?: string } }> = [];
 const history: Record<string, unknown> = {};
+let uploads = 0;
 // The fake server has every model the bundled workflows name — the LTX transformer only as nvfp4,
 // like the machine this was built on, so the precision swap is exercised.
 const objectInfo: ObjectInfo = {};
@@ -179,7 +182,7 @@ const fake = createServer(async (req, res) => {
   const json = (o: unknown): void => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
   if (url.pathname === '/api/system_stats') return json({ system: { comfyui_version: 'fake' }, devices: [{ name: 'cuda:0 Fake GPU : cudaMallocAsync', vram_free: 8 * 2 ** 30 }] });
   if (url.pathname === '/api/object_info') return json(objectInfo);
-  if (url.pathname === '/api/upload/image') return json({ name: 'uploaded.png', subfolder: '' });
+  if (url.pathname === '/api/upload/image') { uploads++; return json({ name: 'uploaded.png', subfolder: '' }); }
   if (url.pathname === '/api/queue') return json({ queue_running: [], queue_pending: [] });
   seenHeaders.push({ path: url.pathname, auth: req.headers.authorization, gpu: req.headers['x-comfy-gpu'] as string | undefined });
   if (url.pathname === '/api/prompt') {
@@ -239,7 +242,12 @@ class FakeHost implements TimelineHost {
   readonly label = 'EffectCraft';
   markers: HostMarker[] = [];
   layers: Array<{ id: number; index: number; name: string; in: number; out: number; start: number; label: string; type: string; item: number; visible: boolean }> = [];
-  items = new Map<number, { path: string | null; width: number; height: number }>();
+  items = new Map<number, { path: string | null; width: number; height: number; duration?: number }>();
+  workArea: [number, number] | undefined = undefined;
+  renders: RenderRequest[] = [];
+  comps: CompRequest[] = [];
+  visibility: Array<[number, boolean]> = [];
+  relinks: Array<[number, string]> = [];
   labels: string[] = [];
   nextId = 100;
   selected: number[] = [];
@@ -250,7 +258,7 @@ class FakeHost implements TimelineHost {
   async snapshot(): Promise<HostSnapshot> {
     return {
       app: 'effectcraft', version: 'fake', project: { path: join(projectDir, 'p.ecproj'), dirty: false },
-      comp: { id: this.compId, name: 'Comp', width: 1280, height: 720, fps: 24, duration: 12 },
+      comp: { id: this.compId, name: 'Comp', width: 1280, height: 720, fps: 24, duration: 12, workArea: this.workArea ?? [0, 12] },
       markers: this.markers.map((m, index) => ({ ...m, index })), layers: this.layers.map(({ item: _i, visible: _v, ...l }) => l),
       selectedLayers: this.selected, time: 0,
     };
@@ -267,7 +275,7 @@ class FakeHost implements TimelineHost {
     this.layers.forEach((l, i) => (l.index = i + 1));
     return { itemId, layerId };
   }
-  async setTrackMatte(layer: number, matte: number, kind: string): Promise<void> { this.mattes.push([layer, matte, kind]); }
+  async setTrackMatte(layer: number, matte: number | null, kind: string): Promise<void> { this.mattes.push([layer, matte ?? -1, matte === null ? 'none' : kind]); }
   async buildReframe(r: ReframeRequest): Promise<{ compId: number; layerId: number }> { this.reframes.push(r); this.compId = this.nextId++; return { compId: this.compId, layerId: this.nextId++ }; }
   async openComp(id: number): Promise<void> { this.compId = id; }
   async buildOutpaint(r: OutpaintRequest): Promise<{ compId: number; fillLayer: number; fillItem: number; clipLayer: number }> { this.outpaints.push(r); this.compId = this.nextId++; return { compId: this.compId, fillLayer: this.nextId++, fillItem: this.nextId++, clipLayer: this.nextId++ }; }
@@ -281,12 +289,28 @@ class FakeHost implements TimelineHost {
     return { itemId, layerId };
   }
   async sourceOfLayer(id: number): Promise<number | null> { return this.layers.find((l) => l.id === id)?.item ?? null; }
-  async itemInfo(id: number): Promise<ItemInfo | null> { const it = this.items.get(id); return it ? { id, name: 'x', path: it.path, kind: 'video', width: it.width, height: it.height, duration: 4, frameRate: 24, comment: '' } : null; }
+  async itemInfo(id: number): Promise<ItemInfo | null> { const it = this.items.get(id); return it ? { id, name: 'x', path: it.path, kind: 'video', width: it.width, height: it.height, duration: it.duration ?? 4, frameRate: 24, comment: '' } : null; }
+  async renderRange(r: RenderRequest): Promise<RenderResult> {
+    this.renders.push(r);
+    const fs = await import('node:fs');
+    fs.mkdirSync(r.dir, { recursive: true });
+    const path = join(r.dir, `${r.name}.mp4`);
+    fs.writeFileSync(path, 'fake-render');
+    return { path, start: r.start, duration: Math.min(r.duration, r.cap), capped: r.duration > r.cap };
+  }
+  async importFile(path: string): Promise<number> {
+    const id = this.nextId++;
+    // The fake knows the size of a render of its comp; anything else it imports reports none.
+    const render = this.renders.find((r) => path.endsWith(`${r.name}.mp4`));
+    this.items.set(id, render ? { path, width: 1280, height: 720, duration: Math.min(render.duration, render.cap) } : { path, width: 0, height: 0 });
+    return id;
+  }
+  async buildComp(r: CompRequest): Promise<{ compId: number; layers: number[] }> { this.comps.push(r); this.compId = this.nextId++; return { compId: this.compId, layers: r.layers.map(() => this.nextId++) }; }
   async addMarker(time: number, comment: string): Promise<void> { this.markers.push({ index: 0, time, duration: 0, comment, label: 'None', cardId: null }); this.markers.sort((a, b) => a.time - b.time); }
   async setLayerComment(): Promise<void> {}
   async renameLayer(): Promise<void> {}
-  async relink(): Promise<void> {}
-  async setLayerVisible(id: number, v: boolean): Promise<void> { const l = this.layers.find((x) => x.id === id); if (l) l.visible = v; }
+  async relink(itemId: number, path: string): Promise<void> { this.relinks.push([itemId, path]); }
+  async setLayerVisible(id: number, v: boolean): Promise<void> { this.visibility.push([id, v]); const l = this.layers.find((x) => x.id === id); if (l) l.visible = v; }
   async setLayerLabel(): Promise<void> {}
   close(): void {}
 }
@@ -481,6 +505,218 @@ check('the comp: 1080×1920, the generated video filling it, the clip on top wit
 check('no non-commercial LoRA in the bundled reframe', !JSON.stringify(library.graph('vace-reframe')).includes('CausVid') && !JSON.stringify(library.graph('vace-reframe-draft')).includes('CausVid'));
 await host.openComp(1);
 await engine.sync();
+
+console.log('comp tab');
+{
+  // Sizes: the rule reproduces every size the reframe shipped with, and gives the two new formats.
+  const shipped14: Record<string, [number, number]> = { '9:16': [720, 1280], '4:5': [832, 1040], '1:1': [960, 960], '16:9': [1280, 720] };
+  const shipped13: Record<string, [number, number]> = { '9:16': [480, 832], '4:5': [576, 720], '1:1': [624, 624], '16:9': [832, 480] };
+  check('the VACE size rule reproduces the shipped 14B and 1.3B sizes',
+    Object.entries(shipped14).every(([a, s]) => JSON.stringify(vaceGenSize(a, '14b')) === JSON.stringify(s))
+    && Object.entries(shipped13).every(([a, s]) => JSON.stringify(vaceGenSize(a, '1.3b')) === JSON.stringify(s)));
+  check('21:9 is generated at 1456×624 (14B) and 1008×432 (1.3B): exactly 7:3, multiples of 16',
+    JSON.stringify(vaceGenSize('21:9', '14b')) === '[1456,624]' && JSON.stringify(vaceGenSize('21:9', '1.3b')) === '[1008,432]');
+  check('4:3 is generated at 1088×816 (14B) and 704×528 (1.3B)', JSON.stringify(vaceGenSize('4:3', '14b')) === '[1088,816]' && JSON.stringify(vaceGenSize('4:3', '1.3b')) === '[704,528]');
+  check('delivery comps are 1080 on the short side: 21:9 2520×1080, 4:3 1440×1080, 9:16 1080×1920',
+    JSON.stringify(DELIVERY['21:9']) === '[2520,1080]' && JSON.stringify(DELIVERY['4:3']) === '[1440,1080]' && JSON.stringify(DELIVERY['9:16']) === '[1080,1920]');
+  for (const id of ['vace-reframe', 'vace-reframe-draft']) {
+    const m = library.get(id)!.manifest;
+    check(`${id}: the manifest offers the six formats, each with the rule's size`,
+      JSON.stringify(m.params?.[0].options) === JSON.stringify([...REFRAME_ASPECTS])
+      && REFRAME_ASPECTS.every((a) => JSON.stringify(m.outpaint!.sizes[a]) === JSON.stringify(vaceGenSize(a, id === 'vace-reframe' ? '14b' : '1.3b'))));
+  }
+  check('the auto crop offers the same six formats', JSON.stringify(library.get('sam3-reframe')!.manifest.params?.[0].options) === JSON.stringify([...REFRAME_ASPECTS]) && Math.abs(ASPECTS['21:9'] - 7 / 3) < 1e-9);
+  const wide = planOutpaint({ width: 1280, height: 704, fps: 24, frames: 72 }, vaceGenSize('21:9', '1.3b'), DELIVERY['21:9'], 125);
+  check('21:9 from a 1280×704 clip: the new space left and right, the clip the full height', wide.scaled[1] === 432 && wide.pad[1] === 0 && wide.pad[3] === 0 && wide.pad[0] + wide.pad[2] === 1008 - wide.scaled[0] && wide.bgScale === 250);
+
+  // Plans, before anything runs.
+  const man = (id: string) => library.get(id)?.manifest;
+  const compSrc = { kind: 'workArea' as const, media: 'video' as const, width: 1280, height: 720, fps: 24, seconds: 3, requested: 3, name: 'Comp' };
+  const rp = toolById('reframe')!.plan(compSrc, { aspect: '21:9', quality: 'draft', mode: 'generate' }, man);
+  check('the reframe plan says the comp, the generated size and the model before it runs', rp.ok && rp.workflowId === 'vace-reframe-draft' && /2520×1080/.test(rp.makes) && /1008×432/.test(rp.makes) && rp.jobs.length === 1 && rp.variant === 'draft:21:9');
+  const fp = toolById('reframe')!.plan(compSrc, { aspect: '9:16', quality: 'final' }, man);
+  check('Final is the 14B workflow, at 720p', fp.workflowId === 'vace-reframe' && /720×1280/.test(fp.makes));
+  const cp = toolById('reframe')!.plan(compSrc, { aspect: '4:3', mode: 'crop' }, man);
+  check('crop with tracking: SAM 3, nothing generated, a 960×720 comp', cp.workflowId === 'sam3-reframe' && cp.output?.width === 960 && cp.output.height === 720 && /Nothing is generated/.test(cp.makes));
+  const up4 = toolById('upscale')!.plan(compSrc, { scale: 4 }, man);
+  check('×4 is two SeedVR2 passes, 5120×2880, and says it is beyond what was verified', up4.ok && up4.jobs.length === 2 && up4.output?.width === 5120 && up4.output.height === 2880 && up4.warnings.some((w) => /beyond 4K/.test(w)));
+  const up2 = toolById('upscale')!.plan(compSrc, { scale: 2 }, man);
+  check('×2 is one pass, 2560×1440, nothing to warn about', up2.jobs.length === 1 && up2.output?.width === 2560 && up2.warnings.length === 0 && Object.values(up2.params).includes(2));
+  const still = toolById('matte')!.plan({ ...compSrc, kind: 'layer', media: 'image' }, {}, man);
+  check('a tool that needs video refuses a still, in words', !still.ok && /still/.test(still.reason ?? ''));
+  check('the same shape is refused: no new space to generate', !toolById('reframe')!.plan(compSrc, { aspect: '16:9' }, man).ok);
+
+  // The engine: a run on the work area.
+  host.workArea = [1, 4];
+  await engine.sync();
+  const plan = await engine.planComp({ tool: 'reframe', source: 'workArea', options: { aspect: '9:16', quality: 'draft' }, cap: 8 });
+  check('the plan reads the work area from the host (1–4 s → 3 s)', plan.ok && plan.source.seconds === 3 && plan.source.width === 1280);
+  host.workArea = [0, 12];
+  await engine.sync();
+  const long = await engine.planComp({ tool: 'reframe', source: 'workArea', options: { aspect: '9:16' }, cap: 8 });
+  check('a work area longer than the cap is said, with the cap', long.source.seconds === 8 && long.source.requested === 12 && long.warnings.some((w) => /render stops at 8 s/.test(w)));
+  host.workArea = [1, 4];
+  await engine.sync();
+  let noPrompt = false;
+  try { await engine.runCompTool({ tool: 'reframe', source: 'workArea', options: { aspect: '9:16' }, cap: 8 }); } catch { noPrompt = true; }
+  check('a reframe without a scene is refused before anything is queued', noPrompt);
+  const submitsBefore = submits.length;
+  const { id: rfId } = await engine.runCompTool({ tool: 'reframe', source: 'workArea', options: { aspect: '9:16', quality: 'draft' }, cap: 8, prompt: 'a calm lake at dawn, mist' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === rfId)?.status ?? ''));
+  const rfc = engine.state().cards.find((c) => c.id === rfId)!;
+  const render = host.renders.at(-1)!;
+  const rfOut = host.outpaints.at(-1)!;
+  const draftM = library.get('vace-reframe-draft')!.manifest;
+  const rfSent = submits.at(-1)!.prompt as never;
+  check('a Comp tab reframe finishes', rfc.status === 'done' && rfc.versions.length === 1, rfc.error);
+  check('the host rendered exactly the work area, with the cap, into the card\'s folder', render.start === 1 && render.duration === 3 && render.cap === 8 && render.dir.endsWith(rfId));
+  check('the model got the render: 3 s = 72 frames → 73 on the lattice, at 480×832', getRef(rfSent, draftM.bindings.frames) === 73 && getRef(rfSent, draftM.outpaint!.take) === 72 && getRef(rfSent, draftM.bindings.width) === 480 && submits.length === submitsBefore + 1);
+  check('the new comp is "Comp · 9:16", 1080×1920, with the render (imported) on top', rfOut.name === 'Comp · 9:16' && rfOut.width === 1080 && rfOut.height === 1920 && host.items.get(rfOut.itemId)?.path === join(render.dir, `${render.name}.mp4`));
+  const rv = rfc.versions[0];
+  check('the version records its source, its comp, a picture and how to compare', rv.source?.kind === 'workArea' && rv.source.start === 1 && rv.compName === 'Comp · 9:16' && !!rv.thumb && rv.compare?.showing === 'result' && rv.compare.original[0][1] === false);
+  const rfJob = JSON.parse(readFileSync(join(s.mediaDir, rv.file.replace(/\.\w+$/, '.job.json')), 'utf8'));
+  check('job.json names the tool, the source render and the graph that was submitted',
+    rfJob.host?.tool?.id === 'reframe' && rfJob.host?.source?.kind === 'workArea' && rfJob.workflow?.submitted?.length === 1 && existsSync(join(s.mediaDir, rfJob.workflow.submitted[0])));
+  check('a Comp tab run is not part of "Generate all"', !engine.pendingCards().some((c) => c.id === rfId));
+  await engine.compare(rfId);
+  check('compare: the generated layer hidden (the clip alone in the new frame)', JSON.stringify(host.visibility.at(-1)) === JSON.stringify([rv.compare!.result[0][0], false]) && engine.state().cards.find((c) => c.id === rfId)!.versions[0].compare?.showing === 'original');
+  await engine.compare(rfId);
+  check('compare again: the result back', JSON.stringify(host.visibility.at(-1)) === JSON.stringify([rv.compare!.result[0][0], true]));
+  await host.openComp(1);
+  await engine.sync();
+  const again = await engine.runCompTool({ tool: 'reframe', source: 'workArea', options: { aspect: '9:16', quality: 'draft' }, cap: 8, prompt: 'a calm lake at dawn, mist' });
+  await until(() => engine.state().cards.find((c) => c.id === rfId)?.versions.length === 2);
+  check('the same reframe again is the same card\'s next version, "Comp · 9:16 v2"', again.id === rfId && host.outpaints.at(-1)?.name === 'Comp · 9:16 v2', `${again.id} ${rfId} ${host.outpaints.at(-1)?.name} ${engine.state().cards.find((c) => c.id === rfId)?.status} ${engine.state().cards.find((c) => c.id === rfId)?.error}`);
+  const view = await engine.compView();
+  check('the Comp tab view: comp, work area, the three tools, this run', view.comp?.workAreaSet === true && JSON.stringify(view.comp?.workArea) === '[1,4]' && view.tools.map((t) => t.id).join() === 'reframe,upscale,matte' && view.runs.some((r) => r.id === rfId && r.versions.length === 2));
+
+  // Upscale from the selected layer (the clip, 1344×768): a new comp at 2688×1536, the original kept, switched off.
+  await host.openComp(1);
+  host.selected = [901];
+  await engine.sync();
+  const { id: upId } = await engine.runCompTool({ tool: 'upscale', source: 'layer', options: { scale: 2 }, cap: 8 });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === upId)?.status ?? ''));
+  const upc = engine.state().cards.find((c) => c.id === upId)!;
+  const upComp = host.comps.at(-1)!;
+  check('an upscale from a layer finishes', upc.status === 'done', upc.error);
+  check('its comp: the upscaled clip on top, the original under it at 200%, switched off', upComp.layers.length === 2 && upComp.layers[1].itemId === 900 && upComp.layers[1].visible === false && upComp.layers[1].scale === 200 && /×2/.test(upComp.name));
+  const upSent = submits.at(-1)!.prompt as never;
+  check('SeedVR2 got ×2 and the clip\'s own file', getRef(upSent, '66:57.resize_type.multiplier') === 2);
+  check('…and writes 8-bit video (EffectCraft decodes 8-bit H.264 only), not the source\'s bit depth', getRef(upSent, '66:75.bit_depth') === 8);
+  const before4 = submits.length;
+  const uploads4 = uploads;
+  const { id: up4Id } = await engine.runCompTool({ tool: 'upscale', source: 'workArea', options: { scale: 4 }, cap: 8 });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === up4Id)?.status ?? ''));
+  const up4c = engine.state().cards.find((c) => c.id === up4Id)!;
+  check('×4 runs twice, the second pass fed with the first\'s result (two uploads: the render, then pass 1)', up4c.status === 'done' && submits.length === before4 + 2 && uploads === uploads4 + 2, up4c.error);
+  check('×4 of the 1280×720 work area: a 5120×2880 comp', host.comps.at(-1)?.width === 5120 && host.comps.at(-1)?.height === 2880);
+  const up4Job = JSON.parse(readFileSync(join(s.mediaDir, up4c.versions[0].file.replace(/\.\w+$/, '.job.json')), 'utf8'));
+  check('the run history knows the two passes apart (for the estimate)', services.runs.of('seedvr2-upscale:pass2', 'local').length >= 1 && up4Job.workflow.submitted.length === 2);
+
+  // Cut-out from the comp: a new comp, the render with its matte as luma track matte.
+  await host.openComp(1);
+  await engine.sync();
+  const { id: mId } = await engine.runCompTool({ tool: 'matte', source: 'comp', cap: 8, prompt: 'boat' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === mId)?.status ?? ''));
+  const mc = engine.state().cards.find((c) => c.id === mId)!;
+  const mComp = host.comps.at(-1)!;
+  check('a cut-out of the whole comp finishes in a new comp "Comp · cut-out"', mc.status === 'done' && mComp.name === 'Comp · cut-out', mc.error);
+  check('the whole comp, capped: 0–12 s rendered as 8 s', host.renders.at(-1)?.start === 0 && host.renders.at(-1)?.duration === 12 && host.renders.at(-1)?.cap === 8);
+  const mv = mc.versions[0];
+  check('the render takes its matte as a luma track matte', JSON.stringify(host.mattes.at(-1)) === JSON.stringify([mv.compare!.matte!.layer, mv.compare!.matte!.matte, 'luma']));
+  await engine.compare(mId);
+  check('compare takes the track matte off (nothing deleted)', JSON.stringify(host.mattes.at(-1)) === JSON.stringify([mv.compare!.matte!.layer, -1, 'none']));
+  await engine.compare(mId);
+  let refusedExport = false;
+  try { await engine.exportAlpha(rfId); } catch { refusedExport = true; }
+  check('only a cut-out exports with alpha', refusedExport);
+
+  // A cut-out from a layer goes above it, as its track matte.
+  await host.openComp(1);
+  host.selected = [901];
+  await engine.sync();
+  const { id: lmId } = await engine.runCompTool({ tool: 'matte', source: 'layer', cap: 8, prompt: 'woman' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === lmId)?.status ?? ''));
+  const lmc = engine.state().cards.find((c) => c.id === lmId)!;
+  check('a cut-out from a layer: its matte above it, as its luma track matte', lmc.status === 'done' && JSON.stringify(host.mattes.at(-1)) === JSON.stringify([901, lmc.placed?.layerId, 'luma']), lmc.error);
+  check('…and its version keeps the clip\'s file for the alpha master', lmc.versions[0].source?.file === clipPath && lmc.versions[0].compId === undefined && lmc.versions[0].compare?.compId === 1, JSON.stringify(lmc.versions[0]?.source) + ' ' + lmc.versions[0]?.compId + ' ' + lmc.versions[0]?.compare?.compId);
+
+  // The alpha master, through the same ffmpeg route as the Flow window's (when ffmpeg is on the PATH).
+  const { spawnSync } = await import('node:child_process');
+  const ff = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' });
+  if (ff.status === 0) {
+    const dir = join(s.mediaDir, mId);
+    const clip = join(dir, 'tiny_clip.mp4');
+    const matte = join(dir, 'tiny_matte.mp4');
+    spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=64x36:rate=24', '-t', '0.5', '-pix_fmt', 'yuv420p', clip]);
+    spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=black:size=64x36:rate=24', '-t', '0.5', '-vf', 'drawbox=x=16:y=8:w=32:h=20:color=white:t=fill', '-pix_fmt', 'yuv420p', matte]);
+    const card = engine.state().cards.find((c) => c.id === mId)!;
+    const v = card.versions[0];
+    const keep = { file: v.file, source: v.source };
+    // Point the version at the tiny files (the fake ComfyUI's outputs are not video).
+    const real = (engine as unknown as { card(id: string): { versions: Array<{ file: string; source?: { file: string | null } }> } }).card(mId);
+    real.versions[0].file = `${mId}/tiny_matte.mp4`;
+    real.versions[0].source!.file = `${mId}/tiny_clip.mp4`;
+    const out = await engine.exportAlpha(mId);
+    const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name,profile,pix_fmt', '-of', 'compact', out.path], { encoding: 'utf8' }).stdout;
+    const raw = spawnSync('ffmpeg', ['-v', 'error', '-i', out.path, '-frames:v', '1', '-pix_fmt', 'rgba', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 20 }).stdout as Buffer;
+    let lo = 255, hi = 0;
+    for (let i = 3; i < raw.length; i += 4) { lo = Math.min(lo, raw[i]); hi = Math.max(hi, raw[i]); }
+    check('the alpha master is ProRes 4444 with an alpha channel', /prores/.test(probe) && /4444/.test(probe) && /yuva/.test(probe), probe.trim());
+    check('its alpha is the matte, full range: black 0, white 254–255', lo === 0 && hi >= 254, `${lo}–${hi}`);
+    check('the export is remembered with the version', engine.state().cards.find((c) => c.id === mId)!.versions[0].exports?.[0]?.path === out.path);
+    real.versions[0].file = keep.file;
+    real.versions[0].source!.file = keep.source!.file;
+  } else {
+    console.log('  · ffmpeg is not on the PATH: the alpha master is not checked here');
+  }
+
+  // Relinking after a save: a reframe version must not take over the item a matte was placed on.
+  host.relinks.length = 0;
+  (engine as unknown as { relinkMoved(media: string): void }).relinkMoved(s.mediaDir);
+  await until(() => host.relinks.length > 0, 2000);
+  await sleep(200);
+  const clipCardNow = (engine as unknown as { card(id: string): import('../core/storyboard/types.ts').Card }).card(clipCard);
+  const placedRelink = host.relinks.find(([item]) => item === clipCardNow.placed?.itemId);
+  check('relinking keeps a matte\'s item on the matte, even when a reframe version is the active one',
+    clipCardNow.versions.at(-1)?.compId !== undefined && !!placedRelink && placedRelink[1].endsWith(clipCardNow.versions[0].file.split('/')[1]));
+  check('…and relinks the items a version imported (a generated fill, a render)', host.relinks.some(([item]) => item === rfc.versions[0].itemId) && host.relinks.some(([item]) => item === rfc.versions[0].source?.itemId));
+  await host.openComp(1);
+  await engine.sync();
+}
+
+console.log('comp routes');
+{
+  const { createServer: mk } = await import('node:http');
+  const routes = compRoutes(engine);
+  const srv = mk(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    for (const [method, re, h] of routes) {
+      const m = re.exec(url.pathname);
+      if (m && req.method === method) return void (await h(req, res, m, url));
+    }
+    res.writeHead(404); res.end();
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  const get = await (await fetch(`${base}/api/comp`)).json() as { comp: { name: string; workArea: number[] }; tools: unknown[]; runs: unknown[] };
+  check('GET /api/comp: the comp with its work area, the tools, the runs', get.comp?.name === 'Comp' && get.comp.workArea[0] === 1 && get.tools.length === 3 && get.runs.length >= 4);
+  const pl = await (await fetch(`${base}/api/comp/plan`, { method: 'POST', body: JSON.stringify({ tool: 'reframe', source: 'comp', options: { aspect: '4:3' }, cap: 8 }) })).json() as { ok: boolean; makes: string; warnings: string[] };
+  check('POST /api/comp/plan: 4:3 from the whole comp, capped at 8 s, said', pl.ok && /1440×1080/.test(pl.makes) && pl.warnings.some((w) => /12\.0 s/.test(w)));
+  const no = await fetch(`${base}/api/comp/run`, { method: 'POST', body: JSON.stringify({ tool: 'upscale', source: 'comp', options: { scale: 2 } }) });
+  check('POST /api/comp/run wants the page\'s session token', no.status === 403);
+  const bad = await fetch(`${base}/api/comp/run`, { method: 'POST', headers: { 'X-Flow-Token': SESSION_TOKEN }, body: JSON.stringify({ tool: 'nope', source: 'comp' }) });
+  check('an unknown tool is refused in words', bad.status === 400 && /No Comp tool/.test(((await bad.json()) as { error: string }).error));
+  const ok = await (await fetch(`${base}/api/comp/run`, { method: 'POST', headers: { 'X-Flow-Token': SESSION_TOKEN }, body: JSON.stringify({ tool: 'upscale', source: 'comp', options: { scale: 2 }, cap: 4 }) })).json() as { id: string; queued: number };
+  check('with the token it queues the run', !!ok.id && ok.queued === 1);
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === ok.id)?.status ?? ''));
+  check('…which renders the whole comp with the cap it was given (4 s)', host.renders.at(-1)?.cap === 4 && engine.state().cards.find((c) => c.id === ok.id)?.status === 'done');
+  const cmp = await fetch(`${base}/api/comp/compare`, { method: 'POST', headers: { 'X-Flow-Token': SESSION_TOKEN }, body: JSON.stringify({ id: ok.id }) });
+  check('POST /api/comp/compare switches it', cmp.ok && ((await cmp.json()) as { showing: string }).showing === 'original');
+  srv.close();
+  await host.openComp(1);
+  await engine.sync();
+}
 
 const sidecar = JSON.parse(readFileSync(join(projectDir, 'p.justae-flow.json'), 'utf8')) as { cards: unknown[] };
 engine.stop();

@@ -45,6 +45,8 @@ export interface HostComp {
   height: number;
   fps: number;
   duration: number;
+  /** Timeline hosts: the work area, comp seconds [start, end] (the whole comp when none was set). */
+  workArea?: [number, number];
 }
 
 export interface HostSnapshot {
@@ -125,6 +127,49 @@ export interface OutpaintRequest {
   comment: string;
 }
 
+/** A span of the active comp rendered to a video file. */
+export interface RenderRequest {
+  /** Comp seconds. */
+  start: number;
+  duration: number;
+  /** Seconds the render may last at most (the Flow window's "Work-area render cap"). */
+  cap: number;
+  /** Folder to write into, and the file's name without extension. */
+  dir: string;
+  name: string;
+  /** h264: a small movie; prores: ProRes (the Comp tab — the render is the untouched middle of its result). Default h264. */
+  format?: 'h264' | 'prores';
+}
+
+export interface RenderResult {
+  path: string;
+  start: number;
+  /** Seconds rendered: the span, or the cap when the span is longer. */
+  duration: number;
+  /** The span was longer than the cap. */
+  capped: boolean;
+}
+
+/** A new comp holding items as layers, from 0 s, listed top first. */
+export interface CompRequest {
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  layers: Array<{
+    itemId: number;
+    name: string;
+    comment?: string;
+    /** Uniform scale, %. */
+    scale?: number;
+    /** Comp px; default the centre. */
+    position?: [number, number];
+    /** false: added with its video switched off. */
+    visible?: boolean;
+  }>;
+}
+
 interface HostBase {
   readonly id: HostId;
   readonly label: string;
@@ -158,13 +203,19 @@ export interface TimelineHost extends HostBase {
   setLayerComment(layerId: number, comment: string): Promise<void>;
   /** Point a footage item at its file's new location. */
   relink(itemId: number, path: string): Promise<void>;
-  /** `layerId` shows only where `matteLayerId` is bright (luma) or opaque (alpha). */
-  setTrackMatte(layerId: number, matteLayerId: number, kind: 'luma' | 'alpha'): Promise<void>;
+  /** `layerId` shows only where `matteLayerId` is bright (luma) or opaque (alpha); null takes the track matte off. */
+  setTrackMatte(layerId: number, matteLayerId: number | null, kind: 'luma' | 'alpha'): Promise<void>;
   /** A new comp holding the footage with keyed Position; it is left open. */
   buildReframe(req: ReframeRequest): Promise<{ compId: number; layerId: number }>;
   /** A new comp: the generated frame below, the original clip above it; it is left open. */
   buildOutpaint(req: OutpaintRequest): Promise<{ compId: number; fillLayer: number; fillItem: number; clipLayer: number }>;
   openComp(compId: number): Promise<void>;
+  /** Render a span of the active comp to an H.264 file with the host's own render queue. */
+  renderRange(req: RenderRequest): Promise<RenderResult>;
+  /** Import a file into the project; its footage item id. */
+  importFile(path: string): Promise<number>;
+  /** A new comp with these items as layers; it is left open. Layer ids in the order given. */
+  buildComp(req: CompRequest): Promise<{ compId: number; layers: number[] }>;
 }
 
 export interface CanvasPlaceRequest {

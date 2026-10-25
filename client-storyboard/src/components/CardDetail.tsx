@@ -164,7 +164,7 @@ function sizeOf(card: CardView, comp: { width: number; height: number }): string
   const o = card.origin;
   if (o.kind === 'marker') return `${comp.width}×${comp.height}`;
   if (o.box) return `${Math.round(o.box[2])}×${Math.round(o.box[3])}`;
-  if (o.kind !== 'selection' && o.width && o.height) return `${o.width}×${o.height}`;
+  if ('width' in o && o.width && o.height) return `${o.width}×${o.height}`;
   return `${comp.width}×${comp.height}`;
 }
 

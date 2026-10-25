@@ -251,17 +251,30 @@ function launchEditor(a: Record<string, unknown>): { ok: boolean; reason?: strin
  * Delivery masters with ffmpeg (on the PATH), from a lossless save:
  *   prores4444  prores_ks · profile 4444 · yuva444p10le (alpha kept) · vendor apl0
  *   png16       a bit-exact 16-bit PNG sequence (rgba64be)
+ *
+ * prores4444 also takes a `matte` (the Comp tab's cut-out): the clip's colour
+ * with the matte's brightness as its alpha (ffmpeg alphamerge). SAM 3's matte
+ * comes back as H.264 in TV range (measured: color_range=tv), so it is expanded
+ * to full range first — black fully transparent, white fully opaque. `out`
+ * names the file (default: next to `src`).
  */
-function master(a: Record<string, unknown>): Promise<{ ok: boolean; path?: string; reason?: string }> {
+export function master(a: Record<string, unknown>): Promise<{ ok: boolean; path?: string; reason?: string }> {
   const src = safePath(a.src);
   let out: string;
   let args: string[];
   if (a.kind === 'prores4444') {
-    out = src.replace(/(_\d{5})?\.(mkv|png|tiff?|exr)$/i, '') + '_master_4444.mov';
+    out = a.out ? safePath(a.out) : src.replace(/(_\d{5})?\.(mkv|mov|mp4|png|tiff?|exr)$/i, '') + '_master_4444.mov';
     const seq = /_(\d{5})\.png$/i.test(src);
     const input = seq ? ['-framerate', String(Number(a.fps) || 24), '-i', src.replace(/_\d{5}\.png$/i, '_%05d.png')] : ['-i', src];
-    args = ['-v', 'error', '-y', ...input, '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', '-vendor', 'apl0',
-      '-alpha_bits', '16', '-c:a', 'pcm_s24le', out];
+    const codec = ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', '-vendor', 'apl0', '-alpha_bits', '16', '-c:a', 'pcm_s24le'];
+    if (a.matte) {
+      const matte = safePath(a.matte);
+      args = ['-v', 'error', '-y', ...input, '-i', matte, '-filter_complex',
+        '[1:v]scale=in_range=tv:out_range=full,format=gray[a];[0:v]format=yuva444p10le[c];[c][a]alphamerge,format=yuva444p10le[v]',
+        '-map', '[v]', '-map', '0:a?', ...codec, out];
+    } else {
+      args = ['-v', 'error', '-y', ...input, ...codec, out];
+    }
   } else if (a.kind === 'png16') {
     const base = src.split(/[\\/]/).pop()!.replace(/\.(mkv|mov)$/i, '');
     const dir = join(dirname(src), `${base}_png16`);

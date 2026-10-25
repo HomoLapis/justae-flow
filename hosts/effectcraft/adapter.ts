@@ -9,18 +9,25 @@
  *   file.replaceFootage · file.importPlaceholder · layer.revealSource ·
  *   item.metadata · edit.label · layer.setComment · layer.rename ·
  *   layer.setTrackMatte · comp.new · comp.open · prop.get · prop.set · prop.addKey ·
- *   layer.addMask · layer.mask.set
+ *   layer.addMask · layer.mask.set · layer.setSwitch · footage.relink · script.run
+ *   (the work-area render, through the host script's renderWorkAreaToFile)
  *
  * plus the control method `render.frame`. The channel has no authentication
  * and listens on loopback only; the user turns it on.
  */
 
-import { copyFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { LEGACY_SLUG, PRODUCT, SLUG } from '../../core/brand.ts';
 import { JsonLinesClient } from '../jsonlines.ts';
 import type { CardStatus } from '../../core/storyboard/types.ts';
-import type { HostLayer, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, TimelineHost } from '../types.ts';
+import type {
+  CompRequest, HostLayer, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, RenderRequest, RenderResult, TimelineHost,
+} from '../types.ts';
 import { HostError } from '../types.ts';
+
+/** The host script the Flow window runs in EffectCraft (After Effects scripting), shared with the work-area render. */
+const HOST_SCRIPT = fileURLToPath(new URL('../../extensions/effectcraft/flow-host.jsx', import.meta.url));
 
 /** Marker/layer label for each card state. Names are EffectCraft's own (After Effects' label set). */
 export const STATUS_LABEL: Record<CardStatus, string | null> = {
@@ -47,9 +54,11 @@ export class EffectCraftAdapter implements TimelineHost {
   readonly label = 'EffectCraft';
   private rpc: JsonLinesClient;
   private version = '';
+  private hostScript: string;
 
-  constructor(port = 9877) {
+  constructor(port = 9877, hostScript = HOST_SCRIPT) {
     this.rpc = new JsonLinesClient({ port, label: 'EffectCraft' });
+    this.hostScript = hostScript;
   }
 
   private exec<T = unknown>(command: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
@@ -74,11 +83,18 @@ export class EffectCraftAdapter implements TimelineHost {
     };
     if (summary.activeComp == null) return snap;
     const info = await this.exec<{
-      id: number; name: string; width: number; height: number; frameRate: number; duration: number;
-      layers: Array<{ id: number; index: number; name: string; in: number; out: number; start: number; label: string; type: string }>;
+      id: number; name: string; width: number; height: number; frameRate: number; duration: number; workArea?: [number, number];
+      layers: Array<{ id: number; index: number; name: string; in: number; out: number; start: number; label: string; type: string; switches?: { video?: boolean } }>;
     }>('comp.info');
-    snap.comp = { id: info.id, name: info.name, width: info.width, height: info.height, fps: info.frameRate, duration: info.duration };
-    snap.layers = info.layers.map((l): HostLayer => ({ id: l.id, index: l.index, name: l.name, in: l.in, out: l.out, start: l.start, label: l.label, type: l.type }));
+    snap.comp = {
+      id: info.id, name: info.name, width: info.width, height: info.height, fps: info.frameRate, duration: info.duration,
+      // comp.info reports the work area as [start, end] seconds (measured on 0.11.1).
+      workArea: Array.isArray(info.workArea) && info.workArea.length === 2 ? [info.workArea[0], info.workArea[1]] : undefined,
+    };
+    snap.layers = info.layers.map((l): HostLayer => ({
+      id: l.id, index: l.index, name: l.name, in: l.in, out: l.out, start: l.start, label: l.label, type: l.type,
+      visible: l.switches?.video,
+    }));
     const markers = await this.exec<RawMarker[]>('markers.list');
     snap.markers = markers.map((m): HostMarker => ({
       index: m.index, time: m.time, duration: m.duration, comment: m.comment, label: m.label,
@@ -231,9 +247,9 @@ export class EffectCraftAdapter implements TimelineHost {
     await this.exec('layer.rename', { layer: layerId, name });
   }
 
-  /** EffectCraft switches the matte layer's video off itself, as After Effects does. */
-  async setTrackMatte(layerId: number, matteLayerId: number, kind: 'luma' | 'alpha'): Promise<void> {
-    await this.exec('layer.setTrackMatte', { layer: layerId, matte: matteLayerId, kind });
+  /** EffectCraft switches the matte layer's video off itself, as After Effects does; `matte: null` takes it off. */
+  async setTrackMatte(layerId: number, matteLayerId: number | null, kind: 'luma' | 'alpha'): Promise<void> {
+    await this.exec('layer.setTrackMatte', matteLayerId === null ? { layer: layerId, matte: null } : { layer: layerId, matte: matteLayerId, kind });
   }
 
   async buildReframe(req: ReframeRequest): Promise<{ compId: number; layerId: number }> {
@@ -277,6 +293,51 @@ export class EffectCraftAdapter implements TimelineHost {
 
   async openComp(compId: number): Promise<void> {
     await this.exec('comp.open', { comp: compId });
+  }
+
+  /**
+   * The host script's renderWorkAreaToFile (extensions/effectcraft/flow-host.jsx), run
+   * through script.run like the Flow window's own calls: EffectCraft's render queue,
+   * its H.264 or ProRes output module, the other queued items left alone. It renders
+   * the active comp; the caller opens the right one first.
+   */
+  async renderRange(req: RenderRequest): Promise<RenderResult> {
+    mkdirSync(req.dir, { recursive: true });
+    const call = `renderWorkAreaToFile(${Number(req.cap) || 15}, ${JSON.stringify(req.dir)}, ${Number(req.start)}, ${Number(req.duration)}, ${JSON.stringify(req.name)}, ${JSON.stringify(req.format ?? 'h264')})`;
+    const r = await this.exec<{ ok: boolean; result: unknown; error: { message: string } | null }>(
+      'script.run', { code: `${readFileSync(this.hostScript, 'utf8')}\n${call}`, name: `${PRODUCT} render` }, 600_000,
+    );
+    if (!r.ok || r.error) throw new HostError(`EffectCraft could not render the comp: ${r.error?.message ?? 'the script failed'}`);
+    let out: { success?: boolean; error?: string; path?: string; duration?: number; workAreaStart?: number; capped?: boolean };
+    try { out = JSON.parse(String(r.result)); } catch { throw new HostError(`EffectCraft's render answered something unreadable: ${String(r.result).slice(0, 200)}`); }
+    if (!out.success || !out.path) throw new HostError(`EffectCraft could not render the comp: ${out.error ?? 'no file'}`);
+    return { path: out.path, start: out.workAreaStart ?? req.start, duration: out.duration ?? req.duration, capped: !!out.capped };
+  }
+
+  async importFile(path: string): Promise<number> {
+    const imp = await this.exec<{ items: number[]; errors: unknown[] }>('file.import', { paths: [path] }, 120_000);
+    const itemId = imp.items?.[0];
+    if (itemId === undefined) throw new HostError(`EffectCraft could not import ${path}: ${JSON.stringify(imp.errors)}`);
+    return itemId;
+  }
+
+  async buildComp(req: CompRequest): Promise<{ compId: number; layers: number[] }> {
+    const made = await this.exec<{ comp: number }>('comp.new', {
+      name: req.name, width: req.width, height: req.height, frameRate: req.fps, duration: req.duration, open: true,
+    });
+    // Added bottom first, each new one on top: the stack ends as listed.
+    const ids: number[] = new Array(req.layers.length);
+    for (let i = req.layers.length - 1; i >= 0; i--) {
+      const l = req.layers[i];
+      const added = await this.exec<{ layer: number }>('layer.addItem', { item: l.itemId, time: 0, index: 1 });
+      ids[i] = added.layer;
+      await this.exec('layer.rename', { layer: added.layer, name: l.name });
+      if (l.comment) await this.exec('layer.setComment', { layers: [added.layer], comment: l.comment }).catch(() => undefined);
+      if (l.scale !== undefined && Math.abs(l.scale - 100) > 1e-3) await this.exec('prop.set', { layer: added.layer, path: 'transform/scale', value: [l.scale, l.scale] });
+      if (l.position) await this.exec('prop.set', { layer: added.layer, path: 'transform/position', value: l.position });
+      if (l.visible === false) await this.setLayerVisible(added.layer, false);
+    }
+    return { compId: made.comp, layers: ids };
   }
 
   close(): void {

@@ -19,6 +19,7 @@ import { openFlowWindow } from './dock.ts';
 import { makeServices } from './services.ts';
 import { taskOf } from './resources.ts';
 import { activeResource, resourceRoutes } from './api-resources.ts';
+import { compRoutes } from './api-comp.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
@@ -99,6 +100,9 @@ engine.onChange(() => {
 });
 
 type Handler = (req: IncomingMessage, res: ServerResponse, m: RegExpExecArray, url: URL) => Promise<void> | void;
+
+/** A tab the panel asked the Flow window to show ("Open the Comp tab"); an open window picks it up within a few seconds. */
+let uiIntent: { tab: string; at: number } | null = null;
 
 /** The panel's status line: the resource the next (or running) job uses, and the balance when it bills. */
 function panelResource(): {
@@ -216,13 +220,17 @@ const routes: Array<[string, RegExp, Handler]> = [
   // The panel in EffectCraft opens the Flow window, docked at EffectCraft's right edge (server/dock.ts).
   // The ScriptUI panel asks with wait: false — its socket would hold EffectCraft's UI while the window docks.
   ['POST', /^\/api\/window\/open$/, async (req, res) => {
-    const { wait } = await json<{ wait?: boolean }>(req);
-    const opening = openFlowWindow(`http://127.0.0.1:${PORT}/`, join(configDir(), 'window'));
+    const { wait, tab } = await json<{ wait?: boolean; tab?: string }>(req);
+    const want = tab && /^(workflow|marker|storyboard|comp)$/.test(tab) ? tab : null;
+    if (want) uiIntent = { tab: want, at: Date.now() };
+    const opening = openFlowWindow(`http://127.0.0.1:${PORT}/${want ? `#${want}` : ''}`, join(configDir(), 'window'));
     if (wait === false) { opening.catch(() => undefined); return send(res, 200, { ok: true, how: 'opening' }); }
     send(res, 200, await opening);
   }],
+  ['GET', /^\/api\/ui\/intent$/, (_q, res) => send(res, 200, uiIntent ?? { tab: null, at: 0 })],
   ['GET', /^\/api\/media\/(.+)$/, (req, res, m) => serveFile(res, engine.mediaDir, decodeURIComponent(m[1]), req)],
   ...resourceRoutes(services, engine),
+  ...compRoutes(engine),
 ];
 
 const server = createServer(async (req, res) => {
