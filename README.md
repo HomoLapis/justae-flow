@@ -70,19 +70,27 @@ selected layer — into something new beside it. Nothing in your comp is changed
 the whole comp are rendered by EffectCraft when the run starts — its render queue, ProRes 422 HQ — into the run's
 folder next to the project, and imported, so the result stands on exactly what the model saw. The render never lasts
 longer than **Settings ▸ Work-area render cap** (default 8 s); the tab says so, with the setting one click away, when
-the span is longer. *Selected layer* uses the layer's own file (a video clip).
+the span is longer. *Selected layer* uses the layer's own file (a video clip): the layer selected when you click the
+chip, which stays the source while EffectCraft selects other layers — it selects every result it places — until you
+pick another (a different selection is offered under the chips, never taken).
 
 | Tool | What it runs | What it makes |
 |---|---|---|
 | **Reframe** — 9:16 · 4:5 · 1:1 · 16:9 · 21:9 · 4:3, *Draft* or *Final* | Wan2.1 VACE outpainting (`vace-reframe-draft` 1.3B / `vace-reframe` 14B) | a new comp "*&lt;Comp&gt;* · 9:16" at the delivery size: the generated video fills it, your render or clip sits on top, untouched, with a soft edge where it meets the new space. *Advanced ▸ Mode ▸ Crop with tracking* runs the SAM 3 auto crop instead (nothing generated) |
-| **Upscale** — ×2, or ×4 | SeedVR2 3B (`seedvr2-upscale`); ×4 is two ×2 passes, the second fed with the first's result | a new comp at the target size (stated before the run): the upscaled clip, and your original under it at the matching scale, switched off. The file is 8-bit H.264 even from a 10-bit source: EffectCraft 0.11.1 decodes no other H.264 |
+| **Upscale** — ×2, or ×4, *Keep original colours* | SeedVR2 3B (`seedvr2-upscale`); ×4 is two ×2 passes, the second fed with the first's result | a new comp at the target size (stated before the run): the upscaled clip, and your original under it at the matching scale, switched off. The file is 8-bit H.264 even from a 10-bit source: EffectCraft 0.11.1 decodes no other H.264. *Keep original colours* (on by default) sets SeedVR2's own colour correction (`SeedVR2PostProcessing`, its choices in *Advanced*) to `wavelet`; off, it is the template's `none`, the model's colours |
 | **Cut-out** | SAM 3 tracking (`sam3-matte`), the subject named in a word | from a layer: a matte layer above it, set as its luma track matte; from the comp: a new comp "*&lt;Comp&gt;* · cut-out" with the render and its matte. **Export with alpha** writes a ProRes 4444 `.mov` (the clip's colour, the matte as alpha) with ffmpeg, next to the project, and *Reveal .mov* shows it |
+| **Extend** — +2, 4 or 5 s, "what happens next" | LTX-2.5 image-to-video (`ltx25-i2v`) from the source's last frame: the comp's frame at the out point of the work area or comp, or the clip's own frame there (ffmpeg) | a new layer that starts at the source's out point, above it, at the source's size and frame rate; LTX makes 8k + 1 frames, one more than shown — the first repeats your last frame and is trimmed off. A comp too short to hold it is lengthened. Nothing is rendered, so the render cap does not apply |
+| **Slow motion / fps** — ×2 slow, ×4 slow, *fps → 2 × fps* | frame interpolation from the official `utility_video_frame_interpolation` template: RIFE (`interp-rife`, default), FILM (`interp-film`, the template as it ships), GIMM-VFI (`interp-gimm`, non-commercial licence) | a new comp: slow motion at the source's rate, (n − 1) × k + 1 frames, the sound left out; or twice the rate for the same length, the sound kept. Your original is in it, switched off |
+| **Social pack** — any of the six formats, *Draft / Final*, *+ Upscale ×2*, *Masters* | the Reframe of each format, one after the other in the queue; then, if asked, SeedVR2 ×2 of each result comp and a master of each last comp | one comp per format (and its ×2 comp); a master per format next to the project — EffectCraft renders the comp (ProRes 422 HQ), ffmpeg writes ProRes 4444 or a PNG 16-bit sequence. *Results* shows the pack's runs together, with how many are done |
 
 Generation frames and delivery comps per format. The generation frame follows one rule
 (`core/reframe/outpaint.ts`, `vaceGenSize`): Wan 2.1's own frame where the format is its own (1280×720 for the 14B,
 832×480 for the 1.3B, and their portrait), otherwise the size with exactly that aspect, both sides multiples of 16 (the
 step `WanVaceToVideo` takes), whose pixel count is nearest to that frame's. The rule gives back every size the reframe
-shipped with; 21:9 and 4:3 are new. The delivery comp is 1080 px on its short side.
+shipped with; 21:9 and 4:3 are new. The delivery comp is 1080 px on its short side. The model is shown the clip less a
+margin where it meets new space (1.5 × the clip's soft edge + 8 px; 28 px on a 21:9 draft of a 1280×704 clip): on
+25 Oct a 21:9 draft drew a bright line 4–5 px outside the clip's edge, where the original does not cover it; whatever
+the model does at its own edge now lies under the opaque original.
 
 | Format | Final (14B) | Draft (1.3B) | Comp |
 |---|---|---|---|
@@ -96,8 +104,11 @@ shipped with; 21:9 and 4:3 are new. The delivery comp is 1080 px on its short si
 Each tool card shows the comp's own frame at the playhead (captured by EffectCraft) next to what it will make — for
 Reframe, a mock of the new frame with the generated area hatched — says what the run will make before it runs, and has
 the resource chooser and the estimate of the other tabs: each tool routes by its own row of *Settings ▸ Resources*
-(Reframe → *Generative reframe* or *Reframe draft*, Upscale → *Upscale*, Cut-out → *Cut-out / matte*), and a pick on the
-card holds for that tool. Technical choices (seed, crop mode, smoothing) are under *Advanced*.
+(Reframe → *Generative reframe* or *Reframe draft*, Upscale → *Upscale*, Cut-out → *Cut-out / matte*, Extend →
+*Generate video*, Slow motion → *Slow motion / fps*; a Social pack's runs by their own rows unless the card picks a
+resource for all of them), and a pick on the card holds for that tool. The chooser says, per resource, whether the
+workflow is known to run there ("✓ has it", "✓ ran here 25 Oct" on a deployment once a run finished there, "not run
+here yet"). Technical choices (seed, crop mode, smoothing, colour correction) are under *Advanced*.
 
 **Results** lists the runs of the comp: running ones with their phase, a bar and *Cancel*; finished ones with their
 time, the credits derived from it on a resource that bills (or *no credits*), *Open comp*, *Compare* (original ⇄
@@ -130,6 +141,29 @@ All bundled workflows are **official ComfyUI templates** with **open weights**, 
 | `vace-reframe-draft` | `video_wan_vace_outpainting` | the same on the template's 1.3B model, 480p, for a quick look | Apache-2.0 |
 | `qwen-edit` | `image_qwen_image_edit_2511_int8` | image + prompt → edited image (PhotoCraft selections) | Apache-2.0 |
 | `seedvr2-upscale-image` | `utility_seedvr2_3b_int8_upscale_image` | image restoration upscale | Apache-2.0 |
+| `interp-rife` | `utility_video_frame_interpolation` | frames in between (×2, ×4), with RIFE VFI in place of the template's interpolator | MIT (RIFE; ComfyUI-Frame-Interpolation) |
+| `interp-film` | `utility_video_frame_interpolation` | the same, the template as it ships (core nodes, FILM) | Apache-2.0 (FILM) |
+| `interp-gimm` | `utility_video_frame_interpolation` | the same, with GIMM-VFI | S-Lab License 1.0 — **non-commercial use only** |
+| `h3-flf` | `video_minimax_h3_i2v` | first + last frame → video with sound (the Flow window's Featured) | MiniMax H3 open weights; commercial use of local outputs needs MiniMax's licence |
+| `wan22-flf` | `video_wan2_2_14B_flf2v` | first + last frame → video (the Flow window's Featured) | Apache-2.0 |
+
+The interpolation template runs LoadVideo → GetVideoComponents → FrameInterpolate → CreateVideo → SaveVideo with a
+multiplier and an "apply the multiplier to FPS" switch: off, the same rate and N times the frames (slow motion); on,
+N times the rate (25 → 50). `interp-rife` and `interp-gimm` put RIFE VFI (`ComfyUI-Frame-Interpolation`, checkpoint
+`rife47.pth`, the one that pack keeps on disk here) or GIMM-VFI (`ComfyUI-GIMM-VFI`) in place of FrameInterpolate;
+the rest is the template's. `h3-flf` wires a second image to the node's optional `last_frame` and drops the template's
+turbo-LoRA branch (it is switched off there), so it runs on the base model without that file.
+
+**Featured** (Workflow tab, above the library): LTX-2.5 image → video and text → video, MiniMax H3 first + last frame,
+Wan 2.2 first + last frame, Z-Image-Turbo, Qwen-Image-Edit 2511, SeedVR2 ×2 and SAM 3, each with where it runs —
+"runs on: Local ✓ · Cloud ✗ · Proxy ✓ · *your deployment* ✓/?" from the probes (a deployment: ✓ once a run of that
+workflow finished there) — and, when the local ComfyUI lacks something, each missing file with the URL its template
+downloads it from; one that runs nowhere stays listed, greyed. *Use it* makes it the workflow of the Marker and
+Storyboard tabs (the server hands over the graph with your ComfyUI's precisions swapped in). MiniMax H3 has
+*Draft / Final*: *Final* runs the draft, then SeedVR2 ×2 on its result as a second job on the same resource (original
+colours kept) and places that; the draft stays in the shot folder and `job.json` says what happened. Its card carries
+the licence note (MiniMax commercial licence for locally generated outputs; in the EU: DA VERIFICARE on the licence
+text).
 
 The SAM 3 template detects the subject frame by frame and only previews the mask; the build replaces the detection
 with the core nodes `SAM3_VideoTrack` + `SAM3_TrackToMask` (one subject stays the same subject through the clip)
@@ -211,7 +245,7 @@ construction.
 
 **Where each task runs.** A table in the same page sets, per task, Local, Cloud, a deployment, the proxy or
 **Auto** (the defaults: video Auto, image Local, generative reframe Cloud, reframe draft Local, upscale Cloud,
-matte Local, slow motion Local, restyle Auto). Auto is Local when the local ComfyUI has the workflow's nodes and
+matte Local, slow motion / fps Local, restyle Auto). Auto is Local when the local ComfyUI has the workflow's nodes and
 models, else the first other resource that has them. A row on a resource that is not set up falls back to Auto, so
 without a key everything stays local. The resource on the **Generate** button overrides the table for a batch; the
 EffectCraft panel says where its layer tools run. Each shot's `job.json` records the resource, why it was chosen,
@@ -251,6 +285,30 @@ The run history the estimates come from is `runs.json`, in the same user folder.
 next job waits for a worker); with `--min 1` a worker stays up and bills while idle — its card says how much a day.
 `comfy deploy stop` ends the charge and keeps the URL. JustAE Flow does not build, release, deploy, start, scale or
 stop anything on the platform: it talks to an endpoint you already have ([quickstart](https://docs.comfy.org/development/serverless/quickstart)).
+
+**Your own deployment.** A generic recipe with comfy-cli (docs.comfy.org, *Comfy API Quickstart*; comfy-cli's
+`comfy-build` and `comfy-deploy` skills, `comfy skills show comfy-deploy`):
+
+```bash
+pip install -U comfy-cli
+comfy build init <dir> --name <name> --models-dir <ComfyUI>/models --custom-nodes-dir <ComfyUI>/custom_nodes
+comfy build push
+comfy build release create --target linux/nvidia --watch
+comfy deploy refs compute          # GPU classes, regions, credits per hour, storage per GB-month
+comfy deploy up <dir> --gpu <class> --region <region> --min 0 --max 1 --watch
+comfy deploy status <dir>          # its endpoint: Settings ▸ Resources ▸ Add a deployment
+comfy deploy stop <dir>            # ends the charge; keeps the endpoint and the staged models
+```
+
+Put in the Build only what the heavy tasks need: the models a bundled workflow names are in its manifest
+(`workflows/<id>.json` → `models`, each with the URL its template downloads it from) — for example `vace-reframe`
+and `seedvr2-upscale`, whose nodes are all core ComfyUI. `--min 0 --max 1` scales to zero between jobs (the next job
+waits for a worker: measured on 25 Oct, about 1–2 minutes from cold) and never runs two workers at once. Costs, as
+`comfy deploy refs compute` listed them on 25 Oct 2026 (comfy-cli 1.23.0): the GPU per hour while a worker runs
+(the table above; RTX PRO 6000 736.39 credits/h) and network storage for the staged models at **42.2 credits
+(0.20 $) per GB per month** — how a deployment's storage is billed in detail is DA VERIFICARE. JustAE Flow itself
+never builds, deploys, scales or stops anything; set the deployment's GPU and minimum workers in its card so the
+estimates use the right rate.
 
 What is different on v2: workflows go in API format (the Workflow tab still reads your local ComfyUI's folder, and
 its graph is what goes to the cloud); no live previews; on a deployment, only the nodes and models of the build it
@@ -383,6 +441,14 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
 - Upscale past 4K (3840 px on the long side, e.g. ×4 of 1280×720) is not verified on a 16 GB GPU: the card says so.
 - Reframe *Final* (VACE 14B) takes minutes per sampling step on a 16 GB card; it was checked here up to the submitted
   graph, not end to end (DA VERIFICARE: time and VRAM of a full run on this GPU).
+- A Comp tab run opens its own comp in EffectCraft when it starts (to render it, or to place its result there): a run
+  that waited in the queue can bring another comp to the front while you work.
+- Extend continues from one frame: what moved before it (speed, direction) is not seen by the model, only described by
+  your text. Measured at 24 fps; other frame rates are set the same way (8k + 1 frames) but not run here.
+- Slow motion with GIMM-VFI downloads its weights on first use and was not run here; its licence (S-Lab 1.0) allows
+  non-commercial use only. RIFE and FILM were run.
+- MiniMax H3 first + last frame (Featured) was not run end to end here (DA VERIFICARE: time and VRAM on this GPU); a
+  Social pack's *+ Upscale ×2* makes 4K comps (2160×3840 for 9:16), at the edge of what was verified on 16 GB.
 - Storyboards written under the project's former name (`*.shiftfield.json`) are still read, where they are.
 
 ## Licence

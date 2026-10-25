@@ -21,14 +21,19 @@ workflows/*.api.json
   image_z_image_turbo, utility_seedvr2_3b_int8_upscale_video,
   utility_birefnet_remove_background, image_qwen_image_edit_2511_int8,
   utility_seedvr2_3b_int8_upscale_image, utility_video_segment_sam3,
-  video_wan_vace_outpainting. Changes:
+  video_wan_vace_outpainting, utility_video_frame_interpolation,
+  video_minimax_h3_i2v, video_wan2_2_14B_flf2v. Changes:
   converted to the API format; output filename prefixes set; in the BiRefNet
   graph, the preview node is replaced by a save node; in the two SAM 3 graphs,
   the per-frame detection and its preview are replaced by the core tracking
   nodes (SAM3_VideoTrack, SAM3_TrackToMask) and a save node; in the two Wan
-  VACE graphs, the clip is cut to one run and scaled before the padding, the
-  previews are removed, and the CausVid LoRA (CC BY-NC 4.0) is replaced by
-  lightx2v's Apache-2.0 LoRA (14B) or removed (1.3B, template defaults).
+  VACE graphs, the clip is cut to one run, scaled and cropped before the
+  padding, the previews are removed, and the CausVid LoRA (CC BY-NC 4.0) is
+  replaced by lightx2v's Apache-2.0 LoRA (14B) or removed (1.3B, template
+  defaults); in the frame-interpolation graphs, the template's FrameInterpolate
+  is kept (FILM) or replaced by RIFE VFI or GIMM-VFI; in the H3 graph, a second
+  image is wired to the node's last_frame and the turbo-LoRA branch (off in
+  the template) is removed.
 
 Model weights are NOT included. Each workflow manifest (workflows/<id>.json)
 names the files it needs, where the official template downloads them from,
@@ -43,7 +48,26 @@ and the licence of the weights:
   Wan2.1 VACE 14B and 1.3B, Wan2.1 VAE, umt5-xxl   Apache-2.0 (Wan-AI)
   lightx2v Wan2.1 T2V 14B 4-step LoRA              Apache-2.0 (lightx2v)
   Gemma 4 encoders   see the model card of the files the template downloads
+  Wan2.2 I2V 14B (high/low noise)                  Apache-2.0 (Wan-AI)
+  MiniMax H3 open weights   commercial use of locally generated outputs needs
+                     a MiniMax commercial licence (sold by Comfy); in the EU:
+                     DA VERIFICARE on the licence text
+  FILM (frame interpolation)   Apache-2.0 (google-research/frame-interpolation);
+                     the file is Comfy-Org's repackaging, whose model card says
+                     "other": DA VERIFICARE
+  RIFE (rife47.pth)  MIT (hzwer: ECCV2022-RIFE, Practical-RIFE); the node pack
+                     downloads it from Hugging Face mirrors it lists, not from
+                     the author: provenance DA VERIFICARE
+  GIMM-VFI           S-Lab License 1.0 (GSeanCDAT/GIMM-VFI; weights mirrored as
+                     Kijai/GIMM-VFI_safetensors) — "Redistribution and use for
+                     non-commercial purpose ... are permitted"; commercial use
+                     needs the authors' permission
 Read each licence before using the outputs commercially.
+
+Custom node packs the workflows above use (installed in your ComfyUI, not here):
+  ComfyUI-Frame-Interpolation (Fannovel16)   MIT  — RIFE VFI
+  ComfyUI-GIMM-VFI (kijai)                   S-Lab License 1.0, non-commercial
+                                             — GIMMVFI_interpolate
 
 client/ (the Flow window) and extensions/effectcraft/flow-host.jsx
   JustAE Flow 2 for After Effects, by the author of this project, brought to
