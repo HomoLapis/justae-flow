@@ -23,6 +23,8 @@ export interface ResourceView {
   minWorkers?: number;
   usable: boolean;
   reason?: string;
+  /** A job it refused outright (403), with the server's words. */
+  refused?: { at: string; message: string };
   creditsPerHour: number | null;
   gpuLabel: string | null;
   needsKey: 'platform' | 'proxy' | 'none';
@@ -164,7 +166,8 @@ export function localResource(): ResourceView | undefined {
 
 /** Any resource that bills (Cloud, a deployment) can take a job: the balance is worth reading. */
 export function billingConfigured(d: ResourcesData | null): boolean {
-  return !!d && d.key.set && d.resources.some((r) => r.creditsPerHour !== null && r.usable);
+  // The balance is worth reading whenever a key is set and a billing resource is on — even one that refuses jobs.
+  return !!d && d.key.set && d.resources.some((r) => r.creditsPerHour !== null && r.enabled);
 }
 
 export async function resolveRun(q: { task: 'video' | 'image'; override: string | null; workflowId: string; graph?: unknown }): Promise<Resolution> {

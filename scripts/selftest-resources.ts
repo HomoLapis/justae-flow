@@ -80,6 +80,8 @@ export async function fakeV2(): Promise<FakeV2> {
       const p = JSON.parse(body.toString('utf8')) as { workflow: Record<string, { class_type: string }> };
       const classes = Object.values(p.workflow).map((x) => x.class_type);
       if (classes.includes('Broke')) return json(402, { error: { code: 'insufficient_credits', message: 'Insufficient credits.' } });
+      // What Comfy Cloud answered a free-tier key on 25 Oct 2026 (measured).
+      if (classes.includes('FreeTier')) return json(403, { error: { code: 'forbidden', message: 'API key authentication is not available for free tier accounts' } });
       const id = `job-${++n}`;
       jobs.set(id, { at: Date.now(), video: classes.includes('SaveVideo'), canceled: false });
       return json(201, job(id));
@@ -176,6 +178,20 @@ export async function resourceChecks(check: Check, until: (fn: () => boolean, ms
   let credit: unknown = null;
   try { await jobs.submit('deployment', { 1: { class_type: 'Broke', inputs: {} } }, { workflowId: 'x', slotSeconds: null, scaleWithSlot: false, source: 'flow' }); } catch (e) { credit = e; }
   check('402 insufficient_credits becomes an error that offers "run locally"', credit instanceof RunError && credit.code === 'insufficient_credits' && credit.action === 'run-locally' && credit.status === 402);
+  {
+    let refused: unknown = null;
+    try { await jobs.submit('deployment', { 1: { class_type: 'FreeTier', inputs: {} } }, { workflowId: 'x', slotSeconds: null, scaleWithSlot: false, source: 'flow' }); } catch (e) { refused = e; }
+    check('a 403 says the server\'s own words (free tier) and offers "run locally"', refused instanceof RunError && refused.status === 403 && /free tier accounts/.test(refused.message) && refused.action === 'run-locally');
+    const dep = reg.view().resources.find((r) => r.id === 'deployment')!;
+    check('after a refusal the resource takes no jobs until Check or another key; reads still work', !dep.usable && /refuses jobs/.test(dep.reason ?? '') && !!dep.refused && reg.usable(reg.get('deployment')!).ok);
+    check('rows and Auto stop sending jobs there', reg.resolve('upscale', null, (x) => (x.id === 'local' ? 'missing' : 'ok')).resource.id !== 'deployment');
+    const calls = v2.seen.length;
+    let again: unknown = null;
+    try { await jobs.submit('deployment', { 9: { class_type: 'SaveImage', inputs: {} } }, { workflowId: 'x', slotSeconds: null, scaleWithSlot: false, source: 'flow' }); } catch (e) { again = e; }
+    check('a second submit there is refused at once, without a call', again instanceof RunError && again.status === 403 && v2.seen.length === calls);
+    reg.clearRefusal('deployment');
+    check('Check (clearRefusal) makes it take jobs again', reg.view().resources.find((r) => r.id === 'deployment')!.usable);
+  }
 
   // The proxy without a token must not be handed a key from the environment.
   reg.update({ resources: [{ id: 'proxy', url: v2.url, enabled: true }] });

@@ -61,9 +61,23 @@ export class CapabilityProbe {
     this.library = library;
     this.runs = runs;
     this.localAuth = localAuth;
-    registry.onChange(() => this.cache.clear());
+    // Only a change of what a probe depends on (addresses, switches, the key) throws the probes away —
+    // not a pick on the Generate button or a row of the task table.
+    let sig = this.signature();
+    registry.onChange(() => {
+      const next = this.signature();
+      if (next === sig) return;
+      sig = next;
+      this.cache.clear();
+      this.warm();
+    });
     // A run that finishes on a deployment is the proof it can run there.
     runs.onAdd((r) => { const c = this.cache.get(r.resourceId); if (c) this.applyProven(c.caps); });
+  }
+
+  private signature(): string {
+    const key = this.registry.key();
+    return JSON.stringify([this.registry.list().map((r) => [r.id, r.url, r.enabled]), key.length, key.slice(-4)]);
   }
 
   cached(id: string): Capabilities | null {

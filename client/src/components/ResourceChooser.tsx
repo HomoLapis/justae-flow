@@ -81,7 +81,10 @@ export function ResourceChooser({ shots, disabled }: { shots: ShotForEstimate[];
         title={route?.why ?? ''}
       >
         <span className="flex w-full items-center gap-1 text-xs">
-          <span className="truncate">{picked ? picked.label : `Default · ${route?.label ?? '…'}`}</span>
+          {/* A pick that cannot take jobs (no key, refused) is said, with where the batch goes instead. */}
+          <span className="truncate" title={picked && !picked.usable ? `${picked.label}: ${picked.reason ?? 'not usable'}` : undefined}>
+            {picked ? (picked.usable ? picked.label : `${route?.label ?? '…'} · ${picked.label} unavailable`) : `Default · ${route?.label ?? '…'}`}
+          </span>
           <span className="ml-auto text-ink-mute">▾</span>
         </span>
         <span className="w-full truncate font-mono text-[10px] font-normal text-ink-mute">{short(current, metered) || (metered ? '' : 'no credits')}</span>

@@ -81,8 +81,10 @@ export function mapV2Error(e: unknown, r: Resource): RunError {
     return new RunError(`${who}: the account behind this key is out of credits (402 insufficient_credits). Run this one on Local, or top up at platform.comfy.org.`, 402, 'insufficient_credits', 'run-locally');
   }
   if (e instanceof MissingCredentials) return new RunError(`${who}: no API key yet — add it in Settings ▸ Resources.`, 401, 'missing_credentials', 'add-key');
-  if (e instanceof Unauthorized) return new RunError(`${who}: the key was not accepted (401). Check it in Settings ▸ Resources.`, 401, 'unauthorized', 'check-key');
-  if (e instanceof Forbidden) return new RunError(`${who}: this key may not do that (403 forbidden).`, 403, 'forbidden', 'check-key');
+  // The server's own words come along: a refusal says why (a plan without API access, a key without the scope…).
+  const said = (x: ComfyError): string => (x.message ? ` — ${x.code ? `${x.code}: ` : ''}${x.message}` : '');
+  if (e instanceof Unauthorized) return new RunError(`${who}: the key was not accepted (401)${said(e)}. Check it in Settings ▸ Resources.`, 401, 'unauthorized', 'check-key');
+  if (e instanceof Forbidden) return new RunError(`${who}: refused (403 forbidden)${said(e)}.`, 403, e.code ?? 'forbidden', 'run-locally');
   if (e instanceof WorkflowFormatUi) return new RunError(`${who}: ${HINTS.workflow_format_ui}`, 422, 'workflow_format_ui');
   if (e instanceof MissingAsset) return new RunError(`${who}: ${HINTS.missing_asset}`, 422, 'missing_asset');
   if (e instanceof InvalidWorkflow) {
@@ -161,6 +163,9 @@ export class V2Jobs {
    */
   async submit(resourceId: string, workflow: Record<string, unknown>, meta: RunMeta): Promise<{ jobId: string }> {
     const r = this.resource(resourceId);
+    // A resource on record as refusing jobs is not asked again until the key changes or Check is pressed.
+    const refused = this.registry.refusal(r);
+    if (refused) throw new RunError(`${r.label} refuses jobs with this key: ${refused.message} (403, since ${refused.at.slice(0, 16).replace('T', ' ')} UTC). Run it on Local, or press Check in Settings ▸ Resources after changing the plan.`, 403, 'forbidden', 'run-locally');
     const client = this.registry.sdk(r);
     const wf = client.workflows.fromJson(workflow);
     const idempotencyKey = randomUUID();
@@ -177,6 +182,9 @@ export class V2Jobs {
           await sleep(Math.min(Math.max(after, 1), 30) * 1000);
           continue;
         }
+        // Measured on Comfy Cloud: a free-tier key gets 403 "API key authentication is not available for
+        // free tier accounts" on every submit. Remember it, so routing stops sending jobs there.
+        if (e instanceof Forbidden) this.registry.noteRefusal(r.id, e.message || 'forbidden');
         throw mapV2Error(e, r);
       }
     }

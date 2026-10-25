@@ -981,7 +981,7 @@ export class Engine {
       if (!this.comfyHealth.online) throw new Error(this.comfyHealth.message ?? 'ComfyUI is not reachable.');
       if (!this.objectInfo) this.objectInfo = await this.comfy.objectInfo();
     } else {
-      const u = this.services.resources.usable(route.resource);
+      const u = this.services.resources.canTakeJobs(route.resource);
       if (!u.ok) throw new Error(`${route.resource.label}: ${u.reason}. Choose Local for this card, or set it up in the Flow window ▸ Settings ▸ Resources.`);
       // Said before a credit is spent: what the probe found missing there.
       const caps = this.services.caps.cached(route.resource.id) ?? await this.services.caps.get(route.resource.id).catch(() => null);

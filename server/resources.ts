@@ -78,6 +78,13 @@ export interface ResourceConfig {
   tasks: Record<TaskId, string>;
   /** The Flow window's last pick on its Generate button ('default' = the task table). */
   choice: string;
+  /**
+   * Resources that refused a job outright (403), with the server's words —
+   * measured on Comfy Cloud: "API key authentication is not available for free
+   * tier accounts". Until the key changes or the user presses Check, such a
+   * resource is "not usable", so rows and Auto go elsewhere instead of failing.
+   */
+  refusals?: Record<string, { at: string; message: string }>;
 }
 
 export interface ResourceView extends Resource {
@@ -88,6 +95,8 @@ export interface ResourceView extends Resource {
   creditsPerHour: number | null;
   gpuLabel: string | null;
   needsKey: 'platform' | 'proxy' | 'none';
+  /** A job this resource refused outright, with its words (see ResourceConfig.refusals). */
+  refused?: { at: string; message: string };
 }
 
 export interface ResourcesView {
@@ -189,7 +198,10 @@ export class ResourceRegistry {
       const resources = Array.isArray(saved.resources) && saved.resources.length ? saved.resources : base.resources;
       // The three fixed entries always exist; deployments are the user's.
       for (const fixed of base.resources) if (!resources.some((r) => r.id === fixed.id)) resources.push(fixed);
-      return { schema: 1, resources, tasks: { ...base.tasks, ...(saved.tasks ?? {}) }, choice: typeof saved.choice === 'string' ? saved.choice : 'default' };
+      return {
+        schema: 1, resources, tasks: { ...base.tasks, ...(saved.tasks ?? {}) }, choice: typeof saved.choice === 'string' ? saved.choice : 'default',
+        refusals: saved.refusals && typeof saved.refusals === 'object' ? saved.refusals : {},
+      };
     } catch {
       return base;
     }
@@ -286,13 +298,39 @@ export class ResourceRegistry {
     return { ok: true };
   }
 
+  /** The job refusal on record for a resource, if any (see ResourceConfig.refusals). */
+  refusal(r: Resource): { at: string; message: string } | undefined {
+    return this.cfg.refusals?.[r.id];
+  }
+
+  /** Can it take a job: set up, and not on record as refusing jobs. Reads (status, billing) need only `usable`. */
+  canTakeJobs(r: Resource): { ok: boolean; reason?: string } {
+    const u = this.usable(r);
+    if (!u.ok) return u;
+    const refused = this.refusal(r);
+    return refused ? { ok: false, reason: `refuses jobs: ${refused.message}` } : u;
+  }
+
+  noteRefusal(id: string, message: string): void {
+    this.cfg.refusals = { ...(this.cfg.refusals ?? {}), [id]: { at: new Date().toISOString(), message } };
+    this.changed();
+  }
+
+  clearRefusal(id: string): void {
+    if (!this.cfg.refusals?.[id]) return;
+    const next = { ...this.cfg.refusals };
+    delete next[id];
+    this.cfg.refusals = next;
+    this.changed();
+  }
+
   view(): ResourcesView {
     const key = this.key();
     return {
       resources: this.cfg.resources.map((r) => {
-        const u = this.usable(r);
+        const u = this.canTakeJobs(r);
         return {
-          ...r, usable: u.ok, reason: u.reason, creditsPerHour: this.creditsPerHour(r), gpuLabel: this.gpuLabel(r),
+          ...r, usable: u.ok, reason: u.reason, refused: this.refusal(r), creditsPerHour: this.creditsPerHour(r), gpuLabel: this.gpuLabel(r),
           needsKey: r.kind === 'cloud' || r.kind === 'deployment' ? 'platform' : r.kind === 'proxy' ? 'proxy' : 'none',
         };
       }),
@@ -308,7 +346,11 @@ export class ResourceRegistry {
   /* ─── Writing ──────────────────────────────────────────────────────── */
 
   update(p: ResourcePatch): void {
-    if (p.apiKey !== undefined) this.writeSecret(this.keyFile, p.apiKey?.trim() || null);
+    if (p.apiKey !== undefined) {
+      this.writeSecret(this.keyFile, p.apiKey?.trim() || null);
+      // Another key may well be on another plan: what the old one was refused says nothing about it.
+      this.cfg.refusals = {};
+    }
     if (p.proxyToken !== undefined) this.writeSecret(this.proxyFile, p.proxyToken?.trim() || null);
     for (const ch of p.resources ?? []) {
       const at = this.cfg.resources.findIndex((r) => r.id === ch.id);
@@ -402,7 +444,7 @@ export class ResourceRegistry {
     let note = '';
     if (pick !== 'auto') {
       const r = this.get(pick);
-      const u = r ? this.usable(r) : { ok: false, reason: 'not in Settings' };
+      const u = r ? this.canTakeJobs(r) : { ok: false, reason: 'not in Settings' };
       // A run's own pick stands (the run then says what is missing there, before any credit is spent);
       // a row of the table gives way to Auto when the probe found the workflow's nodes or models missing there.
       if (r && u.ok && (chosen || has(r) !== 'missing')) {
@@ -411,14 +453,14 @@ export class ResourceRegistry {
       note = r && u.ok ? `${r.label} lacks a node or model of this workflow → ` : `${r?.label ?? pick}: ${u.reason} → `;
     }
     const local = this.local();
-    const localOk = this.usable(local).ok;
+    const localOk = this.canTakeJobs(local).ok;
     if (localOk && has(local) === 'ok') return { resource: local, why: `${note}Auto: Local has the nodes and models`, auto: true };
     const order = [this.get('cloud'), ...this.list().filter((r) => r.kind === 'deployment'), this.get('proxy')].filter((r): r is Resource => !!r);
     for (const r of order) {
-      if (this.usable(r).ok && has(r) === 'ok') return { resource: r, why: `${note}Auto: ${localOk && has(local) === 'missing' ? 'Local lacks something; ' : ''}${r.label} has the nodes and models`, auto: true };
+      if (this.canTakeJobs(r).ok && has(r) === 'ok') return { resource: r, why: `${note}Auto: ${localOk && has(local) === 'missing' ? 'Local lacks something; ' : ''}${r.label} has the nodes and models`, auto: true };
     }
     if (localOk) return { resource: local, why: `${note}Auto: Local (no other resource is known to have everything)`, auto: true };
-    const any = order.find((r) => this.usable(r).ok);
+    const any = order.find((r) => this.canTakeJobs(r).ok);
     return { resource: any ?? local, why: `${note}Auto: ${any ? any.label : 'nothing is set up'}`, auto: true };
   }
 

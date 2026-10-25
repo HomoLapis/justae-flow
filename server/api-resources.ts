@@ -133,6 +133,8 @@ export function resourceRoutes(s: Services, engine: Engine): Array<[string, RegE
     ['POST', /^\/api\/resources\/([\w-]+)\/check$/, guarded(async (_q, res, m) => {
       const r = s.resources.get(m[1]);
       if (!r) return send(res, 404, { error: `No resource "${m[1]}".` });
+      // Check is the way to try again after a refusal (a plan changed on the same key): forget it.
+      s.resources.clearRefusal(r.id);
       const caps = await s.caps.get(r.id, true);
       const health = r.kind === 'local' ? { online: caps.online, message: caps.message } : await s.v2.health(r.id);
       send(res, 200, { ...health, capabilities: caps });
