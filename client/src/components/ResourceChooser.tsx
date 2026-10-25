@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { formatCredits, useResources, type EstimateAnswer, type ResourceView } from '../lib/resources';
+import { formatCredits, useResources, type Capabilities, type EstimateAnswer, type ResourceView } from '../lib/resources';
 import { useActiveRoute, useEstimate, useWorkflowRoute, type ShotForEstimate } from '../lib/useRoute';
 
 function short(a: EstimateAnswer | null, metered: boolean): string {
@@ -24,8 +24,21 @@ function short(a: EstimateAnswer | null, metered: boolean): string {
   return t.creditsPerMinute !== null ? `first run: ${t.creditsPerMinute.toFixed(1)} cr/min` : '';
 }
 
-function Option({ r, shots, picked, onPick }: { r: ResourceView; shots: ShotForEstimate[]; picked: boolean; onPick: () => void }): JSX.Element {
+/** What the capability probe knows about this workflow on this resource, in a few words. */
+function capWord(caps: Capabilities | null | undefined, workflowId: string | undefined): { text: string; tone: 'ok' | 'warn' | 'mute' } | null {
+  if (!caps || !workflowId) return null;
+  const w = caps.workflows[workflowId];
+  if (!w) return null;
+  if (w.status === 'proven') return { text: `✓ ran here ${w.provenAt ? new Date(w.provenAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''}`.trim(), tone: 'ok' };
+  if (w.status === 'ok') return { text: '✓ has it', tone: 'ok' };
+  if (w.status === 'missing') return { text: `missing ${[...w.missingNodes, ...w.missingModels].slice(0, 1).join('')}`, tone: 'warn' };
+  return { text: caps.kind === 'deployment' || caps.kind === 'proxy' ? 'not run here yet' : 'unknown', tone: 'mute' };
+}
+
+function Option({ r, shots, picked, onPick, workflowId }: { r: ResourceView; shots: ShotForEstimate[]; picked: boolean; onPick: () => void; workflowId?: string }): JSX.Element {
   const est = useEstimate(r.usable ? shots : [], r.id);
+  const caps = useResources((s) => s.data?.capabilities[r.id]);
+  const cap = r.usable ? capWord(caps, workflowId) : null;
   return (
     <button
       type="button"
@@ -41,6 +54,7 @@ function Option({ r, shots, picked, onPick }: { r: ResourceView; shots: ShotForE
         <span className="block truncate text-xs text-ink">{r.kind === 'local' ? '⌂ ' : r.kind === 'cloud' ? '☁ ' : r.kind === 'deployment' ? '▣ ' : '⇄ '}{r.label}</span>
         <span className="block truncate font-mono text-[10px] text-ink-mute">
           {r.usable ? short(est, r.creditsPerHour !== null) || '…' : r.reason}
+          {cap && <span className={cap.tone === 'ok' ? 'text-ok' : cap.tone === 'warn' ? 'text-warn' : ''} data-testid={`cap-${r.id}`}> · {cap.text}</span>}
         </span>
       </span>
     </button>
@@ -123,7 +137,7 @@ export function ResourceChooser({ shots, disabled, value, onChange, workflowId }
           </button>
           <div className="divider my-1" />
           {listed.map((r) => (
-            <Option key={r.id} r={r} shots={shots} picked={choice === r.id} onPick={() => { pick(r.id); setOpen(false); }} />
+            <Option key={r.id} r={r} shots={shots} picked={choice === r.id} onPick={() => { pick(r.id); setOpen(false); }} workflowId={workflowId ?? shots[0]?.workflowId} />
           ))}
           <p className="px-2 pb-1 pt-1.5 text-[10px] leading-snug text-ink-mute">
             ≈ from earlier runs of this workflow there (execution time × the GPU&rsquo;s rate). The pick stays until you change it.

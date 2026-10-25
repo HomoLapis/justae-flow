@@ -166,22 +166,35 @@ function ResourceCard({ r, caps, children, toggle, remove, onCheck }: {
   );
 }
 
-/** "Bundled: 10 run here · 1 missing (vace-reframe: …) · nodes from object_info (5,412)". */
+/** "Bundled: 10 run here · 1 missing (vace-reframe: …) · nodes from object_info (5,412)"; a deployment: which ones have run there. */
 function CapsLine({ caps }: { caps: Capabilities }): JSX.Element | null {
   const ws = Object.entries(caps.workflows);
   if (!ws.length) return null;
-  const ok = ws.filter(([, w]) => w.status === 'ok' || w.status === 'proven');
+  const ok = ws.filter(([, w]) => w.status === 'ok');
+  // No node catalogue (a deployment, a proxy): a workflow that finished there is known to run there.
+  const proven = ws.filter(([, w]) => w.status === 'proven');
   const missing = ws.filter(([, w]) => w.status === 'missing');
   const unknown = ws.filter(([, w]) => w.status === 'unknown');
+  const day = (iso?: string): string => (iso ? `${new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${clock(iso)}` : '');
   return (
-    <p className="text-[10px] leading-snug text-ink-mute" title={`${caps.nodes.basis}\n${caps.models.basis}\nchecked ${clock(caps.checkedAt)}`}>
-      Bundled workflows: <span className="text-ok">{ok.length} run here</span>
-      {missing.length > 0 && (
-        <> · <span className="text-warn">{missing.length} missing something</span> ({missing.map(([id, w]) => `${id}: ${[...w.missingNodes, ...w.missingModels].slice(0, 2).join(', ')}`).join('; ')})</>
+    <div className="space-y-0.5" data-testid={`caps-${caps.resourceId}`}>
+      <p className="text-[10px] leading-snug text-ink-mute" title={`${caps.nodes.basis}\n${caps.models.basis}\nchecked ${clock(caps.checkedAt)}`}>
+        Bundled workflows: {ok.length > 0 && <span className="text-ok">{ok.length} run here</span>}
+        {ok.length > 0 && proven.length > 0 && ' · '}
+        {proven.length > 0 && <span className="text-ok">{proven.length} known from a finished run</span>}
+        {ok.length + proven.length === 0 && <span>none known yet</span>}
+        {missing.length > 0 && (
+          <> · <span className="text-warn">{missing.length} missing something</span> ({missing.map(([id, w]) => `${id}: ${[...w.missingNodes, ...w.missingModels].slice(0, 2).join(', ')}`).join('; ')})</>
+        )}
+        {unknown.length > 0 && <> · {unknown.length} unknown {caps.kind === 'deployment' || caps.kind === 'proxy' ? 'until they have run here once' : `(${caps.nodes.known ? caps.models.basis : caps.nodes.basis})`}</>}
+        {caps.nodes.known && caps.nodes.count ? <> · {caps.nodes.count.toLocaleString('en-US')} node classes</> : null}
+      </p>
+      {proven.length > 0 && (
+        <p className="text-[10px] leading-snug text-ink-mute">
+          ✓ {proven.map(([id, w]) => `${id} (ran here ${day(w.provenAt)})`).join(' · ')}
+        </p>
       )}
-      {unknown.length > 0 && <> · {unknown.length} unknown {caps.kind === 'deployment' || caps.kind === 'proxy' ? 'until they have run here once' : `(${caps.nodes.known ? caps.models.basis : caps.nodes.basis})`}</>}
-      {caps.nodes.known && caps.nodes.count ? <> · {caps.nodes.count.toLocaleString('en-US')} node classes</> : null}
-    </p>
+    </div>
   );
 }
 
