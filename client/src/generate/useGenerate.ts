@@ -631,7 +631,9 @@ function runShot(ctx: RunCtx): Promise<void> {
           setJ({ resultPath: primary.path, resultIsVideo: primary.isVideo, message: `${tag}Saved · placing…` });
 
           if (s.defaults.autoImport) {
-            const placed = await place(primary, spec, s.defaults.fitMode, seqFps);
+            // Into the comp that was active when Generate was pressed, not whichever is open now (25 Oct: an image
+            // landed in another comp the user opened during the 30 s of generation).
+            const placed = await place(primary, spec, s.defaults.fitMode, seqFps, comp.id ?? 0);
             if (placed) { setJ({ phase: 'error', error: placed }); unsub(); resolve(); return; }
           }
 
@@ -778,16 +780,17 @@ async function place(
   spec: ShotSpec,
   fitMode: FitMode,
   seqFps = 0,
+  compId = 0,
 ): Promise<string | null> {
   const layerName = layerNameFromPrompt(spec.prompt || spec.label);
   const isPlaceholder = spec.segment?.source === 'adj';
   const labelColor = isPlaceholder ? (spec.segment?.labelColor ?? 0) : 0;
 
   const resp = spec.anchorTime !== null
-    ? await ae.insertVideoAtTime(primary.path, spec.anchorTime, layerName, fitMode, labelColor, seqFps)
+    ? await ae.insertVideoAtTime(primary.path, spec.anchorTime, layerName, fitMode, labelColor, seqFps, compId)
     : primary.isVideo
-      ? await ae.importVideo(primary.path, layerName, fitMode, seqFps)
-      : await ae.importImage(primary.path, layerName, 5, fitMode);
+      ? await ae.importVideo(primary.path, layerName, fitMode, seqFps, compId)
+      : await ae.importImage(primary.path, layerName, 5, fitMode, compId);
 
   if (isErr(resp)) return `Saved to disk, but placing it failed: ${resp.error}`;
 
@@ -796,13 +799,13 @@ async function place(
     const generated = resp.duration ?? spec.durationSeconds;
     const trimTo = Math.min(spec.durationSeconds, generated);
     if (trimTo > 0 && generated > spec.durationSeconds + 0.001) {
-      try { await ae.trimLayerDuration(resp.layerIndex, trimTo); } catch { /* non-fatal */ }
+      try { await ae.trimLayerDuration(resp.layerIndex, trimTo, compId); } catch { /* non-fatal */ }
     }
   }
   if (isPlaceholder && spec.segment?.layerName) {
     // The placeholder has been filled; switch its eye off rather than delete it,
     // so the user can bring it back and regenerate.
-    try { await ae.disableAdjustmentLayer(spec.segment.layerName, spec.segment.startTime); } catch { /* non-fatal */ }
+    try { await ae.disableAdjustmentLayer(spec.segment.layerName, spec.segment.startTime, compId); } catch { /* non-fatal */ }
   }
   return null;
 }

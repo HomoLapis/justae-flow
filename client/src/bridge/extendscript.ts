@@ -6,6 +6,8 @@
 import { evalJson, esEscape } from './csInterface';
 
 export interface CompInfo {
+  /** The comp's project item id (EffectCraft and After Effects both have it), so a result goes back to this comp. */
+  id?: number;
   name: string;
   width: number;
   height: number;
@@ -117,9 +119,12 @@ export const ae = {
 
   tempDir: () => evalJson<{ path: string; error?: string }>('getTempDir()'),
 
-  /** seqFps > 0: a numbered still is imported as a sequence at that rate. */
-  importVideo: (filePath: string, layerName = '', fitMode: FitMode = 'none', seqFps = 0): Promise<Maybe<ImportResult>> =>
-    evalJson(`importAndAddToTimeline("${esEscape(filePath)}", "${esEscape(layerName)}", "${fitMode}", ${seqFps})`),
+  /**
+   * seqFps > 0: a numbered still is imported as a sequence at that rate. compId: the comp to place into (the one
+   * that was active at Generate); 0 = the active one.
+   */
+  importVideo: (filePath: string, layerName = '', fitMode: FitMode = 'none', seqFps = 0, compId = 0): Promise<Maybe<ImportResult>> =>
+    evalJson(`importAndAddToTimeline("${esEscape(filePath)}", "${esEscape(layerName)}", "${fitMode}", ${seqFps}, ${compId})`),
 
   insertVideoAtTime: (
     filePath: string,
@@ -128,22 +133,23 @@ export const ae = {
     fitMode: FitMode = 'none',
     labelColor = 0,
     seqFps = 0,
+    compId = 0,
   ): Promise<Maybe<ImportResult>> =>
-    evalJson(`insertVideoAtTime("${esEscape(filePath)}", ${atTime}, "${esEscape(layerName)}", "${fitMode}", ${labelColor}, ${seqFps})`),
+    evalJson(`insertVideoAtTime("${esEscape(filePath)}", ${atTime}, "${esEscape(layerName)}", "${fitMode}", ${labelColor}, ${seqFps}, ${compId})`),
 
-  trimLayerDuration: (layerIndex: number, durationSec: number): Promise<Maybe<{ success: true; layerName: string; inPoint: number; outPoint: number }>> =>
-    evalJson(`trimLayerDuration(${layerIndex}, ${durationSec})`),
+  trimLayerDuration: (layerIndex: number, durationSec: number, compId = 0): Promise<Maybe<{ success: true; layerName: string; inPoint: number; outPoint: number }>> =>
+    evalJson(`trimLayerDuration(${layerIndex}, ${durationSec}, ${compId})`),
 
   markers: (): Promise<Maybe<MarkersResult>> => evalJson('getCompMarkers()'),
 
   visibleAdjustmentLayers: (): Promise<Maybe<AdjustmentLayersResult>> =>
     evalJson('getVisibleAdjustmentLayers()'),
 
-  disableAdjustmentLayer: (name: string, inPointSec: number): Promise<Maybe<{ success: boolean; layerName?: string; error?: string }>> =>
-    evalJson(`disableAdjustmentLayer("${esEscape(name)}", ${inPointSec})`),
+  disableAdjustmentLayer: (name: string, inPointSec: number, compId = 0): Promise<Maybe<{ success: boolean; layerName?: string; error?: string }>> =>
+    evalJson(`disableAdjustmentLayer("${esEscape(name)}", ${inPointSec}, ${compId})`),
 
-  importImage: (filePath: string, layerName = '', durationSec = 5, fitMode: FitMode = 'none'): Promise<Maybe<ImportResult>> =>
-    evalJson(`importImageAndAddToTimeline("${esEscape(filePath)}", "${esEscape(layerName)}", ${durationSec}, "${fitMode}")`),
+  importImage: (filePath: string, layerName = '', durationSec = 5, fitMode: FitMode = 'none', compId = 0): Promise<Maybe<ImportResult>> =>
+    evalJson(`importImageAndAddToTimeline("${esEscape(filePath)}", "${esEscape(layerName)}", ${durationSec}, "${fitMode}", ${compId})`),
 
   captureFrame: (targetPath: string): Promise<Maybe<FrameCapture>> =>
     evalJson(`captureCurrentFrameToFile("${esEscape(targetPath)}")`),

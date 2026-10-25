@@ -105,10 +105,32 @@ function checkAEReady() {
     }
 }
 
+/**
+ * The comp a result goes into: the one with this id when given (the comp that
+ * was active when Generate was pressed — the user may have opened another one
+ * while it ran), else the active one. Null when there is none.
+ */
+function _jaeComp(compId) {
+    if (typeof compId === "number" && compId > 0) {
+        var c = null;
+        try { c = app.project.itemByID(compId); } catch (eId) { c = null; }
+        return (c && c instanceof CompItem) ? c : null;
+    }
+    var a = app.project.activeItem;
+    return (a && a instanceof CompItem) ? a : null;
+}
+
+function _jaeNoComp(compId) {
+    return (typeof compId === "number" && compId > 0)
+        ? "The comp that was open when you pressed Generate is no longer in the project."
+        : "No active composition. Select a comp first.";
+}
+
 function getActiveCompInfo() {
     var comp = app.project.activeItem;
     if (!comp || !(comp instanceof CompItem)) return JSON.stringify(null);
     return JSON.stringify({
+        id: comp.id,
         name: comp.name,
         width: comp.width,
         height: comp.height,
@@ -238,11 +260,11 @@ function _jaeImport(file, seqFps) {
  * Like importAndAddToTimeline but anchors at an explicit time (in seconds)
  * instead of the current playhead. Used for batch insertion at segment.start.
  */
-function insertVideoAtTime(filePath, atTime, layerName, fitMode, labelColor, seqFps) {
+function insertVideoAtTime(filePath, atTime, layerName, fitMode, labelColor, seqFps, compId) {
     try {
-        var comp = app.project.activeItem;
-        if (!comp || !(comp instanceof CompItem)) {
-            return JSON.stringify({ error: "No active composition. Select a comp first." });
+        var comp = _jaeComp(compId);
+        if (!comp) {
+            return JSON.stringify({ error: _jaeNoComp(compId) });
         }
         var file = new File(filePath);
         if (!file.exists) return JSON.stringify({ error: "Video file not found: " + filePath });
@@ -282,11 +304,11 @@ function insertVideoAtTime(filePath, atTime, layerName, fitMode, labelColor, seq
     }
 }
 
-function importAndAddToTimeline(filePath, layerName, fitMode, seqFps) {
+function importAndAddToTimeline(filePath, layerName, fitMode, seqFps, compId) {
     try {
-        var comp = app.project.activeItem;
-        if (!comp || !(comp instanceof CompItem)) {
-            return JSON.stringify({ error: "No active composition. Select a comp first." });
+        var comp = _jaeComp(compId);
+        if (!comp) {
+            return JSON.stringify({ error: _jaeNoComp(compId) });
         }
         var file = new File(filePath);
         if (!file.exists) return JSON.stringify({ error: "Video file not found: " + filePath });
@@ -352,11 +374,11 @@ function applyFit(layer, srcW, srcH, compW, compH, fitMode) {
     }
 }
 
-function importImageAndAddToTimeline(filePath, layerName, durationSec, fitMode) {
+function importImageAndAddToTimeline(filePath, layerName, durationSec, fitMode, compId) {
     try {
-        var comp = app.project.activeItem;
-        if (!comp || !(comp instanceof CompItem)) {
-            return JSON.stringify({ error: "No active composition." });
+        var comp = _jaeComp(compId);
+        if (!comp) {
+            return JSON.stringify({ error: _jaeNoComp(compId) });
         }
         var file = new File(filePath);
         if (!file.exists) return JSON.stringify({ error: "Image file not found: " + filePath });
@@ -623,11 +645,11 @@ function renderWorkAreaToFile(maxDurationSec, targetDir, spanStart, spanDuration
  * clip is placed so a clip generated slightly longer than its slot lines up
  * with the placeholder's end. This is a lossless cut (outPoint), not a scale.
  */
-function trimLayerDuration(layerIndex, durationSec) {
+function trimLayerDuration(layerIndex, durationSec, compId) {
     try {
-        var comp = app.project.activeItem;
-        if (!comp || !(comp instanceof CompItem)) {
-            return JSON.stringify({ error: "No active composition." });
+        var comp = _jaeComp(compId);
+        if (!comp) {
+            return JSON.stringify({ error: _jaeNoComp(compId) });
         }
         if (typeof layerIndex !== "number" || layerIndex < 1 || layerIndex > comp.numLayers) {
             return JSON.stringify({ error: "Invalid layerIndex: " + layerIndex });
@@ -702,11 +724,11 @@ function getVisibleAdjustmentLayers() {
  * after its generated clip was placed. Matching by name + time survives the
  * index shifts that adding new layers causes. Non-fatal if no match.
  */
-function disableAdjustmentLayer(name, inPointSec) {
+function disableAdjustmentLayer(name, inPointSec, compId) {
     try {
-        var comp = app.project.activeItem;
-        if (!comp || !(comp instanceof CompItem)) {
-            return JSON.stringify({ error: "No active composition." });
+        var comp = _jaeComp(compId);
+        if (!comp) {
+            return JSON.stringify({ error: _jaeNoComp(compId) });
         }
         app.beginUndoGroup("JustAE Flow — Disable placeholder");
         var matched = null;
