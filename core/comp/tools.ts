@@ -304,7 +304,7 @@ const extend: ToolDef = {
     const lengthened = src.compSeconds !== undefined && out + seconds > src.compSeconds + 1e-3;
     plan.output = { width: size.width, height: size.height, seconds, fps };
     plan.jobs = [{ workflowId, seconds: frames / fps }];
-    plan.makes = `A new layer at ${fmt(out)} — the ${what(src)}'s out point — for ${seconds} s: LTX-2.5 carries on from the frame at ${fmt(Math.max(0, out - 1 / fps))}, `
+    plan.makes = `A new layer at ${fmt(out)} — the ${what(src)}'s out point — for ${seconds} s: LTX-2.5 carries on from the frame at ${Math.max(0, out - 1 / fps).toFixed(2)} s, `
       + `at ${size.width}×${size.height}, ${Math.round(fps * 100) / 100} fps, ${src.kind === 'layer' ? 'laid over the clip\'s own size' : 'scaled to cover the comp'}. Your ${what(src)} is untouched.`;
     plan.notes.push(`${frames} frames (LTX makes 8k + 1); the first repeats your last frame and is trimmed off, the layer ends after ${seconds} s.`);
     if (lengthened) plan.notes.push(`The comp gets longer to hold it: ${fmt(src.compSeconds!)} → ${fmt(out + seconds)}.`);

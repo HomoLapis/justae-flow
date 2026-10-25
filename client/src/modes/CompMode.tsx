@@ -782,7 +782,8 @@ const SOURCE_WORD: Record<SourceKind, string> = { workArea: 'work area', comp: '
 /** What tells two runs of one tool apart: Draft or Final, a crop, the engine. */
 function tagOf(r: CompRun): string | null {
   if (r.tool === 'slowmo') return r.options.engine === 'gimm' ? 'GIMM-VFI' : r.options.engine === 'film' ? 'FILM' : 'RIFE';
-  if (r.tool === 'upscale') return r.options.colour === 'model' ? 'Model colours' : 'Colours kept';
+  // Runs made before the colour option (25 Oct) kept the template's "none": no tag rather than a wrong one.
+  if (r.tool === 'upscale') return r.options.colour === undefined ? null : r.options.colour === 'model' ? 'Model colours' : 'Colours kept';
   if (r.tool !== 'reframe') return null;
   if (r.options.mode === 'crop') return 'Crop';
   return r.options.quality === 'final' ? 'Final' : 'Draft';

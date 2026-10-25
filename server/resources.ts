@@ -62,7 +62,7 @@ export const TASKS: Array<{ id: TaskId; label: string; default: string }> = [
   { id: 'reframe-draft', label: 'Reframe draft (VACE 1.3B)', default: 'local' },
   { id: 'upscale', label: 'Upscale (SeedVR2)', default: 'cloud' },
   { id: 'matte', label: 'Cut-out / matte (SAM 3)', default: 'local' },
-  { id: 'interpolate', label: 'Slow motion / fps (RIFE, GIMM)', default: 'local' },
+  { id: 'interpolate', label: 'Slow motion / fps (RIFE, FILM, GIMM)', default: 'local' },
   { id: 'restyle', label: 'Restyle / edit video', default: 'auto' },
 ];
 
