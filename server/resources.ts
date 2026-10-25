@@ -384,13 +384,18 @@ export class ResourceRegistry {
    */
   resolve(task: TaskId, override: string | null | undefined, has: (r: Resource) => 'ok' | 'missing' | 'unknown'): { resource: Resource; why: string; auto: boolean } {
     const row = TASKS.find((t) => t.id === task)!;
+    const chosen = !!override && override !== 'default' && override !== 'auto';
     const pick = override && override !== 'default' ? override : this.cfg.tasks[task] ?? 'auto';
     let note = '';
     if (pick !== 'auto') {
       const r = this.get(pick);
       const u = r ? this.usable(r) : { ok: false, reason: 'not in Settings' };
-      if (r && u.ok) return { resource: r, why: override && override !== 'default' ? `${r.label}, chosen for this run` : `${r.label} (Settings: ${row.label})`, auto: false };
-      note = `${r?.label ?? pick}: ${u.reason} → `;
+      // A run's own pick stands (the run then says what is missing there, before any credit is spent);
+      // a row of the table gives way to Auto when the probe found the workflow's nodes or models missing there.
+      if (r && u.ok && (chosen || has(r) !== 'missing')) {
+        return { resource: r, why: chosen ? `${r.label}, chosen for this run` : `${r.label} (Settings: ${row.label})`, auto: false };
+      }
+      note = r && u.ok ? `${r.label} lacks a node or model of this workflow → ` : `${r?.label ?? pick}: ${u.reason} → `;
     }
     const local = this.local();
     const localOk = this.usable(local).ok;

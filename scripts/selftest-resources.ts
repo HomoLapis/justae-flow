@@ -115,6 +115,11 @@ export async function resourceChecks(check: Check, until: (fn: () => boolean, ms
   check('the key goes to the config folder, one line', readFileSync(join(dir, 'comfy-api-key.txt'), 'utf8') === 'test-key-0123456789\n');
   check('the view says a key is set and its last four, never the key', v1.key.set && v1.key.tail === '6789' && !JSON.stringify(v1).includes('test-key-0123456789'));
   check('with the key, Upscale goes to Comfy Cloud (its row in Settings)', reg.resolve('upscale', null, () => 'unknown').resource.id === 'cloud');
+  {
+    const r = reg.resolve('upscale', null, (x) => (x.id === 'cloud' ? 'missing' : 'ok'));
+    check('a row whose resource lacks the workflow\'s nodes or models gives way to Auto, and says why', r.resource.id === 'local' && /lacks/.test(r.why));
+    check('a run\'s own pick stands even then (it is refused before a credit is spent)', reg.resolve('upscale', 'cloud', (x) => (x.id === 'cloud' ? 'missing' : 'ok')).resource.id === 'cloud');
+  }
   check('a per-run choice wins over the row', reg.resolve('upscale', 'local', () => 'unknown').resource.id === 'local');
   check('Auto: Local when Local has the nodes and models', reg.resolve('video', null, () => 'ok').resource.id === 'local');
   check('Auto: the first other resource that has them when Local lacks something',
