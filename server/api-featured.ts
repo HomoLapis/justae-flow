@@ -28,7 +28,7 @@ export const FEATURED: Array<{ id: string; name: string; line: string; tiers?: {
   {
     id: 'h3-flf', name: 'MiniMax H3 · first + last frame', line: 'From one frame you choose to another, with sound.',
     tiers: { final: { then: 'seedvr2-upscale', scale: 2, note: 'Final = the Draft, then SeedVR2 ×2 on its result (a second job), original colours kept.' } },
-    licenceNote: 'Commercial use of locally generated H3 outputs needs a MiniMax commercial licence (sold by Comfy); in the EU: DA VERIFICARE on the licence text.',
+    licenceNote: 'Commercial use of locally generated H3 outputs needs a MiniMax commercial licence (sold by Comfy); in the EU: to be verified on the licence text.',
   },
   { id: 'wan22-flf', name: 'Wan 2.2 14B · first + last frame', line: 'Keyframe to keyframe under Apache-2.0.' },
   { id: 'zimage-t2i', name: 'Z-Image-Turbo · text to image', line: 'A still in seconds: plates, keyframes, title backgrounds.' },

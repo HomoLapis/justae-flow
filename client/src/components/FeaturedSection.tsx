@@ -137,12 +137,22 @@ export function FeaturedSection({ onUse }: { onUse: (libraryId: string) => Promi
                 </ul>
               )}
               {(e.licenceNote || /non-commercial|Community License/i.test(e.licence)) && (
-                <p className="text-[10px] leading-snug text-ink-mute" title={e.licence}>Licence: {e.licenceNote ?? e.licence}</p>
+                <LicenceLine text={e.licenceNote ?? e.licence} title={e.licence} id={e.id} />
               )}
             </li>
           );
         })}
       </ul>
     </section>
+  );
+}
+
+/** "Licence: …", with the licence's own link when the text carries one (LTX-2.x: its LICENSE-2_x on GitHub). */
+function LicenceLine({ text, title, id }: { text: string; title: string; id: string }): JSX.Element {
+  const m = /^(.*?)\s*—\s*(https:\/\/\S+)\s*$/.exec(text);
+  return (
+    <p className="text-[10px] leading-snug text-ink-mute" title={title} data-testid={`licence-${id}`}>
+      Licence: {m ? <>{m[1]} — <a className="underline hover:text-ink" href={m[2]} target="_blank" rel="noreferrer">{m[2].replace(/^https:\/\//, '')}</a></> : text}
+    </p>
   );
 }

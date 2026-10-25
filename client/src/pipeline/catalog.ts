@@ -193,7 +193,7 @@ export const CATALOG: CatalogEntry[] = [
     match: ['gimm'],
     draft: [{ node: '^GIMMVFI_interpolate$', input: 'interpolation_factor', value: 2 }, { node: '^GIMMVFI_interpolate$', input: 'ds_factor', value: 0.5 }],
     final: [{ node: '^GIMMVFI_interpolate$', input: 'interpolation_factor', value: 2 }, { node: '^GIMMVFI_interpolate$', input: 'ds_factor', value: 1 }],
-    notes: ['ds_factor < 1 trades flow accuracy for speed — fine for drafts, not for finals.'],
+    notes: ['ds_factor < 1 trades flow accuracy for speed — fine for drafts, not for finals.', 'Licence: S-Lab License 1.0 (GIMM-VFI) — non-commercial use only; the Comp tab offers RIFE and FILM instead.'],
   },
   {
     id: 'sam3-matte',
