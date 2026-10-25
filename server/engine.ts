@@ -12,7 +12,8 @@
  * layers). Queue, storage, versions and the ComfyUI job are shared.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative } from 'node:path';
 import { ComfyClient, type ComfyHealth } from '../core/comfy/client.ts';
@@ -1663,13 +1664,19 @@ export class Engine {
 
   /** A frame of the result as the host composites it now (the comp just built is the open one). */
   private async resultThumb(card: Card, stem: string, time: number): Promise<string | undefined> {
-    const rel = `${card.id}/${stem}.thumb.png`;
+    const png = `${card.id}/${stem}.thumb.png`;
     try {
-      await this.tl().frameAt(Math.max(0, time), join(this.mediaDir, rel));
-      return rel;
+      await this.tl().frameAt(Math.max(0, time), join(this.mediaDir, png));
     } catch {
       return undefined;
     }
+    // A full frame is megabytes (14 MB at 2560×1408); Results shows it at 72 px: a 480-px JPEG, with ffmpeg on the PATH.
+    const jpg = `${card.id}/${stem}.thumb.jpg`;
+    if (await smallJpeg(join(this.mediaDir, png), join(this.mediaDir, jpg))) {
+      rmSync(join(this.mediaDir, png), { force: true });
+      return jpg;
+    }
+    return png;
   }
 
   /** A Comp tab run: its source first, then what its tool makes of it. */
@@ -2033,6 +2040,15 @@ function eightBitVideo(api: WorkflowJson): void {
   for (const node of Object.values(api)) {
     if (node.class_type === 'CreateVideo' && Array.isArray(node.inputs.bit_depth)) node.inputs.bit_depth = 8;
   }
+}
+
+/** A 480-px wide JPEG of a still; false when ffmpeg is not there or fails. */
+function smallJpeg(src: string, out: string): Promise<boolean> {
+  return new Promise((done) => {
+    const p = spawn('ffmpeg', ['-v', 'error', '-y', '-i', src, '-vf', 'scale=480:-2', '-q:v', '4', out], { windowsHide: true });
+    p.on('error', () => done(false));
+    p.on('close', (code) => done(code === 0 && existsSync(out)));
+  });
 }
 
 /** The type a clip goes up as: the Comp tab's renders are ProRes .mov. */

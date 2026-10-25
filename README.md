@@ -75,7 +75,7 @@ the span is longer. *Selected layer* uses the layer's own file (a video clip).
 | Tool | What it runs | What it makes |
 |---|---|---|
 | **Reframe** — 9:16 · 4:5 · 1:1 · 16:9 · 21:9 · 4:3, *Draft* or *Final* | Wan2.1 VACE outpainting (`vace-reframe-draft` 1.3B / `vace-reframe` 14B) | a new comp "*&lt;Comp&gt;* · 9:16" at the delivery size: the generated video fills it, your render or clip sits on top, untouched, with a soft edge where it meets the new space. *Advanced ▸ Mode ▸ Crop with tracking* runs the SAM 3 auto crop instead (nothing generated) |
-| **Upscale** — ×2, or ×4 | SeedVR2 3B (`seedvr2-upscale`); ×4 is two ×2 passes, the second fed with the first's result | a new comp at the target size (stated before the run): the upscaled clip, and your original under it at the matching scale, switched off |
+| **Upscale** — ×2, or ×4 | SeedVR2 3B (`seedvr2-upscale`); ×4 is two ×2 passes, the second fed with the first's result | a new comp at the target size (stated before the run): the upscaled clip, and your original under it at the matching scale, switched off. The file is 8-bit H.264 even from a 10-bit source: EffectCraft 0.11.1 decodes no other H.264 |
 | **Cut-out** | SAM 3 tracking (`sam3-matte`), the subject named in a word | from a layer: a matte layer above it, set as its luma track matte; from the comp: a new comp "*&lt;Comp&gt;* · cut-out" with the render and its matte. **Export with alpha** writes a ProRes 4444 `.mov` (the clip's colour, the matte as alpha) with ffmpeg, next to the project, and *Reveal .mov* shows it |
 
 Generation frames and delivery comps per format. The generation frame follows one rule
