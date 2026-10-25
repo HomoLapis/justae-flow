@@ -82,18 +82,21 @@ export function CompMode(): JSX.Element {
       <CompHeader state={state} />
       <SourcePicker state={state} source={source} cap={cap} />
       <div className="space-y-1.5">
-        {state.tools.map((t) => (
-          <ToolCard
-            key={t.id}
-            tool={t}
-            state={state}
-            source={source}
-            cap={cap}
-            open={openTool === t.id}
-            onToggle={() => setOpenTool(openTool === t.id ? null : t.id)}
-          />
+        {state.tools.filter((t) => t.family !== 'ltx').map((t) => (
+          <ToolCard key={t.id} tool={t} state={state} source={source} cap={cap} open={openTool === t.id} onToggle={() => setOpenTool(openTool === t.id ? null : t.id)} />
         ))}
       </div>
+      {state.tools.some((t) => t.family === 'ltx') && (
+        <div className="space-y-1.5" data-testid="ltx-family">
+          <div className="flex items-baseline gap-2 pt-1">
+            <span className="section-label shrink-0">LTX finishing</span>
+            <span className="min-w-0 truncate text-[10px] text-ink-mute">LTX-2.5 with Lightricks' IC-LoRAs, on your local ComfyUI</span>
+          </div>
+          {state.tools.filter((t) => t.family === 'ltx').map((t) => (
+            <ToolCard key={t.id} tool={t} state={state} source={source} cap={cap} open={openTool === t.id} onToggle={() => setOpenTool(openTool === t.id ? null : t.id)} />
+          ))}
+        </div>
+      )}
       <Results state={state} />
       <p className="text-[10px] leading-snug text-ink-mute">
         <Kbd>G</Kbd> runs the open card · <Kbd>Esc</Kbd> cancels the running one · <Kbd>Tab</Kbd> compares the last result.
@@ -199,20 +202,20 @@ function SourcePicker({ state, source, cap }: { state: CompState; source: Source
 
 /* ─── A tool ────────────────────────────────────────────────────────── */
 
-function usePlan(tool: string, source: SourceKind, options: ToolOptions, cap: number, state: CompState, enabled: boolean): { plan: ToolPlan | null; error: string | null } {
+function usePlan(tool: string, source: SourceKind, options: ToolOptions, cap: number, state: CompState, enabled: boolean, prompt = '', resource = 'default'): { plan: ToolPlan | null; error: string | null } {
   const [plan, setPlan] = useState<ToolPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const c = state.comp;
   const layer = source === 'layer' ? state.picked : null;
-  const key = JSON.stringify([tool, source, options, cap, c?.id, c?.width, c?.height, c?.fps, c?.duration, c?.workArea, layer ? [layer.layerId, layer.path, layer.in, layer.out] : null]);
+  const key = JSON.stringify([tool, source, options, cap, c?.id, c?.width, c?.height, c?.fps, c?.duration, c?.workArea, layer ? [layer.layerId, layer.path, layer.in, layer.out] : null, prompt, resource]);
   useEffect(() => {
     if (!enabled) return undefined;
     let alive = true;
     const t = setTimeout(() => {
-      compApi.plan({ tool, source, layerId: layer?.layerId, options, cap })
+      compApi.plan({ tool, source, layerId: layer?.layerId, options, cap, prompt, resource: resource === 'default' ? null : resource })
         .then((p) => { if (alive) { setPlan(p); setError(null); } })
         .catch((e) => { if (alive) { setPlan(null); setError(e instanceof Error ? e.message : String(e)); } });
-    }, 200);
+    }, 300);
     return () => { alive = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled]);
@@ -247,8 +250,10 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
   const load = useComp((s) => s.load);
   const setFocusRun = useComp((s) => s.setFocusRun);
   const draft = draftOf(drafts, tool.id, tool.defaults);
-  const usable = tool.sources.includes(source);
-  const { plan, error } = usePlan(tool.id, source, draft.options, cap, state, open && usable);
+  const usable = tool.sources.includes(source) && !tool.unavailable;
+  const { plan, error } = usePlan(tool.id, source, draft.options, cap, state, open && usable, draft.prompt, draft.resource);
+  const ltx = tool.family === 'ltx' || draft.options.engine === 'ltx';
+  const grey = !!tool.unavailable || !!tool.missing?.length;
   const frame = useFrame(state, open);
   const [busy, setBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
@@ -260,12 +265,12 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
     ? state.runs.find((r) => !!r.group && r.source === source && (r.status === 'queued' || r.status === 'running'))
     : state.runs.find((r) => r.tool === tool.id && r.source === source && (r.status === 'queued' || r.status === 'running')
       && (!plan || variantOf(r) === plan.variant));
-  const needsPrompt = !!plan?.prompt;
+  const needsPrompt = !!plan?.prompt && !plan.prompt.optional;
   const ready = !!plan?.ok && !busy && !inQueue && (!needsPrompt || draft.prompt.trim() !== '');
 
   const run = async (): Promise<void> => {
     if (!plan?.ok || busy) return;
-    if (needsPrompt && !draft.prompt.trim()) { setRunError(`Write the ${plan.prompt!.label.toLowerCase()} first.`); return; }
+    if (needsPrompt && !draft.prompt.trim()) { setRunError(`Write the ${plan!.prompt!.label.toLowerCase()} first.`); return; }
     setBusy(true);
     setRunError(null);
     try {
@@ -293,11 +298,15 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
   const shots = useMemo(() => (plan?.ok ? plan.jobs.map((j) => ({ workflowId: j.workflowId, seconds: j.seconds, scaleWithSlot: true })) : []), [plan]);
 
   return (
-    <div className={'overflow-hidden rounded-lg border bg-bg-raised ' + (open ? 'border-brand/50' : 'border-line')} data-tool={tool.id}>
+    <div className={'overflow-hidden rounded-lg border bg-bg-raised ' + (open ? 'border-brand/50' : 'border-line') + (grey ? ' opacity-70' : '')} data-tool={tool.id} data-grey={grey || undefined}>
       <button type="button" className="flex w-full items-center gap-2.5 px-2.5 py-2 text-left hover:bg-bg-subtle/60" onClick={onToggle} aria-expanded={open}>
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-brand/15 text-sm text-brand">{tool.icon}</span>
+        <span className={'grid h-7 w-7 shrink-0 place-items-center rounded-md text-sm ' + (grey ? 'bg-bg-subtle text-ink-mute' : 'bg-brand/15 text-brand')}>{tool.icon}</span>
         <span className="min-w-0 flex-1">
-          <span className="block text-xs font-medium text-ink">{tool.name}</span>
+          <span className="flex items-center gap-1.5 text-xs font-medium text-ink">
+            {tool.name}
+            {tool.unavailable && <span className="rounded border border-warn/50 px-1 text-[9px] font-normal uppercase tracking-wide text-warn">to be verified</span>}
+            {!tool.unavailable && tool.missing?.length ? <span className="rounded border border-line px-1 text-[9px] font-normal text-ink-mute">not on your ComfyUI</span> : null}
+          </span>
           <span className="block truncate text-[10px] text-ink-mute">{tool.promise}</span>
         </span>
         <span className={'shrink-0 text-[10px] text-ink-mute transition-transform ' + (open ? 'rotate-90' : '')}>▶</span>
@@ -305,11 +314,27 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
 
       {open && (
         <div className="divider space-y-3 bg-bg px-2.5 py-3">
-          {!usable && <p className="text-[11px] text-warn">{tool.name} does not work from this source.</p>}
-          <Preview tool={tool.id} state={state} source={source} options={draft.options} plan={plan} frame={frame.url} onRefresh={frame.refresh} />
+          {tool.unavailable && (
+            <div className="space-y-1.5 rounded-lg border border-warn/40 bg-warn/10 px-2.5 py-2 text-[11px] leading-snug text-ink" data-testid={`unavailable-${tool.id}`}>
+              <p><span className="font-medium text-warn">To be verified.</span> {tool.unavailable.replace(/^To be verified\.\s*/, '')}</p>
+            </div>
+          )}
+          {!tool.unavailable && !tool.sources.includes(source) && <p className="text-[11px] text-warn">{tool.name} does not work from this source.</p>}
+          {!tool.unavailable && !!tool.missing?.length && (
+            <div className="space-y-1 rounded-lg border border-line bg-bg-subtle/50 px-2.5 py-2 text-[11px] leading-snug text-ink" data-testid={`missing-${tool.id}`}>
+              <p>Not on your local ComfyUI yet — download from Hugging Face (accept the terms first: &ldquo;Agree and Access&rdquo;) into <span className="font-mono">models/loras</span>, then restart ComfyUI:</p>
+              {tool.missing.map((m) => (
+                <p key={m.file} className="truncate font-mono text-[10px]"><a className="text-brand hover:underline" href={m.url} target="_blank" rel="noreferrer">{m.file}</a></p>
+              ))}
+            </div>
+          )}
+          {!tool.unavailable && <Preview tool={tool.id} state={state} source={source} options={draft.options} plan={plan} frame={frame.url} onRefresh={frame.refresh} />}
 
           {tool.id === 'reframe' && <ReframeControls options={draft.options} setOpt={setOpt} />}
           {tool.id === 'upscale' && <UpscaleControls options={draft.options} setOpt={setOpt} plan={plan} />}
+          {tool.id === 'matte' && <MatteControls options={draft.options} setOpt={setOpt} />}
+          {tool.id === 'restore' && <RestoreControls options={draft.options} setOpt={setOpt} plan={plan} />}
+          {tool.family === 'ltx' && tool.id !== 'restore' && !tool.unavailable && <SingleControls options={draft.options} setOpt={setOpt} plan={plan} />}
           {tool.id === 'extend' && <ExtendControls options={draft.options} setOpt={setOpt} />}
           {tool.id === 'slowmo' && <SlowmoControls options={draft.options} setOpt={setOpt} plan={plan} fps={source === 'layer' ? state.picked?.fps ?? state.comp!.fps : state.comp!.fps} />}
           {tool.id === 'social' && <SocialControls options={draft.options} setOpt={setOpt} />}
@@ -317,7 +342,7 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
           {plan?.prompt && (
             <label className="block">
               <span className="flex items-center justify-between gap-2">
-                <span className="field-label">{plan.prompt.label}</span>
+                <span className="field-label">{plan.prompt.label}{plan.prompt.optional ? <span className="font-normal text-ink-mute"> · optional</span> : null}</span>
                 {(plan.prompt.label === 'What happens next' || plan.prompt.label === 'Scene') && state.describe?.available && (
                   <DescribeButton
                     tool={tool.id} source={source} layerId={source === 'layer' ? state.picked?.layerId : undefined} cap={cap}
@@ -327,15 +352,24 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
               </span>
               <textarea
                 className="input resize-none text-xs leading-relaxed"
-                rows={plan.prompt.label === 'Scene' || plan.prompt.label === 'What happens next' ? 3 : 1}
+                rows={plan.prompt.label === 'Scene' || plan.prompt.label === 'What happens next' || plan.prompt.label === 'The empty place' ? 3 : plan.prompt.label === 'Look' || plan.prompt.label === 'Night look' ? 2 : 1}
                 value={draft.prompt}
                 placeholder={plan.prompt.placeholder}
                 onChange={(e) => set({ prompt: e.target.value })}
                 onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); void run(); } }}
                 data-testid={`prompt-${tool.id}`}
               />
+              {plan.prompt.optional && plan.prompt.fallback && !draft.prompt.trim() && (
+                <span className="mt-0.5 block text-[10px] leading-snug text-ink-mute" title={plan.prompt.fallback}>Empty: the card&rsquo;s own look — &ldquo;{plan.prompt.fallback.length > 90 ? plan.prompt.fallback.slice(0, 90) + '…' : plan.prompt.fallback}&rdquo;</span>
+              )}
             </label>
           )}
+          {plan?.fields?.filter((f) => !f.advanced).map((f) => (
+            <label key={f.key} className="block">
+              <span className="field-label">{f.label} <span className="font-normal text-ink-mute">· optional</span></span>
+              <input className="input text-xs" value={String(draft.options[f.key] ?? '')} placeholder={f.placeholder} onChange={(e) => setOpt(f.key, e.target.value)} data-testid={`field-${tool.id}-${f.key}`} />
+            </label>
+          ))}
 
           <Advanced tool={tool.id} draft={draft} set={set} setOpt={setOpt} plan={plan} />
 
@@ -344,12 +378,13 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
           {plan?.ok && (
             <div className="space-y-1" data-testid={`plan-${tool.id}`}>
               <p className="text-[11px] leading-snug text-ink-dim">{plan.makes}</p>
+              {plan.estimate && <p className="text-[10px] leading-snug text-ink" data-testid={`estimate-${tool.id}`}>⏱ {plan.estimate.line}</p>}
               {plan.notes.map((n) => <p key={n} className="text-[10px] leading-snug text-ink-mute">{n}</p>)}
               {plan.warnings.map((w) => <p key={w} className="text-[10px] leading-snug text-warn">⚠ {w}</p>)}
             </div>
           )}
 
-          <div className="space-y-2">
+          <div className={'space-y-2' + (tool.unavailable ? ' hidden' : '')}>
             <div className="flex items-stretch gap-1.5">
               <button type="button" className="btn-primary h-12 min-w-0 flex-1 text-base" disabled={!ready} onClick={() => void run()} data-testid={`run-${tool.id}`}>
                 {busy ? 'Queuing…' : inQueue ? (inQueue.status === 'running' ? 'Running — see Results' : 'Queued — see Results') : `▶ ${plan?.action ?? tool.name}`}
@@ -359,6 +394,11 @@ function ToolCard({ tool, state, source, cap, open, onToggle }: {
             {plan?.ok && <CostEstimateLine shots={shots} resource={draft.resource} onSwitchLocal={() => set({ resource: 'local' })} />}
             {runError && <p className="text-[11px] leading-snug text-err">{runError}</p>}
           </div>
+          {ltx && tool.licence && (
+            <p className="text-[10px] leading-snug text-ink-mute" data-testid={`licence-${tool.id}`}>
+              Licence: {tool.licence.line} — <a className="text-brand hover:underline" href={tool.licence.url} target="_blank" rel="noreferrer">LICENSE-2_x</a>
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -414,6 +454,7 @@ function DescribeButton({ tool, source, layerId, cap, model, prompt, setPrompt }
 }
 
 function variantOf(r: CompRun): string {
+  if (r.variant) return r.variant;
   if (r.tool === 'reframe') return r.options.mode === 'crop' ? `crop:${String(r.options.aspect)}` : `${String(r.options.quality ?? 'draft')}:${String(r.options.aspect)}`;
   if (r.tool === 'upscale') return `x${Number(r.options.scale) === 4 ? 4 : 2}`;
   if (r.tool === 'extend') return r.variant ?? `+${Number(r.options.seconds) || 2}`;
@@ -465,10 +506,81 @@ function ReframeControls({ options, setOpt }: { options: ToolOptions; setOpt: (k
   );
 }
 
+/** The output size line under the controls: "1280×704 → 1920×1056". */
+function SizeLine({ plan }: { plan: ToolPlan | null }): JSX.Element | null {
+  if (!plan?.output) return null;
+  return (
+    <p className="pl-[62px] font-mono text-[11px] text-ink">
+      {plan.source.width}×{plan.source.height} → <span className="text-ok">{plan.output.width}×{plan.output.height}</span>
+    </p>
+  );
+}
+
+/** LTX finishing: "Fast scene" and the master's format, shared by the tiled tools. */
+function FinishingCommon({ options, setOpt }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void }): JSX.Element {
+  return (
+    <>
+      <Segmented
+        label="Fast scene"
+        value={Number(options.fast) === 3 ? 3 : Number(options.fast) === 2 ? 2 : 1}
+        options={[
+          { v: 1, label: 'Off' },
+          { v: 2, label: '×2', title: 'Fast motion: every frame twice before the model, the copies removed after' },
+          { v: 3, label: '×3', title: 'Very fast motion: every frame three times before the model, the copies removed after (longer run)' },
+        ]}
+        onChange={(v) => setOpt('fast', v)}
+      />
+      <Segmented
+        label="Master"
+        value={String(options.master ?? 'png16')}
+        options={[
+          { v: 'png16', label: 'PNG 16-bit', title: 'A 16-bit PNG sequence next to the project (the comp shows an 8-bit MP4 preview)' },
+          { v: 'exr16', label: 'EXR', title: 'EXR 16-bit float, scene-linear (EffectCraft reading it back is not verified); the comp shows an 8-bit MP4 preview' },
+        ]}
+        onChange={(v) => setOpt('master', v)}
+      />
+    </>
+  );
+}
+
 function UpscaleControls({ options, setOpt, plan }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void; plan: ToolPlan | null }): JSX.Element {
   const keep = options.colour !== 'model';
+  const ltx = options.engine === 'ltx';
+  const engine = (
+    <Segmented
+      label="Engine"
+      value={ltx ? 'ltx' : 'seedvr2'}
+      options={[
+        { v: 'seedvr2', label: 'SeedVR2', title: 'Fast, keeps colours: ×2, or ×4 in two passes' },
+        { v: 'ltx', label: 'LTX Refine', title: 'Rebuilds detail: LTX-2.5 with the Refine Details IC-LoRA, tiled — slower, local' },
+      ]}
+      onChange={(v) => setOpt('engine', v)}
+    />
+  );
+  if (ltx) {
+    return (
+      <div className="space-y-1.5" data-testid="upscale-ltx">
+        {engine}
+        <Segmented
+          label="Output"
+          value={String(options.size ?? 'fhd')}
+          options={[
+            { v: 'fhd', label: 'Full HD', title: 'Fits 1920×1080, the source\'s own aspect' },
+            { v: '4k', label: '4K', title: 'Fits 3840×2160 — hours on a 16 GB card' },
+            { v: '8k', label: '8K', title: 'Always through 4K: refine to 4K, lanczos ×2, a light second pass' },
+            { v: 'same', label: 'Same size', title: 'Rebuilt detail at the source\'s own size, no upscale' },
+          ]}
+          onChange={(v) => setOpt('size', v)}
+        />
+        <SizeLine plan={plan} />
+        {options.size === '8k' && <p className="pl-[62px] text-[10px] text-ink-mute">8K goes through 4K: refine to 4K, lanczos ×2, then a light refine — never 8K in one pass.</p>}
+        <FinishingCommon options={options} setOpt={setOpt} />
+      </div>
+    );
+  }
   return (
     <div className="space-y-1.5">
+      {engine}
       <Segmented
         label="Scale"
         value={Number(options.scale) === 4 ? 4 : 2}
@@ -485,6 +597,66 @@ function UpscaleControls({ options, setOpt, plan }: { options: ToolOptions; setO
         <input type="checkbox" checked={keep} onChange={(e) => setOpt('colour', e.target.checked ? 'keep' : 'model')} />
         Keep original colours
       </label>
+    </div>
+  );
+}
+
+function MatteControls({ options, setOpt }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void }): JSX.Element {
+  return (
+    <Segmented
+      label="Engine"
+      value={options.engine === 'ltx' ? 'ltx' : 'sam3'}
+      options={[
+        { v: 'sam3', label: 'SAM 3', title: 'Tracks the subject you name; hard edges; seconds' },
+        { v: 'ltx', label: 'LTX Alpha', title: 'LTX-2.5 Alpha Gen: decides the foreground itself, soft edges (hair, smoke, glass); minutes; up to 145 frames' },
+      ]}
+      onChange={(v) => setOpt('engine', v)}
+    />
+  );
+}
+
+function RestoreControls({ options, setOpt, plan }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void; plan: ToolPlan | null }): JSX.Element {
+  return (
+    <div className="space-y-1.5" data-testid="restore-controls">
+      <Segmented
+        label="Passes"
+        value={String(options.mode ?? 'restore')}
+        options={[
+          { v: 'restore', label: 'Restore', title: 'Restore at 100 %: 1440 wide for 4:3, 1920 for 16:9' },
+          { v: 'restore-refine', label: '+ Refine 30 %', title: 'Restore 100 % with Refine Details at 30 % in the same pass (the card: 0.2–0.3). Faster; colour is best sequential' },
+          { v: 'archive', label: 'Restore → Refine ×2', title: 'Archive order: Restore first, then lanczos ×2 and Refine (4K class)' },
+        ]}
+        onChange={(v) => setOpt('mode', v)}
+      />
+      <SizeLine plan={plan} />
+      <FinishingCommon options={options} setOpt={setOpt} />
+    </div>
+  );
+}
+
+/** The single-pass IC-LoRAs: the size the card trained at, or the source's own; the master. */
+function SingleControls({ options, setOpt, plan }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void; plan: ToolPlan | null }): JSX.Element {
+  return (
+    <div className="space-y-1.5">
+      <Segmented
+        label="Size"
+        value={String(options.size ?? 'bucket')}
+        options={[
+          { v: 'bucket', label: 'Model\'s size', title: 'Near the size the IC-LoRA was trained at (its card: the strongest effect), resized back' },
+          { v: 'source', label: 'Source size', title: 'At the source\'s own size, up to 1920×1088 (slower; far above the training size the card says the effect can weaken)' },
+        ]}
+        onChange={(v) => setOpt('size', v)}
+      />
+      <SizeLine plan={plan} />
+      <Segmented
+        label="Master"
+        value={String(options.master ?? 'png16')}
+        options={[
+          { v: 'png16', label: 'PNG 16-bit', title: 'A 16-bit PNG sequence next to the project; the comp shows an 8-bit MP4 preview' },
+          { v: 'exr16', label: 'EXR', title: 'EXR 16-bit float, scene-linear (EffectCraft reading it back is not verified)' },
+        ]}
+        onChange={(v) => setOpt('master', v)}
+      />
     </div>
   );
 }
@@ -620,7 +792,19 @@ function Advanced({ tool, draft, set, setOpt, plan }: {
             <span className="text-[10px] text-ink-mute">SeedVR2&rsquo;s colour correction (its own choices); wavelet matched best when measured</span>
           </div>
         )}
-        {tool !== 'matte' && tool !== 'social' && (
+        {((tool === 'upscale' && o.engine === 'ltx') || tool === 'restore') && (
+          <label className="flex cursor-pointer items-start gap-2 text-[11px] text-ink-dim" data-testid="preview-tile">
+            <input type="checkbox" className="mt-0.5" checked={o.preview === true} onChange={(e) => setOpt('preview', e.target.checked)} />
+            <span>Preview one tile — the middle tile of the first pass at 1:1, the first 41 frames: the look in minutes, before the full run.</span>
+          </label>
+        )}
+        {plan?.fields?.filter((f) => f.advanced).map((f) => (
+          <label key={f.key} className="block">
+            <span className="text-[11px] text-ink-dim">{f.label}</span>
+            <input className="input h-7 py-0 text-xs" value={String(o[f.key] ?? '')} placeholder={f.placeholder} onChange={(e) => setOpt(f.key, e.target.value)} />
+          </label>
+        ))}
+        {(tool !== 'matte' || o.engine === 'ltx') && tool !== 'social' && (
           <div className="flex items-center gap-2">
             <span className="w-[54px] shrink-0 text-[11px] text-ink-dim">Seed</span>
             <input
@@ -636,8 +820,12 @@ function Advanced({ tool, draft, set, setOpt, plan }: {
         <p className="text-[10px] leading-snug text-ink-mute">
           Workflow: <span className="font-mono text-ink-dim">{plan?.workflowId ?? '—'}</span>
           {tool === 'reframe' && ' · official template video_wan_vace_outpainting'}
-          {tool === 'upscale' && ' · official template utility_seedvr2_3b_int8_upscale_video'}
-          {tool === 'matte' && ' · official template utility_video_segment_sam3 (tracking)'}
+          {tool === 'upscale' && (o.engine === 'ltx'
+            ? ' · the chain of the official LTX-2.5_V2V_TiledFusion_Upscale workflow (ComfyUI-LTXVideo 1.1.0), planned by JustAE Flow 2\'s port of its planner'
+            : ' · official template utility_seedvr2_3b_int8_upscale_video')}
+          {tool === 'matte' && (o.engine === 'ltx' ? ' · the official LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled chain with the Alpha Gen IC-LoRA' : ' · official template utility_video_segment_sam3 (tracking)')}
+          {tool === 'restore' && ' · the chain of the official LTX-2.5_V2V_TiledFusion_Upscale workflow with the Restore IC-LoRA (its card), Refine Details after or inside it'}
+          {['deblur', 'decompress', 'colorize', 'cleanplate', 'daynight'].includes(tool) && ' · the chain of the official LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled workflow, the IC-LoRA and sentence of its card'}
           {tool === 'extend' && (plan?.workflowId === 'ltx25-extend'
             ? ' · from the official template video_ltx2_5_flf2v: the last frames as a video guide (LTXVAddGuide at frame 0, LTXVCropGuides)'
             : ' · official template video_ltx2_5_i2v, from the last frame')}
@@ -711,6 +899,21 @@ function Preview({ tool, state, source, options, plan, frame, onRefresh }: {
         </figure>
       );
     }
+  } else if (tool === 'upscale' && options.engine === 'ltx') {
+    to = (
+      <div className="flex flex-col justify-center gap-1 text-[11px]">
+        <span className="font-mono text-ink">LTX {options.size === '4k' ? '4K' : options.size === '8k' ? '8K' : options.size === 'same' ? 'refine' : 'Full HD'}</span>
+        {plan?.output && <span className="font-mono text-ok">{plan.output.width}×{plan.output.height}</span>}
+        <span className="text-[10px] text-ink-mute">{options.preview === true ? 'one tile, to judge the look' : 'rebuilt detail, PNG 16-bit master'}</span>
+      </div>
+    );
+  } else if (tool === 'restore' || ['deblur', 'decompress', 'colorize', 'cleanplate', 'daynight'].includes(tool)) {
+    to = (
+      <div className="flex flex-col justify-center gap-1 text-[11px]">
+        {plan?.output && <span className="font-mono text-ok">{plan.output.width}×{plan.output.height}</span>}
+        <span className="text-[10px] text-ink-mute">a new comp, the original kept under it</span>
+      </div>
+    );
   } else if (tool === 'upscale') {
     const k = Number(options.scale) === 4 ? 4 : 2;
     to = (
@@ -718,6 +921,13 @@ function Preview({ tool, state, source, options, plan, frame, onRefresh }: {
         <span className="font-mono text-ink">×{k}</span>
         <span className="font-mono text-ok">{srcW * k}×{srcH * k}</span>
         <span className="text-[10px] text-ink-mute">a new comp at that size</span>
+      </div>
+    );
+  } else if (tool === 'matte' && options.engine === 'ltx') {
+    to = (
+      <div className="flex flex-col justify-center gap-1 text-[10px] text-ink-mute">
+        <span>→ a soft luma matte (LTX Alpha)</span>
+        <span>→ ProRes 4444 with alpha</span>
       </div>
     );
   } else if (tool === 'matte') {
@@ -844,7 +1054,11 @@ const SOURCE_WORD: Record<SourceKind, string> = { workArea: 'work area', comp: '
 function tagOf(r: CompRun): string | null {
   if (r.tool === 'slowmo') return r.options.engine === 'gimm' ? 'GIMM-VFI (no longer offered)' : r.options.engine === 'film' ? 'FILM' : 'RIFE';
   // Runs made before the colour option (25 Oct) kept the template's "none": no tag rather than a wrong one.
+  if (r.tool === 'upscale' && r.options.engine === 'ltx') return `LTX Refine${r.options.preview === true ? ' · tile' : ''}${Number(r.options.fast) > 1 ? ` · fast ×${r.options.fast}` : ''}`;
   if (r.tool === 'upscale') return r.options.colour === undefined ? null : r.options.colour === 'model' ? 'Model colours' : 'Colours kept';
+  if (r.tool === 'matte') return r.options.engine === 'ltx' ? 'LTX Alpha' : null;
+  if (r.tool === 'restore') return r.options.mode === 'archive' ? 'Restore → Refine ×2' : r.options.mode === 'restore-refine' ? 'Restore + Refine 30 %' : 'Restore';
+  if (['deblur', 'decompress', 'colorize', 'cleanplate', 'daynight'].includes(r.tool)) return r.options.size === 'source' ? 'source size' : 'model\'s size';
   if (r.tool !== 'reframe') return null;
   if (r.options.mode === 'crop') return 'Crop';
   return r.options.quality === 'final' ? 'Final' : 'Draft';
@@ -949,7 +1163,7 @@ function ResultCard({ run, state }: { run: CompRun; state: CompState }): JSX.Ele
                   {busy === 'export' ? 'Exporting…' : 'Export with alpha'}
                 </button>
               )}
-              {exp && <button className="chip h-6 px-2 py-0 text-[11px]" onClick={() => void compApi.reveal(exp.path)} title={exp.path}>Reveal .mov</button>}
+              {exp && <button className="chip h-6 px-2 py-0 text-[11px]" onClick={() => void compApi.reveal(exp.path)} title={exp.path}>{exp.kind === 'png16' ? 'Reveal PNG 16-bit' : exp.kind === 'exr16' ? 'Reveal EXR' : 'Reveal .mov'}</button>}
               {run.versions.length > 1 && (
                 <select
                   className="input h-6 w-auto py-0 pl-2 pr-6 text-[11px]"

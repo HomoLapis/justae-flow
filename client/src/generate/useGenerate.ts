@@ -41,7 +41,7 @@ import { defaultOutputName, layerNameFromPrompt } from '../lib/filenames';
 import { panelClientId } from '../lib/clientId';
 import {
   nodeAvailable, writeBlobToFile, pathJoin, copyFile, basename,
-  readFileAsBlob, mimeForPath,
+  readFileAsBlob, mimeForPath, ensureDir,
 } from '../lib/fs';
 import {
   resolveFlowRoot, ensureShotFolders, writeJobManifest, writeWorkflowSnapshot,
@@ -638,11 +638,21 @@ function runShot(ctx: RunCtx): Promise<void> {
           let chainNote: string | null = null;
           if (chain && primary.isVideo) {
             try {
-              const up = await runChained(provider, chain, primary.path, shot.output, (m) => setJ({ message: `${tag}${m}` }), {
-                ...wsCtx, meta: { workflowId: chain.then, slotSeconds, scaleWithSlot: true },
-              });
-              primary = { ...primary, path: up.path };
-              chainNote = `Final: ${chain.then} ×${chain.scale} on the draft (job ${up.jobId}); the draft is ${basename(saved.find((x) => x.isVideo)?.path ?? '')}.`;
+              if (chain.then === 'ltx25-refine') {
+                // The Matt Hallett pipeline: the H3 result, then LTX-2.5 Refine Details on it (local only: the models are there).
+                if (resource.kind !== 'local') throw new Error(`LTX Refine runs on your local ComfyUI, and this run went to ${resource.label}.`);
+                const up = await runLtxRefine(provider, primary.path, shot.output, (m) => setJ({ message: `${tag}${m}` }), {
+                  ...wsCtx, meta: { workflowId: chain.then, slotSeconds, scaleWithSlot: true },
+                });
+                primary = { ...primary, path: up.path };
+                chainNote = `Final: LTX Refine to ${up.size} on the draft (job ${up.jobId}); the PNG 16-bit master is ${up.master}; the draft is ${basename(saved.find((x) => x.isVideo)?.path ?? '')}.`;
+              } else {
+                const up = await runChained(provider, chain, primary.path, shot.output, (m) => setJ({ message: `${tag}${m}` }), {
+                  ...wsCtx, meta: { workflowId: chain.then, slotSeconds, scaleWithSlot: true },
+                });
+                primary = { ...primary, path: up.path };
+                chainNote = `Final: ${chain.then} ×${chain.scale} on the draft (job ${up.jobId}); the draft is ${basename(saved.find((x) => x.isVideo)?.path ?? '')}.`;
+              }
             } catch (e) {
               chainNote = `Final: the second step (${chain.then}) failed — placed the draft. ${describe(e)}`;
             }
@@ -870,6 +880,53 @@ async function runChained(
   const path = pathJoin(dir, basename(file).replace(/\.[^.]+$/, '') + `_x${chain.scale}.${out.filename.split('.').pop() ?? 'mp4'}`);
   await writeBlobToFile(await provider.download(out), path);
   return { path, jobId };
+}
+
+/**
+ * LTX Refine on a result, as a job of its own on the local ComfyUI: the server plans it from the file itself
+ * (POST /api/finishing/graph — the Tiled Fusion planner and graph of core/finishing, checked against the local
+ * catalogue), the file goes up into its LoadVideo, and two things come back: an 8-bit MP4 (placed, as every result)
+ * and the 16-bit PNG frames (the master), written beside the draft as "<name>_ltx-fhd.mp4" and "<name>_ltx-fhd_png16/".
+ */
+async function runLtxRefine(
+  provider: VideoProvider, file: string, dir: string,
+  say: (m: string) => void, ctx: { clientId: string; meta: { workflowId: string; slotSeconds: number | null; scaleWithSlot: boolean } },
+): Promise<{ path: string; jobId: string; master: string; size: string }> {
+  const r = await fetch('/api/finishing/graph', { method: 'POST', headers: { ...serverHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ file, size: 'fhd' }) });
+  const d = await r.json() as {
+    error?: string; graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>; loadNode: string; saveNode: string; previewNode: string;
+    plan: { delivery: { w: number; h: number }; tiles: number }; estimate: { line: string };
+  };
+  if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`);
+  const size = `${d.plan.delivery.w}×${d.plan.delivery.h}`;
+  say(`Final: uploading the draft for LTX Refine to ${size} (${d.plan.tiles} tiles; ${d.estimate.line.split(' (')[0]})…`);
+  const up = await provider.uploadInput(readFileAsBlob(file, mimeForPath(file)), basename(file));
+  d.graph[d.loadNode].inputs.file = up.reference ?? up.name;
+  const { jobId } = await provider.submit(d.graph as never, ctx);
+  say('Final: LTX Refine queued…');
+  const outputs = await new Promise<OutputFile[]>((resolve, reject) => {
+    let got: OutputFile[] = [];
+    const stop = provider.watch(jobId, ctx, (ev) => {
+      if (ev.kind === 'progress') say(`Final: LTX Refine · ${Math.round(ev.value)}/${Math.round(ev.max)}`);
+      if (ev.kind === 'output') got = got.concat(ev.outputs);
+      if (ev.kind === 'done') { stop(); resolve(got); }
+      if (ev.kind === 'error') { stop(); reject(new Error(ev.message)); }
+    });
+  });
+  const all = outputs.length ? outputs : await provider.fetchOutputs(jobId);
+  const mp4 = all.filter((o) => o.nodeId === d.previewNode && isVideoFile(o.filename)).pop();
+  if (!mp4) throw new Error('LTX Refine finished without its MP4');
+  const stem = basename(file).replace(/\.[^.]+$/, '') + '_ltx-fhd';
+  const path = pathJoin(dir, `${stem}.mp4`);
+  await writeBlobToFile(await provider.download(mp4), path);
+  const frames = all.filter((o) => o.nodeId === d.saveNode && /\.png$/i.test(o.filename)).sort((a, b) => a.filename.localeCompare(b.filename));
+  const master = pathJoin(dir, `${stem}_png16`);
+  ensureDir(master);
+  for (let i = 0; i < frames.length; i++) {
+    if (i % 8 === 0) say(`Final: the PNG 16-bit master, frame ${i + 1}/${frames.length}…`);
+    await writeBlobToFile(await provider.download(frames[i]), pathJoin(master, `${stem}_${String(i).padStart(5, '0')}.png`));
+  }
+  return { path, jobId, master, size };
 }
 
 /* ─── small helpers ─────────────────────────────────────────────────── */

@@ -13,7 +13,17 @@ import { lsGet, lsSet } from '../state/persistence';
 export type SourceKind = 'workArea' | 'comp' | 'layer';
 export type ToolOptions = Record<string, string | number | boolean>;
 
-export interface CompToolInfo { id: string; name: string; promise: string; icon: string; sources: SourceKind[]; defaults: ToolOptions }
+export interface CompToolInfo {
+  id: string; name: string; promise: string; icon: string; sources: SourceKind[]; defaults: ToolOptions;
+  /** 'ltx': listed under "LTX finishing". */
+  family?: 'ltx';
+  /** The licence line the card carries (LTX-2.x), with its link. */
+  licence?: { line: string; url: string };
+  /** Listed, cannot run: why (to be verified). */
+  unavailable?: string;
+  /** IC-LoRA files the local ComfyUI lacks, with their (gated) Hugging Face page. */
+  missing?: Array<{ what: string; file: string; url: string }>;
+}
 
 export interface RunVersion {
   n: number;
@@ -84,7 +94,12 @@ export interface ToolPlan {
   notes: string[];
   warnings: string[];
   action: string;
-  prompt?: { label: string; placeholder: string };
+  /** optional: an empty field runs with `fallback` (the LTX "Look"). */
+  prompt?: { label: string; placeholder: string; optional?: boolean; fallback?: string; lint?: string };
+  /** Free-text choices beside the prompt, kept in the options. */
+  fields?: Array<{ key: string; label: string; placeholder: string; advanced?: boolean }>;
+  /** LTX finishing: the time on this machine, from the tile count and measured runs. */
+  estimate?: { seconds: number; line: string };
   variant: string;
   /** Choices that come from the workflow itself (a node's own options). */
   choices?: Record<string, string[]>;
@@ -179,7 +194,7 @@ export function pickedLayer(s: CompState | null, layerPick: { compId: number; la
 }
 
 export const compApi = {
-  plan: (q: { tool: string; source: SourceKind; layerId?: number; options: ToolOptions; cap: number }) => serverJson<ToolPlan>('/api/comp/plan', q),
+  plan: (q: { tool: string; source: SourceKind; layerId?: number; options: ToolOptions; cap: number; prompt?: string; resource?: string | null }) => serverJson<ToolPlan>('/api/comp/plan', q),
   frame: (force = false) => serverJson<{ file: string; time: number; compId: number; rev: number }>('/api/comp/frame', { force }),
   run: (q: { tool: string; source: SourceKind; layerId?: number; options: ToolOptions; cap: number; prompt: string; resource: string | null; seed: number | null }) =>
     serverJson<{ id: string; queued: number }>('/api/comp/run', q),

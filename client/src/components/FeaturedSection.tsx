@@ -7,8 +7,9 @@
  * finished there (a deployment has no node catalogue), ✗ with what is missing,
  * ? when nothing is known yet. An entry that runs nowhere stays listed, greyed,
  * with the files it lacks and where the template downloads them. "Use it" makes
- * it the workflow of the Marker and Storyboard tabs; MiniMax H3 has Draft / Final
- * (Final = the draft, then SeedVR2 ×2 on its result, a second job).
+ * it the workflow of the Marker and Storyboard tabs. MiniMax H3 has Draft / Final: Draft is its own workflow (the
+ * 4-step turbo LoRA the official template names); Final is the base model, then a second job on its result —
+ * "+ SeedVR2 ×2" or "+ LTX Refine" (to Full HD, with a PNG 16-bit master).
  */
 
 import { useEffect, useState } from 'react';
@@ -19,7 +20,8 @@ interface RunsOn { resource: string; kind: string; label: string; status: 'ok' |
 interface Entry {
   id: string; name: string; line: string; title: string; task: string; input?: string; output: string; template: string;
   licence: string; licenceNote?: string;
-  tiers?: { final: { then: string; scale: number; note: string } };
+  tiers?: { draft: { workflow: string; note: string }; finals: Array<{ id: 'seedvr2' | 'ltx'; label: string; then: string; scale: number; note: string }> };
+  draftName?: string;
   runsOn: RunsOn[];
   missing: Array<{ kind: 'node' | 'model'; name: string; directory?: string; url?: string }>;
   runnable: boolean;
@@ -57,6 +59,7 @@ export function FeaturedSection({ onUse }: { onUse: (libraryId: string) => Promi
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [tier, setTier] = useState<Record<string, 'draft' | 'final'>>({});
+  const [finalPick, setFinalPick] = useState<Record<string, 'seedvr2' | 'ltx'>>({});
 
   // Read again when the probes change (Settings ▸ Resources ▸ Check, a run that finished on a deployment).
   useEffect(() => {
@@ -71,12 +74,26 @@ export function FeaturedSection({ onUse }: { onUse: (libraryId: string) => Promi
   if (error) return <p className="text-[11px] text-ink-mute">Featured workflows: the server did not answer ({error}).</p>;
   if (!entries) return null;
 
-  const use = async (e: Entry): Promise<void> => {
+  /** The tier an entry shows: the pick on the card, else what the Flow window uses now (a chain = Final). */
+  const tierOf = (e: Entry): 'draft' | 'final' => tier[e.id] ?? (chains[`bundled:${e.id}`] ? 'final' : 'draft');
+  const finalOf = (e: Entry): NonNullable<Entry['tiers']>['finals'][number] | undefined => {
+    const pick = finalPick[e.id] ?? (chains[`bundled:${e.id}`]?.then === 'ltx25-refine' ? 'ltx' : 'seedvr2');
+    return e.tiers?.finals.find((x) => x.id === pick) ?? e.tiers?.finals[0];
+  };
+  const use = async (e: Entry, t: 'draft' | 'final' = tierOf(e), fin = finalOf(e)): Promise<void> => {
     const id = `bundled:${e.id}`;
     setBusy(e.id);
     try {
-      if (e.tiers) setChain(id, (tier[e.id] ?? (chains[id] ? 'final' : 'draft')) === 'final' ? { then: e.tiers.final.then, scale: e.tiers.final.scale } : null);
-      await onUse(id);
+      if (e.tiers && t === 'draft') {
+        // Draft: its own workflow, nothing chained after it.
+        const draft = `bundled:${e.tiers.draft.workflow}`;
+        setChain(id, null);
+        setChain(draft, null);
+        await onUse(draft);
+      } else {
+        if (e.tiers) setChain(id, fin ? { then: fin.then, scale: fin.scale } : null);
+        await onUse(id);
+      }
     } finally {
       setBusy(null);
     }
@@ -91,8 +108,9 @@ export function FeaturedSection({ onUse }: { onUse: (libraryId: string) => Promi
       <ul className="space-y-1.5">
         {entries.map((e) => {
           const id = `bundled:${e.id}`;
-          const t = tier[e.id] ?? (chains[id] ? 'final' : 'draft');
-          const active = activeId === id;
+          const t = tierOf(e);
+          const fin = finalOf(e);
+          const active = activeId === id || (!!e.tiers && activeId === `bundled:${e.tiers.draft.workflow}`);
           return (
             <li key={e.id} data-featured={e.id}
               className={'space-y-1 rounded-lg border px-2.5 py-2 ' + (active ? 'border-brand/60 bg-brand/5' : 'border-line bg-bg-raised') + (e.runnable ? '' : ' opacity-60')}>
@@ -102,13 +120,13 @@ export function FeaturedSection({ onUse }: { onUse: (libraryId: string) => Promi
                   <span className="block truncate text-[10px] text-ink-mute">{e.line}</span>
                 </span>
                 {e.tiers && (
-                  <div className="flex shrink-0 overflow-hidden rounded-md border border-line text-[10px]" title={e.tiers.final.note}>
+                  <div className="flex shrink-0 overflow-hidden rounded-md border border-line text-[10px]" title={t === 'draft' ? e.tiers.draft.note : fin?.note}>
                     {(['draft', 'final'] as const).map((x) => (
                       <button key={x} type="button" data-tier={x}
                         className={'px-2 py-0.5 ' + (t === x ? 'bg-brand text-white' : 'text-ink-dim hover:bg-bg-subtle')}
                         onClick={() => {
                           setTier({ ...tier, [e.id]: x });
-                          if (active) setChain(id, x === 'final' ? { then: e.tiers!.final.then, scale: e.tiers!.final.scale } : null);
+                          if (active) void use(e, x, fin);
                         }}>
                         {x === 'draft' ? 'Draft' : 'Final'}
                       </button>
@@ -123,7 +141,21 @@ export function FeaturedSection({ onUse }: { onUse: (libraryId: string) => Promi
                 <span>runs on:</span>
                 {e.runsOn.map((r, i) => <span key={r.resource}>{i > 0 && <span className="pr-2 text-ink-mute">·</span>}<Badge r={r} /></span>)}
               </p>
-              {e.tiers && t === 'final' && <p className="text-[10px] leading-snug text-ink-mute">{e.tiers.final.note}</p>}
+              {e.tiers && t === 'final' && (
+                <div className="flex flex-wrap items-center gap-1" data-testid={`finals-${e.id}`}>
+                  {e.tiers.finals.map((x) => (
+                    <button key={x.id} type="button" data-final={x.id} title={x.note}
+                      className={'chip h-6 px-2 py-0 text-[10px] ' + (fin?.id === x.id ? '!border-brand/70 !bg-brand/15 !text-ink' : '')}
+                      onClick={() => {
+                        setFinalPick({ ...finalPick, [e.id]: x.id });
+                        if (active) void use(e, 'final', x);
+                      }}>
+                      {x.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {e.tiers && <p className="text-[10px] leading-snug text-ink-mute">{t === 'draft' ? e.tiers.draft.note : fin?.note}</p>}
               {e.missing.length > 0 && (
                 <ul className="space-y-0.5 text-[10px] leading-snug text-warn" data-testid={`missing-${e.id}`}>
                   {e.missing.slice(0, 4).map((x) => (
