@@ -98,14 +98,14 @@ export function FilePickerRow({ field }: Props): JSX.Element {
       if (!nodeAvailable()) throw new Error('The JustAE Flow server is not answering.');
       const comp = await ae.activeComp();
       const compName = comp && typeof comp === 'object' && 'name' in comp ? comp.name : 'Composition';
-      const r = await ae.renderWorkArea(settings.defaults.workAreaMaxDuration);
-      if (isErr(r)) throw new Error(r.error);
-      // The host renders to its own temp path — move it somewhere findable.
+      // Rendered straight into the capture folder: EffectCraft's scripting has no temp folder of its own.
       const dir = await captureDir(compName);
+      const r = await ae.renderWorkArea(settings.defaults.workAreaMaxDuration, dir);
+      if (isErr(r)) throw new Error(r.error);
       const ext = (r.path.split('.').pop() ?? 'mp4').toLowerCase();
       const dest = pathJoin(dir, captureWorkAreaName(compName, ext));
       let finalPath = r.path;
-      try { copyFile(r.path, dest); finalPath = dest; } catch { /* keep the temp path */ }
+      try { copyFile(r.path, dest); finalPath = dest; } catch { /* keep the render's own name */ }
       set({ kind: 'video', localPath: finalPath, filename: basename(finalPath) });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

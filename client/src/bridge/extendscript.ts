@@ -148,8 +148,9 @@ export const ae = {
   captureFrame: (targetPath: string): Promise<Maybe<FrameCapture>> =>
     evalJson(`captureCurrentFrameToFile("${esEscape(targetPath)}")`),
 
-  renderWorkArea: (maxDurationSec = 15): Promise<Maybe<WorkAreaRender>> =>
-    evalJson(`renderWorkAreaToFile(${maxDurationSec})`),
+  /** targetDir: where the movie goes — EffectCraft's scripting has no Folder.temp, so the caller names a folder. */
+  renderWorkArea: (maxDurationSec = 15, targetDir?: string): Promise<Maybe<WorkAreaRender>> =>
+    evalJson(`renderWorkAreaToFile(${maxDurationSec}${targetDir ? `, "${esEscape(targetDir)}"` : ''})`),
 
   /**
    * Native Save / Open dialogs for shot setups.

@@ -433,8 +433,10 @@ function captureCurrentFrameToFile(targetPath) {
 
         // Path B: Render Queue with PNG / JPEG template
         rqItem = app.project.renderQueue.items.add(comp);
-        rqItem.timeSpanStart = t;
-        rqItem.timeSpanDuration = 1 / comp.frameRate;
+        // EffectCraft hands out a new wrapper for every item(j): ours is known by its index (the last one added).
+        var ourIndex = app.project.renderQueue.numItems;
+        try { rqItem.timeSpanStart = t; } catch (eS) { if (String(eS).indexOf("nothing to change") < 0) throw eS; }
+        try { rqItem.timeSpanDuration = 1 / comp.frameRate; } catch (eD) { if (String(eD).indexOf("nothing to change") < 0) throw eD; }
         var om = rqItem.outputModule(1);
         var available = om.templates;
 
@@ -467,7 +469,7 @@ function captureCurrentFrameToFile(targetPath) {
 
         for (var j = 1; j <= app.project.renderQueue.numItems; j++) {
             var it = app.project.renderQueue.item(j);
-            if (it !== rqItem && it.status === RQItemStatus.QUEUED) { it.render = false; disabled.push(j); }
+            if (j !== ourIndex && it !== rqItem && it.status === RQItemStatus.QUEUED) { it.render = false; disabled.push(j); }
         }
         app.project.renderQueue.render();
         for (var k = 0; k < disabled.length; k++) {
@@ -504,9 +506,23 @@ function captureCurrentFrameToFile(targetPath) {
     }
 }
 
-/* ─── Work area render (for V2V reference) ───────────────────────────── */
+/* ─── Work area render (for V2V reference, and the Comp tab's source) ── */
 
-function renderWorkAreaToFile(maxDurationSec) {
+/**
+ * Render the work area of the active comp — or, with spanStart/spanDuration, any
+ * span of it (the Comp tab's "whole comp") — to a movie file, never longer than
+ * maxDurationSec (the "Work-area render cap" setting).
+ *
+ * targetDir is where the file goes. Measured on EffectCraft 0.11.1:
+ * `Folder.temp` is null there, so a caller must name a folder; After Effects
+ * falls back to its temp folder. baseName (optional) names the file.
+ *
+ * format: "h264" (default: a small reference movie) or "prores" (the Comp
+ * tab: the render becomes the untouched middle of the result, so it is kept at
+ * ProRes quality — measured on EffectCraft 0.11.1: its "ProRes" output is
+ * ProRes 422 HQ, 10-bit, about 76 Mb/s at 1280×704).
+ */
+function renderWorkAreaToFile(maxDurationSec, targetDir, spanStart, spanDuration, baseName, format) {
     var rqItem = null;
     var disabled = [];
     try {
@@ -515,24 +531,37 @@ function renderWorkAreaToFile(maxDurationSec) {
             return JSON.stringify({ error: "No active composition." });
         }
         var maxDur = (typeof maxDurationSec === "number" && maxDurationSec > 0) ? maxDurationSec : 15;
-        var wStart = comp.workAreaStart;
-        var wDur = Math.min(comp.workAreaDuration, maxDur);
+        var wStart = (typeof spanStart === "number" && spanStart >= 0) ? spanStart : comp.workAreaStart;
+        var wFull = (typeof spanDuration === "number" && spanDuration > 0) ? spanDuration : comp.workAreaDuration;
+        var wDur = Math.min(wFull, maxDur);
         if (wDur <= 0) {
             return JSON.stringify({
                 error: "Work area has zero duration. Press B at start, N at end."
             });
         }
 
-        var tempFolder = new Folder(Folder.temp.fsName + "/JustAE");
+        var tempFolder = null;
+        if (targetDir) {
+            tempFolder = new Folder(String(targetDir));
+        } else if (Folder.temp) {
+            tempFolder = new Folder(Folder.temp.fsName + "/JustAE");
+        }
+        if (!tempFolder) {
+            return JSON.stringify({ error: "No folder to render into: this host has no temp folder, so the caller must name one." });
+        }
         if (!tempFolder.exists) tempFolder.create();
         var stamp = new Date().getTime();
 
         rqItem = app.project.renderQueue.items.add(comp);
-        rqItem.timeSpanStart = wStart;
-        rqItem.timeSpanDuration = wDur;
+        // EffectCraft hands out a new wrapper for every item(j): ours is known by its index (the last one added).
+        var ourIndex = app.project.renderQueue.numItems;
+        // EffectCraft 0.11.1 refuses to set a value it already has ("nothing to change"),
+        // e.g. a span that starts at 0: that refusal is not an error here.
+        try { rqItem.timeSpanStart = wStart; } catch (eS) { if (String(eS).indexOf("nothing to change") < 0) throw eS; }
+        try { rqItem.timeSpanDuration = wDur; } catch (eD) { if (String(eD).indexOf("nothing to change") < 0) throw eD; }
         var om = rqItem.outputModule(1);
         var available = om.templates;
-        var preferred = [
+        var preferred = format === "prores" ? ["ProRes", "Apple ProRes 422 HQ", "Lossless"] : [
             "H.264 - Match Render Settings - 5 Mbps",
             "H.264 - Match Render Settings - 15 Mbps",
             "H.264", "High Quality", "Lossless"
@@ -546,15 +575,20 @@ function renderWorkAreaToFile(maxDurationSec) {
         if (!picked && available.length > 0) picked = available[0];
         if (!picked) picked = "Lossless";
         try { om.applyTemplate(picked); } catch (e1) {
-            try { om.applyTemplate("Lossless"); picked = "Lossless"; } catch (e2) {}
+            // "nothing to change" (EffectCraft): the template is already the module's own.
+            if (String(e1).indexOf("nothing to change") < 0) {
+                try { om.applyTemplate("Lossless"); picked = "Lossless"; } catch (e2) {}
+            }
         }
         var ext = (picked.indexOf("H.264") >= 0) ? "mp4" : "mov";
-        var outFile = new File(tempFolder.fsName + "/justae_ref_" + stamp + "." + ext);
+        var stem = baseName ? String(baseName).replace(/[\\\/:*?"<>|]+/g, "_") : "justae_ref_" + stamp;
+        var outFile = new File(tempFolder.fsName + "/" + stem + "." + ext);
+        try { if (outFile.exists) outFile.remove(); } catch (eOld) {}
         om.file = outFile;
 
         for (var j = 1; j <= app.project.renderQueue.numItems; j++) {
             var it = app.project.renderQueue.item(j);
-            if (it !== rqItem && it.status === RQItemStatus.QUEUED) { it.render = false; disabled.push(j); }
+            if (j !== ourIndex && it !== rqItem && it.status === RQItemStatus.QUEUED) { it.render = false; disabled.push(j); }
         }
         app.project.renderQueue.render();
         for (var k = 0; k < disabled.length; k++) {
@@ -567,8 +601,9 @@ function renderWorkAreaToFile(maxDurationSec) {
             return JSON.stringify({ error: "Render finished but output not found at " + outFile.fsName });
         }
         return JSON.stringify({
-            success: true, path: outFile.fsName, duration: wDur,
-            workAreaStart: wStart, compName: comp.name, template: picked
+            success: true, path: outFile.fsName, duration: wDur, ext: ext,
+            workAreaStart: wStart, requested: wFull, capped: wFull > wDur + 0.0005,
+            compName: comp.name, template: picked
         });
     } catch (e) {
         try {
