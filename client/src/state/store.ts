@@ -13,8 +13,8 @@ import type { AdjustmentLayerInfo } from '../bridge/extendscript';
 
 export type JobPhase = 'idle' | 'submitting' | 'queued' | 'running' | 'done' | 'error' | 'cancelled';
 
-/** The three things the panel does. */
-export type Tab = 'workflow' | 'marker' | 'storyboard';
+/** The four things the panel does. */
+export type Tab = 'workflow' | 'marker' | 'storyboard' | 'comp';
 
 export interface AttachmentRef {
   /** Field id (`nodeId.field`) this attachment fills. */

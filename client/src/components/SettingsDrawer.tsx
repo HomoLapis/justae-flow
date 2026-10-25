@@ -96,8 +96,9 @@ export function SettingsDrawer(): JSX.Element | null {
             </div>
           </Field>
 
-          <Field label="Work-area render cap (seconds)">
+          <Field label="Work-area render cap (seconds) — also the longest render the Comp tab makes of a work area or a whole comp">
             <input
+              id="work-area-cap"
               className="input text-xs"
               type="number"
               min={1}

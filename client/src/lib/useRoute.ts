@@ -38,6 +38,30 @@ export function useActiveRoute(asDefault = false): Resolution | null {
   return route;
 }
 
+/**
+ * Where a run of a bundled workflow goes with this pick — the Comp tab's
+ * tools route by their own workflow's task row (Reframe, Upscale, Cut-out),
+ * not by the Workflow tab's workflow.
+ */
+export function useWorkflowRoute(workflowId: string | null | undefined, choice: string): Resolution | null {
+  const version = useResources((s) => s.data);
+  const [route, setRoute] = useState<Resolution | null>(null);
+  useEffect(() => {
+    if (!version || !workflowId) { setRoute(null); return undefined; }
+    const key = `wf|${choice}|${workflowId}|${JSON.stringify(version.tasks)}|${version.resources.map((r) => `${r.id}${r.usable}`).join()}`;
+    let p = resolutions.get(key);
+    if (!p) {
+      p = resolveRun({ task: 'video', override: choice === 'default' ? null : choice, workflowId });
+      resolutions.set(key, p);
+      p.catch(() => resolutions.delete(key));
+    }
+    let alive = true;
+    void p.then((r) => { if (alive) setRoute(r); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [choice, version, workflowId]);
+  return route;
+}
+
 export interface ShotForEstimate { workflowId: string; seconds: number | null; scaleWithSlot: boolean }
 
 /**

@@ -4,6 +4,7 @@ import { billingConfigured, migrateLegacySettings, useResources } from './lib/re
 import { ProviderPill, ProviderBanner } from './components/ProviderPill';
 import { WorkflowTab } from './components/WorkflowTab';
 import { ShotMode } from './modes/ShotMode';
+import { CompMode } from './modes/CompMode';
 import { SettingsDrawer } from './components/SettingsDrawer';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ae } from './bridge/extendscript';
@@ -13,7 +14,10 @@ const TABS: Array<{ id: Tab; label: string; hint: string }> = [
   { id: 'workflow', label: 'Workflow', hint: 'Pick, edit and save ComfyUI workflows' },
   { id: 'marker', label: 'Marker', hint: 'Fill the gaps between pairs of comp markers' },
   { id: 'storyboard', label: 'Storyboard', hint: 'Fill the empty adjustment-layer placeholders' },
+  { id: 'comp', label: 'Comp', hint: 'Reframe, upscale or cut out the whole comp, its work area or the selected layer' },
 ];
+
+const TAB_IDS = TABS.map((t) => t.id);
 
 export function App(): JSX.Element {
   const tab = useApp((s) => s.tab);
@@ -40,6 +44,23 @@ export function App(): JSX.Element {
     }, 60_000);
     return () => { alive = false; clearInterval(t1); clearInterval(t2); };
   }, []);
+
+  // "#comp" opens on that tab; the panel in EffectCraft can also ask an open window to show one ("Open the Comp tab").
+  useEffect(() => {
+    const fromHash = (): void => {
+      const h = window.location.hash.replace(/^#/, '') as Tab;
+      if (TAB_IDS.includes(h)) setTab(h);
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    let seen = Date.now();
+    const t = setInterval(() => {
+      void fetch('/api/ui/intent').then((r) => r.json()).then((i: { tab: Tab | null; at: number }) => {
+        if (i.tab && i.at > seen && TAB_IDS.includes(i.tab)) { seen = i.at; setTab(i.tab); }
+      }).catch(() => undefined);
+    }, 2500);
+    return () => { window.removeEventListener('hashchange', fromHash); clearInterval(t); };
+  }, [setTab]);
 
   useEffect(() => {
     if (!isInCEP()) return;
@@ -107,6 +128,7 @@ export function App(): JSX.Element {
         {tab === 'workflow' && <WorkflowTab />}
         {tab === 'marker' && <ShotMode source="marker" />}
         {tab === 'storyboard' && <ShotMode source="placeholder" />}
+        {tab === 'comp' && <CompMode />}
       </main>
 
       <SettingsDrawer />

@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { formatCredits, useResources, type EstimateAnswer, type ResourceView } from '../lib/resources';
-import { useActiveRoute, useEstimate, type ShotForEstimate } from '../lib/useRoute';
+import { useActiveRoute, useEstimate, useWorkflowRoute, type ShotForEstimate } from '../lib/useRoute';
 
 function short(a: EstimateAnswer | null, metered: boolean): string {
   if (!a) return '';
@@ -47,14 +47,33 @@ function Option({ r, shots, picked, onPick }: { r: ResourceView; shots: ShotForE
   );
 }
 
-export function ResourceChooser({ shots, disabled }: { shots: ShotForEstimate[]; disabled?: boolean }): JSX.Element | null {
+interface Props {
+  shots: ShotForEstimate[];
+  disabled?: boolean;
+  /**
+   * A pick of its own (the Comp tab keeps one per tool), instead of the Generate
+   * button's pick that the server keeps for the panel.
+   */
+  value?: string;
+  onChange?: (choice: string) => void;
+  /** Route "Default" by this bundled workflow's task row (the Comp tab), instead of the Workflow tab's workflow. */
+  workflowId?: string;
+}
+
+export function ResourceChooser({ shots, disabled, value, onChange, workflowId }: Props): JSX.Element | null {
   const data = useResources((s) => s.data);
   const choose = useResources((s) => s.choose);
-  const route = useActiveRoute();
-  const byDefault = useActiveRoute(true);
+  const choice = value ?? data?.choice ?? 'default';
+  const activeRoute = useActiveRoute();
+  const activeDefault = useActiveRoute(true);
+  const toolRoute = useWorkflowRoute(workflowId, choice);
+  const toolDefault = useWorkflowRoute(workflowId, 'default');
+  const route = workflowId ? toolRoute : activeRoute;
+  const byDefault = workflowId ? toolDefault : activeDefault;
+  const pick = (id: string): void => { if (onChange) onChange(id); else void choose(id); };
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  const current = useEstimate(shots, data?.choice ?? 'default');
+  const current = useEstimate(shots, choice);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -64,7 +83,6 @@ export function ResourceChooser({ shots, disabled }: { shots: ShotForEstimate[];
   }, [open]);
 
   if (!data) return null;
-  const choice = data.choice;
   const listed = data.resources.filter((r) => r.enabled || r.kind === 'cloud');
   const picked = choice === 'default' ? null : data.resources.find((r) => r.id === choice);
   const where = picked ?? data.resources.find((r) => r.id === route?.resource);
@@ -94,7 +112,7 @@ export function ResourceChooser({ shots, disabled }: { shots: ShotForEstimate[];
           <button
             type="button"
             className={'flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left ' + (choice === 'default' ? 'bg-brand/10' : 'hover:bg-bg-subtle')}
-            onClick={() => { void choose('default'); setOpen(false); }}
+            onClick={() => { pick('default'); setOpen(false); }}
             data-resource="default"
           >
             <span className="mt-0.5 w-3 shrink-0 text-[10px] text-brand">{choice === 'default' ? '●' : ''}</span>
@@ -105,7 +123,7 @@ export function ResourceChooser({ shots, disabled }: { shots: ShotForEstimate[];
           </button>
           <div className="divider my-1" />
           {listed.map((r) => (
-            <Option key={r.id} r={r} shots={shots} picked={choice === r.id} onPick={() => { void choose(r.id); setOpen(false); }} />
+            <Option key={r.id} r={r} shots={shots} picked={choice === r.id} onPick={() => { pick(r.id); setOpen(false); }} />
           ))}
           <p className="px-2 pb-1 pt-1.5 text-[10px] leading-snug text-ink-mute">
             ≈ from earlier runs of this workflow there (execution time × the GPU&rsquo;s rate). The pick stays until you change it.

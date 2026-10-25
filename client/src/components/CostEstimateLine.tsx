@@ -17,8 +17,10 @@
 import { formatCredits, useResources } from '../lib/resources';
 import { useEstimate, type ShotForEstimate } from '../lib/useRoute';
 
-export function CostEstimateLine({ shots }: { shots: ShotForEstimate[] }): JSX.Element | null {
-  const choice = useResources((s) => s.data?.choice ?? 'default');
+/** `resource`/`onSwitchLocal`: a pick of its own (the Comp tab's tools), instead of the Generate button's. */
+export function CostEstimateLine({ shots, resource, onSwitchLocal }: { shots: ShotForEstimate[]; resource?: string; onSwitchLocal?: () => void }): JSX.Element | null {
+  const globalChoice = useResources((s) => s.data?.choice ?? 'default');
+  const choice = resource ?? globalChoice;
   const credits = useResources((s) => s.credits);
   const choose = useResources((s) => s.choose);
   const answer = useEstimate(shots, choice);
@@ -41,7 +43,7 @@ export function CostEstimateLine({ shots }: { shots: ShotForEstimate[] }): JSX.E
           <span className="min-w-0 flex-1">
             Credit nearly used up: {formatCredits(credits!.credits!)} cr left, this batch ≈ up to {formatCredits(t.creditsHigh!)} cr.
           </span>
-          <button className="chip h-6 px-2 py-0 text-[11px]" onClick={() => void choose('local')}>Switch to Local</button>
+          <button className="chip h-6 px-2 py-0 text-[11px]" onClick={() => (onSwitchLocal ? onSwitchLocal() : void choose('local'))}>Switch to Local</button>
         </div>
       )}
     </div>
