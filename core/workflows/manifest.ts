@@ -10,7 +10,7 @@
 import type { ObjectInfo, WorkflowJson } from '../comfy/types.ts';
 import { snapFramesUp } from './form.ts';
 
-export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg' | 'matte-video' | 'reframe' | 'outpaint-video';
+export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg' | 'matte-video' | 'reframe' | 'outpaint-video' | 'interpolate-video';
 export type MediaKind = 'image' | 'video';
 
 /** "nodeId.field" — the node id may itself contain colons (subgraph paths). */
@@ -71,9 +71,17 @@ export interface WorkflowManifest {
     pad: [FieldRef, FieldRef, FieldRef, FieldRef];
     sizes: Record<string, [number, number]>;
     maxFrames: number;
+    /** The part of the scaled clip the model is shown (absent in manifests made before 26 Oct: the whole clip). */
+    crop?: { x: FieldRef; y: FieldRef; width: FieldRef; height: FieldRef };
     /** For a clip longer than one run: where the padded clip and its mask come out, where the model takes its control. */
     chain: { padded: [string, number]; padMask: [string, number]; controlVideo: FieldRef; controlMasks: FieldRef };
   };
+  /**
+   * Frame interpolation (the template utility_video_frame_interpolation): the multiplier, the switch that
+   * multiplies the frame rate too (off: the same rate, so the clip lasts ×N — slow motion), and the audio
+   * input of its CreateVideo (dropped for slow motion: the sound would not stretch with the picture).
+   */
+  interpolate?: { multiplier: FieldRef; multiplyFps: FieldRef; audio: FieldRef };
   models: ModelFile[];
   source: { template: string; package: string; version: string };
   license: { weights: string; openWeights: boolean; note?: string };

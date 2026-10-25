@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SLUG } from '../core/brand.ts';
 import { ComfyClient } from '../core/comfy/client.ts';
-import type { WorkflowJson } from '../core/comfy/types.ts';
+import type { ObjectInfo, WorkflowJson } from '../core/comfy/types.ts';
 import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import { missingNodes, type ModelFile, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { REFRAME_ASPECTS, vaceGenSize } from '../core/reframe/outpaint.ts';
@@ -28,8 +28,14 @@ const base = process.argv[2] ?? process.env.COMFY_URL ?? 'http://127.0.0.1:8188'
 type Recipe = Omit<WorkflowManifest, 'api' | 'models' | 'source'> & {
   template: string;
   patch?: (api: WorkflowJson) => void;
+  /** Card params whose choices are the node's own, read from the server's object_info at build time. */
+  optionsFrom?: (oi: ObjectInfo) => void;
   /** Model files a patch brings in that the template does not list. */
   extraModels?: ModelFile[];
+  /** The patch replaced the template's model: list only extraModels. */
+  ownModels?: boolean;
+  /** Template models the patch took out of the graph. */
+  dropModels?: string[];
 };
 
 const LTX_LICENSE = {
@@ -58,13 +64,153 @@ const VACE_OUTPAINT = {
   take: '200.length',
   start: '200.batch_index',
   scale: ['201.width', '201.height'] as [string, string],
+  // The part of the scaled clip the model is shown (core/reframe/outpaint.ts: inset, SEAM_GUARD).
+  crop: { x: '202.x', y: '202.y', width: '202.width', height: '202.height' },
   pad: ['110.left', '110.top', '110.right', '110.bottom'] as [string, string, string, string],
   // Tested: 125 frames in one run stay coherent to the last frame.
   maxFrames: 125,
   chain: { padded: ['110', 0] as [string, number], padMask: ['110', 1] as [string, number], controlVideo: '49.control_video', controlMasks: '49.control_masks' },
 };
 
+/**
+ * Frame interpolation, from the official template `utility_video_frame_interpolation`
+ * (LoadVideo → GetVideoComponents → FrameInterpolate → CreateVideo → SaveVideo, with
+ * a multiplier and "Apply multiplier to FPS?"). FILM is the template as it ships
+ * (core nodes, film_net_fp16). RIFE and GIMM-VFI swap the template's interpolator
+ * for a custom node checked in this server's object_info; everything around it —
+ * the multiplier, the frame-rate switch, the save — stays the template's.
+ */
+const INTERP = {
+  // "Int (Multiplier)", "Boolean (Apply multiplier to FPS?)", and the audio the template carries over.
+  multiplier: '16:9.value', multiplyFps: '16:13.value', audio: '16:5.audio',
+};
+const INTERPOLATION: Recipe[] = [
+  {
+    id: 'interp-rife',
+    template: 'utility_video_frame_interpolation',
+    title: 'RIFE · Frame interpolation',
+    description: 'New frames between the frames: slow motion (×2, ×4 the length) or twice the frame rate (24 → 48, 25 → 50, 30 → 60).',
+    task: 'interpolate-video', hosts: ['effectcraft'], output: 'video', input: 'video',
+    bindings: { video: '4.file' },
+    params: [{ ref: INTERP.multiplier, label: 'Multiplier' }, { ref: INTERP.multiplyFps, label: 'Multiply the frame rate' }],
+    interpolate: INTERP,
+    // The pack's checkpoint list is fixed in its code and it downloads a missing one itself: no model folder to check.
+    ownModels: true,
+    license: {
+      weights: 'MIT (RIFE by hzwer, Practical-RIFE; node pack ComfyUI-Frame-Interpolation by Fannovel16, MIT)',
+      openWeights: true,
+      note: 'The pack downloads rife47.pth itself from Hugging Face mirrors it lists (vfi_utils.py), not from the RIFE author: provenance of that file DA VERIFICARE.',
+    },
+    patch: (api) => {
+      // RIFE VFI (ComfyUI-Frame-Interpolation) in place of the template's FrameInterpolationModelLoader + FrameInterpolate.
+      delete api['16:1'];
+      api['16:2'] = {
+        class_type: 'RIFE VFI',
+        inputs: {
+          // rife47.pth: the checkpoint the pack has on disk here (its list default is rife49.pth, which it would download).
+          ckpt_name: 'rife47.pth', frames: ['16:3', 0], clear_cache_after_n_frames: 10, multiplier: ['16:9', 0],
+          fast_mode: true, ensemble: true, scale_factor: 1, dtype: 'float32', torch_compile: false, batch_size: 1,
+        },
+        _meta: { title: 'RIFE VFI' },
+      };
+      api['7'].inputs.filename_prefix = SLUG + '/interp_rife';
+    },
+  },
+  {
+    id: 'interp-film',
+    template: 'utility_video_frame_interpolation',
+    title: 'FILM · Frame interpolation (ComfyUI core)',
+    description: 'The official template as it ships: core nodes and Google\'s FILM model, for large motion RIFE tears on.',
+    task: 'interpolate-video', hosts: ['effectcraft'], output: 'video', input: 'video',
+    bindings: { video: '4.file' },
+    params: [{ ref: INTERP.multiplier, label: 'Multiplier' }, { ref: INTERP.multiplyFps, label: 'Multiply the frame rate' }],
+    interpolate: INTERP,
+    license: {
+      weights: 'Apache-2.0 (FILM, google-research/frame-interpolation); the file is Comfy-Org\'s repackaging (its model card says "other": DA VERIFICARE)',
+      openWeights: true,
+    },
+    patch: (api) => { api['7'].inputs.filename_prefix = SLUG + '/interp_film'; },
+  },
+  {
+    id: 'interp-gimm',
+    template: 'utility_video_frame_interpolation',
+    title: 'GIMM-VFI · Frame interpolation (non-commercial)',
+    description: 'Slower, finer motion estimation for occlusions and crossing objects. Its licence allows non-commercial use only.',
+    task: 'interpolate-video', hosts: ['effectcraft'], output: 'video', input: 'video',
+    bindings: { video: '4.file' },
+    params: [{ ref: INTERP.multiplier, label: 'Multiplier' }, { ref: INTERP.multiplyFps, label: 'Multiply the frame rate' }],
+    interpolate: INTERP,
+    ownModels: true,
+    extraModels: [{ name: 'gimmvfi_r_arb_lpips_fp32.safetensors', directory: 'interpolation/gimm-vfi', url: 'https://huggingface.co/Kijai/GIMM-VFI_safetensors/resolve/main/gimmvfi_r_arb_lpips_fp32.safetensors' }],
+    license: {
+      weights: 'S-Lab License 1.0 (GIMM-VFI, GSeanCDAT/GIMM-VFI; node pack ComfyUI-GIMM-VFI by kijai, same licence) — non-commercial use only',
+      openWeights: true,
+      note: '"Redistribution and use for non-commercial purpose … are permitted"; commercial use needs the authors\' permission. The node downloads its weights from Kijai/GIMM-VFI_safetensors on first use.',
+    },
+    patch: (api) => {
+      api['16:1'] = { class_type: 'DownloadAndLoadGIMMVFIModel', inputs: { model: 'gimmvfi_r_arb_lpips_fp32.safetensors', precision: 'fp32', torch_compile: false }, _meta: { title: '(Down)Load GIMMVFI Model' } };
+      api['16:2'] = {
+        class_type: 'GIMMVFI_interpolate',
+        inputs: { gimmvfi_model: ['16:1', 0], images: ['16:3', 0], ds_factor: 1, interpolation_factor: ['16:9', 0], seed: 0, output_flows: false },
+        _meta: { title: 'GIMM-VFI Interpolate' },
+      };
+      api['7'].inputs.filename_prefix = SLUG + '/interp_gimm';
+    },
+  },
+];
+
+/**
+ * Keyframe models for the Workflow tab's Featured section (the Flow window runs
+ * them; `hosts: []` keeps them out of the panel's own pickers, which fill one image).
+ */
+const KEYFRAMES: Recipe[] = [
+  {
+    id: 'h3-flf',
+    template: 'video_minimax_h3_i2v',
+    title: 'MiniMax H3 · First + last frame',
+    description: 'A clip with sound that starts on one frame you give it and ends on another (base model, 20 steps).',
+    dropModels: ['minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors'],
+    task: 'i2v', hosts: [], output: 'video', input: 'image',
+    bindings: { prompt: '105:104.prompt', image: '114.image', seed: '105:15.noise_seed', width: '105:104.width', height: '105:104.height', seconds: '105:111.value' },
+    sizeMultiple: 32, maxLongSide: 1344, defaults: { seconds: 5, width: 1344, height: 768 },
+    license: {
+      weights: 'MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: DA VERIFICARE on the licence text',
+      openWeights: true,
+    },
+    patch: (api) => {
+      // The template's MiniMaxH3ImageToVideo takes an optional last_frame (object_info): a second image, wired to it.
+      api['130'] = { class_type: 'LoadImage', inputs: { image: 'last_frame.png' }, _meta: { title: 'Load Image (last frame)' } };
+      api['105:104'].inputs.last_frame = ['130', 0];
+      // A scale node the template leaves without an input, and its size reader: not part of the run.
+      delete api['119'];
+      delete api['120'];
+      // The base model, 20 steps — the template's default (its turbo LoRA switch is off); the LoRA branch goes, so a
+      // ComfyUI without that LoRA file can run it (ComfyUI validates every linked node, switch or not).
+      for (const node of Object.values(api)) {
+        for (const [k, v] of Object.entries(node.inputs)) {
+          if (Array.isArray(v) && v[0] === '105:122') node.inputs[k] = ['105:6', 0];
+          if (Array.isArray(v) && v[0] === '105:123') node.inputs[k] = ['105:124', 0];
+        }
+      }
+      for (const id of ['105:121', '105:122', '105:123', '105:125', '105:126']) delete api[id];
+      api['92'].inputs.filename_prefix = SLUG + '/h3_flf';
+    },
+  },
+  {
+    id: 'wan22-flf',
+    template: 'video_wan2_2_14B_flf2v',
+    title: 'Wan 2.2 14B · First + last frame',
+    description: 'Keyframe to keyframe under Apache-2.0: the licence-safe choice for client work.',
+    task: 'i2v', hosts: [], output: 'video', input: 'image',
+    bindings: { prompt: '90.text', negative: '78.text', image: '80.image', seed: '84.noise_seed', width: '81.width', height: '81.height', frames: '81.length', fps: '86.fps' },
+    sizeMultiple: 16, frameLattice: { min: 1, step: 4 }, maxLongSide: 1280, defaults: { seconds: 5, width: 1280, height: 720 },
+    license: { weights: 'Apache-2.0 (Wan-AI Wan2.2)', openWeights: true },
+    patch: (api) => { api['83'].inputs.filename_prefix = SLUG + '/wan22_flf'; },
+  },
+];
+
 const RECIPES: Recipe[] = [
+  ...KEYFRAMES,
   {
     id: 'ltx25-i2v',
     template: 'video_ltx2_5_i2v',
@@ -113,10 +259,16 @@ const RECIPES: Recipe[] = [
     description: 'Restores and doubles the resolution of the clip in the slot.',
     task: 'upscale-video', hosts: ['effectcraft'], output: 'video', input: 'video',
     bindings: { video: '73.file', seed: '66:54.seed' },
-    params: [{ ref: '66:57.resize_type.multiplier', label: 'Scale' }],
+    params: [
+      { ref: '66:57.resize_type.multiplier', label: 'Scale' },
+      // The template leaves it at "none"; the choices are SeedVR2PostProcessing's own (filled in from object_info).
+      { ref: '66:59.color_correction_method', label: 'Colour', options: [] },
+    ],
     license: { weights: 'Apache-2.0 (ByteDance Seed SeedVR2)', openWeights: true },
     patch: (api) => { api['76'].inputs.filename_prefix = SLUG + '/seedvr2'; },
+    optionsFrom(oi) { this.params![1].options = comboOf(oi, 'SeedVR2PostProcessing', 'color_correction_method'); },
   },
+  ...INTERPOLATION,
   {
     id: 'birefnet-rmbg',
     template: 'utility_birefnet_remove_background',
@@ -241,14 +393,17 @@ const RECIPES: Recipe[] = [
 /**
  * The template pads a clip by fixed amounts and previews it; here the clip is
  * first cut to the frames one run holds and scaled into the generation frame,
- * so the padding is the new space exactly, and the result is saved.
+ * so the padding is the new space exactly, and the result is saved. The model
+ * is shown the scaled clip less a margin on the sides that meet new space
+ * (ImageCrop), so its own edge falls under the original in the comp.
  */
 function vacePatch(api: WorkflowJson, prefix: string): void {
   delete api['135'];
   delete api['143'];
   api['200'] = { class_type: 'ImageFromBatch', inputs: { image: ['72', 0], batch_index: 0, length: 81 }, _meta: { title: 'Image From Batch' } };
   api['201'] = { class_type: 'ImageScale', inputs: { image: ['200', 0], upscale_method: 'lanczos', width: 720, height: 404, crop: 'disabled' }, _meta: { title: 'Upscale Image' } };
-  api['110'].inputs.image = ['201', 0];
+  api['202'] = { class_type: 'ImageCrop', inputs: { image: ['201', 0], width: 720, height: 404, x: 0, y: 0 }, _meta: { title: 'Image Crop' } };
+  api['110'].inputs.image = ['202', 0];
   // A soft strip into the clip, so the new space grows out of it rather than meeting it at a line.
   api['110'].inputs.feathering = 24;
   api['69'].inputs.filename_prefix = prefix;
@@ -267,6 +422,14 @@ function samTrack(api: WorkflowJson, maxObjects: number): void {
     _meta: { title: 'SAM3 Video Track' },
   };
   api['117'] = { class_type: 'SAM3_TrackToMask', inputs: { track_data: ['116', 0], object_indices: '' }, _meta: { title: 'SAM3 Track to Mask' } };
+}
+
+/** A combo input's choices, as the server's own node schema lists them. */
+function comboOf(oi: ObjectInfo, node: string, input: string): string[] {
+  const spec = { ...(oi[node]?.input?.required ?? {}), ...(oi[node]?.input?.optional ?? {}) }[input] as unknown[] | undefined;
+  const opts = Array.isArray(spec?.[0]) ? spec![0] as unknown[] : (spec?.[1] as { options?: unknown[] } | undefined)?.options;
+  if (!Array.isArray(opts) || !opts.length) throw new Error(`${node}.${input} has no choices in this server's object_info`);
+  return opts.map(String);
 }
 
 function templateModels(ui: unknown): ModelFile[] {
@@ -296,18 +459,20 @@ for (const r of RECIPES) {
   if (conv.problems.length) { console.error(`✖ ${r.id}: ${conv.problems.join('; ')}`); failed++; continue; }
   const api = conv.api;
   r.patch?.(api);
+  r.optionsFrom?.(objectInfo);
   const absent = missingNodes(api, objectInfo);
-  const outpaintRefs = r.outpaint ? [r.outpaint.take, r.outpaint.start, ...r.outpaint.scale, ...r.outpaint.pad, r.outpaint.chain.controlVideo, r.outpaint.chain.controlMasks].map((ref) => ['outpaint', ref] as const) : [];
+  const outpaintRefs = r.outpaint ? [r.outpaint.take, r.outpaint.start, ...r.outpaint.scale, ...r.outpaint.pad, r.outpaint.chain.controlVideo, r.outpaint.chain.controlMasks,
+    ...(r.outpaint.crop ? Object.values(r.outpaint.crop) : [])].map((ref) => ['outpaint', ref] as const) : [];
   for (const [k, ref] of [...Object.entries(r.bindings), ...(r.params ?? []).filter((p) => !p.ref.startsWith('@')).map((p) => [p.label, p.ref] as const), ...outpaintRefs]) {
     const dot = ref.indexOf('.', ref.lastIndexOf(':') + 1);
     const node = api[ref.slice(0, dot)];
     if (!node || !(ref.slice(dot + 1) in node.inputs)) { console.error(`✖ ${r.id}: binding ${k} → ${ref} not in graph`); failed++; }
   }
-  const { template, patch: _patch, extraModels, ...rest } = r;
+  const { template, patch: _patch, optionsFrom: _options, extraModels, ownModels, dropModels, ...rest } = r;
   const manifest: WorkflowManifest = {
     ...rest,
     api: `${r.id}.api.json`,
-    models: [...templateModels(ui), ...(extraModels ?? [])],
+    models: [...(ownModels ? [] : templateModels(ui).filter((x) => !dropModels?.includes(x.name))), ...(extraModels ?? [])],
     source: { template, package: 'comfyui-workflow-templates', version },
   };
   writeFileSync(join(outDir, `${r.id}.api.json`), JSON.stringify(api, null, 2) + '\n');

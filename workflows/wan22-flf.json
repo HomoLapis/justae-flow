@@ -1,0 +1,72 @@
+{
+  "id": "wan22-flf",
+  "title": "Wan 2.2 14B · First + last frame",
+  "description": "Keyframe to keyframe under Apache-2.0: the licence-safe choice for client work.",
+  "task": "i2v",
+  "hosts": [],
+  "output": "video",
+  "input": "image",
+  "bindings": {
+    "prompt": "90.text",
+    "negative": "78.text",
+    "image": "80.image",
+    "seed": "84.noise_seed",
+    "width": "81.width",
+    "height": "81.height",
+    "frames": "81.length",
+    "fps": "86.fps"
+  },
+  "sizeMultiple": 16,
+  "frameLattice": {
+    "min": 1,
+    "step": 4
+  },
+  "maxLongSide": 1280,
+  "defaults": {
+    "seconds": 5,
+    "width": 1280,
+    "height": 720
+  },
+  "license": {
+    "weights": "Apache-2.0 (Wan-AI Wan2.2)",
+    "openWeights": true
+  },
+  "api": "wan22-flf.api.json",
+  "models": [
+    {
+      "name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    },
+    {
+      "name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+    },
+    {
+      "name": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+    },
+    {
+      "name": "wan_2.1_vae.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+    },
+    {
+      "name": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+      "directory": "loras",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
+    },
+    {
+      "name": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "directory": "loras",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+    }
+  ],
+  "source": {
+    "template": "video_wan2_2_14B_flf2v",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

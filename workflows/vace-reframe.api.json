@@ -195,7 +195,7 @@
     "class_type": "ImagePadForOutpaint",
     "inputs": {
       "image": [
-        "201",
+        "202",
         0
       ],
       "left": 120,
@@ -353,6 +353,22 @@
     },
     "_meta": {
       "title": "Upscale Image"
+    }
+  },
+  "202": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": [
+        "201",
+        0
+      ],
+      "width": 720,
+      "height": 404,
+      "x": 0,
+      "y": 0
+    },
+    "_meta": {
+      "title": "Image Crop"
     }
   }
 }

@@ -1,0 +1,56 @@
+{
+  "id": "h3-flf",
+  "title": "MiniMax H3 · First + last frame",
+  "description": "A clip with sound that starts on one frame you give it and ends on another (base model, 20 steps).",
+  "task": "i2v",
+  "hosts": [],
+  "output": "video",
+  "input": "image",
+  "bindings": {
+    "prompt": "105:104.prompt",
+    "image": "114.image",
+    "seed": "105:15.noise_seed",
+    "width": "105:104.width",
+    "height": "105:104.height",
+    "seconds": "105:111.value"
+  },
+  "sizeMultiple": 32,
+  "maxLongSide": 1344,
+  "defaults": {
+    "seconds": 5,
+    "width": 1344,
+    "height": 768
+  },
+  "license": {
+    "weights": "MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: DA VERIFICARE on the licence text",
+    "openWeights": true
+  },
+  "api": "h3-flf.api.json",
+  "models": [
+    {
+      "name": "minimax_h3_video_vae_int8_convrot.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    {
+      "name": "minimax_h3_audio_vae_fp32.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors"
+    },
+    {
+      "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+    },
+    {
+      "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+    }
+  ],
+  "source": {
+    "template": "video_minimax_h3_i2v",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

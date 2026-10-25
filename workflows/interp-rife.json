@@ -1,0 +1,41 @@
+{
+  "id": "interp-rife",
+  "title": "RIFE · Frame interpolation",
+  "description": "New frames between the frames: slow motion (×2, ×4 the length) or twice the frame rate (24 → 48, 25 → 50, 30 → 60).",
+  "task": "interpolate-video",
+  "hosts": [
+    "effectcraft"
+  ],
+  "output": "video",
+  "input": "video",
+  "bindings": {
+    "video": "4.file"
+  },
+  "params": [
+    {
+      "ref": "16:9.value",
+      "label": "Multiplier"
+    },
+    {
+      "ref": "16:13.value",
+      "label": "Multiply the frame rate"
+    }
+  ],
+  "interpolate": {
+    "multiplier": "16:9.value",
+    "multiplyFps": "16:13.value",
+    "audio": "16:5.audio"
+  },
+  "license": {
+    "weights": "MIT (RIFE by hzwer, Practical-RIFE; node pack ComfyUI-Frame-Interpolation by Fannovel16, MIT)",
+    "openWeights": true,
+    "note": "The pack downloads rife47.pth itself from Hugging Face mirrors it lists (vfi_utils.py), not from the RIFE author: provenance of that file DA VERIFICARE."
+  },
+  "api": "interp-rife.api.json",
+  "models": [],
+  "source": {
+    "template": "utility_video_frame_interpolation",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

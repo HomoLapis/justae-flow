@@ -43,6 +43,12 @@
       "201.width",
       "201.height"
     ],
+    "crop": {
+      "x": "202.x",
+      "y": "202.y",
+      "width": "202.width",
+      "height": "202.height"
+    },
     "pad": [
       "110.left",
       "110.top",

@@ -75,6 +75,7 @@ export function taskOf(manifestTask: Task, workflowId = ''): TaskId {
     case 'outpaint-video': return /draft/.test(workflowId) ? 'reframe-draft' : 'reframe';
     case 'upscale-video': case 'upscale-image': return 'upscale';
     case 'matte-video': case 'reframe': case 'remove-bg': return 'matte';
+    case 'interpolate-video': return 'interpolate';
   }
 }
 

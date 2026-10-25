@@ -16,6 +16,16 @@
     {
       "ref": "66:57.resize_type.multiplier",
       "label": "Scale"
+    },
+    {
+      "ref": "66:59.color_correction_method",
+      "label": "Colour",
+      "options": [
+        "lab",
+        "wavelet",
+        "adain",
+        "none"
+      ]
     }
   ],
   "license": {

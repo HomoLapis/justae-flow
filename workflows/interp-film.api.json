@@ -1,0 +1,142 @@
+{
+  "4": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "white_armored_warrior.mp4"
+    },
+    "_meta": {
+      "title": "LoadVideo"
+    }
+  },
+  "7": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "16:5",
+        0
+      ],
+      "filename_prefix": "justae-flow/interp_film",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "SaveVideo"
+    }
+  },
+  "16:1": {
+    "class_type": "FrameInterpolationModelLoader",
+    "inputs": {
+      "model_name": "film_net_fp16.safetensors"
+    },
+    "_meta": {
+      "title": "FrameInterpolationModelLoader"
+    }
+  },
+  "16:2": {
+    "class_type": "FrameInterpolate",
+    "inputs": {
+      "interp_model": [
+        "16:1",
+        0
+      ],
+      "images": [
+        "16:3",
+        0
+      ],
+      "multiplier": [
+        "16:9",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "FrameInterpolate"
+    }
+  },
+  "16:5": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "16:2",
+        0
+      ],
+      "fps": [
+        "16:10",
+        0
+      ],
+      "audio": [
+        "16:3",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "CreateVideo"
+    }
+  },
+  "16:9": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 2
+    },
+    "_meta": {
+      "title": "Int (Multiplier)"
+    }
+  },
+  "16:10": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "16:13",
+        0
+      ],
+      "on_false": [
+        "16:3",
+        2
+      ],
+      "on_true": [
+        "16:11",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "ComfySwitchNode"
+    }
+  },
+  "16:13": {
+    "class_type": "PrimitiveBoolean",
+    "inputs": {
+      "value": true
+    },
+    "_meta": {
+      "title": "Boolean (Apply multiplier to FPS?)"
+    }
+  },
+  "16:3": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "4",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "GetVideoComponents"
+    }
+  },
+  "16:11": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "expression": "min(abs(b), 16) * a",
+      "values.a": [
+        "16:3",
+        2
+      ],
+      "values.b": [
+        "16:9",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "ComfyMathExpression"
+    }
+  }
+}
