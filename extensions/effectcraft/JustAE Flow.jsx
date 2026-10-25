@@ -1,7 +1,7 @@
 /*
  * JustAE Flow — the panel inside EffectCraft.
  *
- * The full Flow interface (Workflow, Marker, Storyboard) opens in its own app
+ * The full Flow interface (Workflow, Marker, Storyboard, Comp) opens in its own app
  * window from here; this panel shows what that window will work on, sets up
  * shots the way it reads them — a pair of comp markers, or an adjustment layer
  * as a placeholder — and runs the layer tools on the selected clip.
@@ -28,7 +28,7 @@ var JustAEFlowPanel = (function (thisObj) {
     { label: 'Auto crop, follow a subject (SAM 3)', workflow: 'sam3-reframe', text: 'Subject the frame follows: woman, surfer, car', aspect: true },
     { label: 'Upscale x2 (SeedVR2)', workflow: 'seedvr2-upscale', text: '', aspect: false }
   ];
-  var ASPECTS = ['9:16', '4:5', '1:1', '16:9'];
+  var ASPECTS = ['9:16', '4:5', '1:1', '16:9', '21:9', '4:3'];
 
   function byteLength(s) {
     var n = 0;
@@ -114,7 +114,9 @@ var JustAEFlowPanel = (function (thisObj) {
 
   var bOpen = win.add('button', undefined, 'Open JustAE Flow');
   bOpen.preferredSize = [-1, 34];
-  bOpen.helpTip = 'Workflow, Marker and Storyboard: the full Flow window, beside EffectCraft';
+  bOpen.helpTip = 'Workflow, Marker, Storyboard and Comp: the full Flow window, beside EffectCraft';
+  var bComp = win.add('button', undefined, 'Open the Comp tab');
+  bComp.helpTip = 'Reframe, upscale or cut out the whole comp, its work area or the selected layer — in the Flow window';
 
   var shots = win.add('panel', undefined, 'Shots');
   shots.alignChildren = ['fill', 'top'];
@@ -238,6 +240,12 @@ var JustAEFlowPanel = (function (thisObj) {
   bOpen.onClick = function () {
     // Docked at EffectCraft's right edge; the server does it after answering.
     var r = request('POST', '/api/window/open', { wait: false });
+    if (r.error) serverLine.text = '✖ ' + r.error;
+    else refresh();
+  };
+
+  bComp.onClick = function () {
+    var r = request('POST', '/api/window/open', { wait: false, tab: 'comp' });
     if (r.error) serverLine.text = '✖ ' + r.error;
     else refresh();
   };
