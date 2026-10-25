@@ -958,8 +958,10 @@ export class Engine {
   }
 
   private checkModels(api: WorkflowJson, m: WorkflowManifest): ModelCheck {
-    // Only the local ComfyUI's loaders are known here; a v2 resource answers for its own files (checked in generate).
-    if (this.running?.runner && this.running.runner.resource.kind !== 'local') return { remaps: [], missing: [] };
+    // Only the local ComfyUI's loaders are known here: they decide for Local, and for a proxy standing in front
+    // of it; any other v2 resource answers for its own files (checked in generate).
+    const r = this.running?.runner?.resource;
+    if (r && r.kind !== 'local' && !(r.kind === 'proxy' && r.fronts === this.services.resources.local().id)) return { remaps: [], missing: [] };
     const models = resolveModels(api, this.objectInfo ?? {}, m.models);
     if (models.missing.length) {
       throw new Error('ComfyUI is missing model files for this workflow: '
@@ -981,6 +983,10 @@ export class Engine {
       if (!this.comfyHealth.online) throw new Error(this.comfyHealth.message ?? 'ComfyUI is not reachable.');
       if (!this.objectInfo) this.objectInfo = await this.comfy.objectInfo();
     } else {
+      // A proxy in front of the local ComfyUI: its loaders decide which precision of each model file to send.
+      if (route.resource.kind === 'proxy' && route.resource.fronts === this.services.resources.local().id && !this.objectInfo) {
+        this.objectInfo = await this.comfy.objectInfo().catch(() => null);
+      }
       const u = this.services.resources.canTakeJobs(route.resource);
       if (!u.ok) throw new Error(`${route.resource.label}: ${u.reason}. Choose Local for this card, or set it up in the Flow window ▸ Settings ▸ Resources.`);
       // Said before a credit is spent: what the probe found missing there.

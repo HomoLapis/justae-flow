@@ -45,6 +45,12 @@ export interface Resource {
   gpu?: GpuId;
   /** A deployment's minimum workers, as the user deployed it: a warm worker bills while idle. */
   minWorkers?: number;
+  /**
+   * The proxy: the resource whose ComfyUI it stands in front of. comfy-api-proxy proxies the ComfyUI on
+   * 127.0.0.1:8188 by default (docs.comfy.org, Comfy API v2 Overview), so it starts as 'local'; then that
+   * ComfyUI's node catalogue answers for the proxy (v2 has none) and its model precisions can be swapped in.
+   */
+  fronts?: string;
 }
 
 /** What each button runs: the rows of Settings ▸ Resources ▸ "Where each task runs" (PLAN v3 §2.1). */
@@ -183,7 +189,7 @@ export class ResourceRegistry {
       resources: [
         { id: 'local', kind: 'local', label: 'Local ComfyUI', url: localUrl || 'http://127.0.0.1:8188', enabled: true },
         { id: 'cloud', kind: 'cloud', label: 'Comfy Cloud', url: CLOUD_BASE, enabled: true, gpu: DEFAULT_GPU },
-        { id: 'proxy', kind: 'proxy', label: 'Your ComfyUI via comfy-api-proxy', url: PROXY_DEFAULT, enabled: false },
+        { id: 'proxy', kind: 'proxy', label: 'Your ComfyUI via comfy-api-proxy', url: PROXY_DEFAULT, enabled: false, fronts: 'local' },
       ],
       tasks: Object.fromEntries(TASKS.map((t) => [t.id, t.default])) as Record<TaskId, string>,
       choice: 'default',
@@ -378,6 +384,7 @@ export class ResourceRegistry {
       if (typeof ch.label === 'string' && ch.label.trim()) r.label = ch.label.trim();
       if (r.kind === 'deployment' && isGpuId(ch.gpu)) r.gpu = ch.gpu;
       if (r.kind === 'deployment' && typeof ch.minWorkers === 'number') r.minWorkers = Math.max(0, Math.round(ch.minWorkers));
+      if (r.kind === 'proxy' && ch.fronts !== undefined) r.fronts = ch.fronts && this.get(ch.fronts)?.kind === 'local' ? ch.fronts : undefined;
     }
     for (const [task, pick] of Object.entries(p.tasks ?? {})) {
       if (!TASKS.some((t) => t.id === task)) continue;

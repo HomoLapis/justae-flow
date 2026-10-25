@@ -21,6 +21,8 @@ export interface ResourceView {
   enabled: boolean;
   gpu?: string;
   minWorkers?: number;
+  /** The proxy: the local resource whose ComfyUI it stands in front of. */
+  fronts?: string;
   usable: boolean;
   reason?: string;
   /** A job it refused outright (403), with the server's words. */

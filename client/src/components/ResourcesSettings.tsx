@@ -111,6 +111,12 @@ export function ResourcesSettings(): JSX.Element {
             label="Proxy token (optional)" placeholder="Only if comfy-api-proxy was started with --token"
             onSave={(k) => apply({ proxyToken: k })}
           />
+          <label className="flex cursor-pointer items-start gap-2 text-[11px] text-ink-dim">
+            <input type="checkbox" className="mt-0.5" checked={proxy.fronts === local.id}
+              onChange={(e) => void apply({ resources: [{ id: proxy.id, fronts: e.target.checked ? local.id : '' }] })} />
+            <span>It stands in front of the Local ComfyUI above (comfy-api-proxy&rsquo;s default: 127.0.0.1:8188) — that
+              ComfyUI&rsquo;s node catalogue answers for it, and its model precisions are used.</span>
+          </label>
           <p className="text-[10px] leading-snug text-ink-mute">
             Your own ComfyUI speaking Comfy API v2 (<span className="font-mono">pip install comfy-api-proxy</span>) — your GPU,
             no credits, the protocol a deployment speaks.

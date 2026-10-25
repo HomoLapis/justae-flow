@@ -247,6 +247,24 @@ export class CapabilityProbe {
       }
     }
     for (const m of this.library.list()) caps.workflows[m.id] = { status: 'unknown', missingNodes: [], missingModels: [], remaps: [] };
+    // A proxy in front of a ComfyUI JustAE Flow also speaks to directly: that ComfyUI's catalogue answers for it.
+    const behind = r.kind === 'proxy' && r.fronts ? this.registry.get(r.fronts) : undefined;
+    if (behind && caps.online) {
+      const local = await this.get(behind.id).catch(() => null);
+      if (local?.nodes.known) {
+        const basis = `the ComfyUI behind the proxy (${behind.label}, ${behind.url}): its object_info`;
+        caps.nodes = { known: true, count: local.nodes.count, basis };
+        caps.models = { known: true, basis };
+        for (const [id, w] of Object.entries(local.workflows)) caps.workflows[id] = { ...w };
+      }
+    }
+  }
+
+  /** The node catalogue a resource is judged by: its own, or (a proxy) the one of the ComfyUI behind it. */
+  catalogueOf(id: string): ObjectInfo | null {
+    const r = this.registry.get(id);
+    if (r?.kind === 'proxy' && r.fronts) return this.objectInfo(r.fronts);
+    return this.objectInfo(id);
   }
 
   /**
@@ -256,7 +274,7 @@ export class CapabilityProbe {
    */
   async checkGraph(id: string, graph: WorkflowJson): Promise<{ status: 'ok' | 'missing' | 'unknown'; missingNodes: string[]; missingModels: string[]; basis: string }> {
     const caps = await this.get(id);
-    const oi = this.objectInfo(id);
+    const oi = this.catalogueOf(id);
     if (!oi) return { status: 'unknown', missingNodes: [], missingModels: [], basis: caps.nodes.basis || 'no node catalogue' };
     const nodes = missingNodes(graph, oi);
     const clone = structuredClone(graph);

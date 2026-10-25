@@ -119,6 +119,8 @@ export class V2Runner implements Runner {
         if (v.status !== lastStatus) {
           lastStatus = v.status;
           if (v.status === 'queued') onEvent({ kind: 'queued' });
+          // comfy-api-proxy 0.1.6 sends no progress snapshot (measured): say at least that it runs.
+          if (v.status === 'running' && !v.progress) onEvent({ kind: 'executing', nodeId: '' });
         }
         if (v.progress) {
           if (v.progress.currentNode) onEvent({ kind: 'executing', nodeId: v.progress.currentNode });
