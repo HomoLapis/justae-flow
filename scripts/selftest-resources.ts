@@ -69,7 +69,7 @@ export async function fakeV2(): Promise<FakeV2> {
     };
     if (url.pathname === '/api/billing/usage/timeseries') {
       if (req.headers['x-api-key'] !== 'test-key-0123456789') return json(401, { code: 'UNAUTHORIZED', message: 'authentication required' });
-      return json(200, { group_by: 'model', granularity: 'month', starting_on: '2026-10-01T00:00:00Z', ending_before: '2026-10-25T12:00:00Z', groups: [], buckets: [], breakdown: [], summary: { spend_micros: 1250000, balance: { amount_micros: 4250, prepaid_balance_micros: 2250, cloud_credit_balance_micros: 2000, currency: 'USD' } } });
+      return json(200, { group_by: 'model', granularity: 'month', starting_on: '2026-10-01T00:00:00Z', ending_before: '2026-10-25T12:00:00Z', groups: [], buckets: [], breakdown: [], as_of: '2026-10-25T12:00:01.5Z', summary: { spend_micros: 1250000, balance: { amount_cents: 4250, amount_micros: 4250, prepaid_balance_cents: 2250, prepaid_balance_micros: 2250, cloud_credit_balance_cents: 2000, cloud_credit_balance_micros: 2000, currency: 'USD' } } });
     }
     if (req.method === 'HEAD' && url.pathname.startsWith('/api/v2/assets/by-hash/')) { res.writeHead(404); return res.end(); }
     if (req.method === 'POST' && url.pathname === '/api/v2/assets') {
@@ -210,7 +210,7 @@ export async function resourceChecks(check: Check, until: (fn: () => boolean, ms
   const c1 = await credits.get();
   check('the balance comes from the billing report: cents, despite "_micros", as credits at 211 per dollar',
     c1.ok && c1.balanceCents === 4250 && c1.credits === centsToCredits(4250) && Math.abs((c1.credits ?? 0) - 8967.5) < 1e-9 && c1.prepaidCents === 2250 && c1.planCents === 2000 && c1.currency === 'USD');
-  check('it says when it was read and that it comes from invoices', !!c1.asOf && c1.source === 'invoices');
+  check('it says when it was read (the report\'s own as_of) and that it comes from invoices', c1.asOf === '2026-10-25T12:00:01.500Z' && c1.source === 'invoices', String(c1.asOf));
   const billingCalls = (): number => v2.seen.filter((x) => x.path.startsWith('/api/billing/')).length;
   const before = billingCalls();
   await credits.get();

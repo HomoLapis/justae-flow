@@ -43,7 +43,10 @@ export interface CreditsView {
 
 const TTL = 5 * 60_000;
 
-interface Balance { amount_micros?: number; prepaid_balance_micros?: number; cloud_credit_balance_micros?: number; currency?: string }
+interface Balance {
+  amount_micros?: number; prepaid_balance_micros?: number; cloud_credit_balance_micros?: number; currency?: string;
+  amount_cents?: number; prepaid_balance_cents?: number; cloud_credit_balance_cents?: number;
+}
 
 export class Credits {
   private registry: ResourceRegistry;
@@ -100,17 +103,23 @@ export class Credits {
       if (!r.ok) {
         view = this.empty(r.status === 401 ? 'The key was not accepted (401).' : r.status === 429 ? 'The key is on an inactive subscription (429).' : `The billing report answered HTTP ${r.status}.`);
       } else {
-        const body = JSON.parse(text) as { summary?: { spend_micros?: number; balance?: Balance }; starting_on?: string; ending_before?: string };
+        const body = JSON.parse(text) as { summary?: { spend_micros?: number; balance?: Balance }; starting_on?: string; ending_before?: string; as_of?: string };
         const b = body.summary?.balance;
-        const cents = typeof b?.amount_micros === 'number' ? b.amount_micros : null;
+        // Measured 25 Oct 2026: the balance also comes as *_cents fields, equal to the *_micros ones (which the
+        // spec says are cents). The *_cents names are preferred when present; the spec's names otherwise.
+        const pick = (c?: number, m?: number): number | null => (typeof c === 'number' ? c : typeof m === 'number' ? m : null);
+        const cents = pick(b?.amount_cents, b?.amount_micros);
+        const prepaid = pick(b?.prepaid_balance_cents, b?.prepaid_balance_micros);
+        const plan = pick(b?.cloud_credit_balance_cents, b?.cloud_credit_balance_micros);
         view = {
           ok: cents !== null, error: cents === null ? 'The report has no balance (summary.balance is omitted when none could be read).' : undefined,
-          balanceCents: cents, prepaidCents: b?.prepaid_balance_micros ?? null, planCents: b?.cloud_credit_balance_micros ?? null,
+          balanceCents: cents, prepaidCents: prepaid, planCents: plan,
           currency: b?.currency ?? null,
           credits: cents !== null ? centsToCredits(cents) : null,
-          prepaidCredits: typeof b?.prepaid_balance_micros === 'number' ? centsToCredits(b.prepaid_balance_micros) : null,
-          planCredits: typeof b?.cloud_credit_balance_micros === 'number' ? centsToCredits(b.cloud_credit_balance_micros) : null,
-          creditsPerUsd: CREDITS_PER_USD, asOf: new Date().toISOString(), source: 'invoices', previous: before,
+          prepaidCredits: prepaid !== null ? centsToCredits(prepaid) : null,
+          planCredits: plan !== null ? centsToCredits(plan) : null,
+          // The report's own `as_of` (not in the OpenAPI document; measured), else when this server read it.
+          creditsPerUsd: CREDITS_PER_USD, asOf: body.as_of && !Number.isNaN(Date.parse(body.as_of)) ? new Date(Date.parse(body.as_of)).toISOString() : new Date().toISOString(), source: 'invoices', previous: before,
           spendMicros: body.summary?.spend_micros ?? null,
           range: body.starting_on && body.ending_before ? { from: body.starting_on, to: body.ending_before } : null,
           pendingRefresh: !!this.pending,
