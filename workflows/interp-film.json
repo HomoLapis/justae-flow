@@ -27,7 +27,7 @@
     "audio": "16:5.audio"
   },
   "license": {
-    "weights": "Apache-2.0 (FILM, google-research/frame-interpolation); the file is Comfy-Org's repackaging (its model card says \"other\": DA VERIFICARE)",
+    "weights": "Apache-2.0 (FILM, google-research/frame-interpolation); the file is Comfy-Org's repackaging (its model card says \"other\": to be verified)",
     "openWeights": true
   },
   "api": "interp-film.api.json",

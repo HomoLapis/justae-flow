@@ -62,14 +62,16 @@ export const TASKS: Array<{ id: TaskId; label: string; default: string }> = [
   { id: 'reframe-draft', label: 'Reframe draft (VACE 1.3B)', default: 'local' },
   { id: 'upscale', label: 'Upscale (SeedVR2)', default: 'cloud' },
   { id: 'matte', label: 'Cut-out / matte (SAM 3)', default: 'local' },
-  { id: 'interpolate', label: 'Slow motion / fps (RIFE, FILM, GIMM)', default: 'local' },
+  { id: 'interpolate', label: 'Slow motion / fps (RIFE, FILM)', default: 'local' },
   { id: 'restyle', label: 'Restyle / edit video', default: 'auto' },
 ];
 
 /** A bundled workflow's task, as a row of that table. */
 export function taskOf(manifestTask: Task, workflowId = ''): TaskId {
   switch (manifestTask) {
-    case 't2v': case 'i2v': return 'video';
+    case 't2v': case 'i2v': case 'extend-video': return 'video';
+    // Describe the clip runs on the local ComfyUI only (nothing leaves the machine); its row is never asked.
+    case 'describe': return 'image';
     case 'v2v': return 'restyle';
     case 't2i': case 'i2i': return 'image';
     case 'outpaint-video': return /draft/.test(workflowId) ? 'reframe-draft' : 'reframe';

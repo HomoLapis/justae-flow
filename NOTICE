@@ -22,7 +22,8 @@ workflows/*.api.json
   utility_birefnet_remove_background, image_qwen_image_edit_2511_int8,
   utility_seedvr2_3b_int8_upscale_image, utility_video_segment_sam3,
   video_wan_vace_outpainting, utility_video_frame_interpolation,
-  video_minimax_h3_i2v, video_wan2_2_14B_flf2v. Changes:
+  video_minimax_h3_i2v, video_wan2_2_14B_flf2v, video_ltx2_5_flf2v,
+  llm_qwen3vl_text_gen. Changes:
   converted to the API format; output filename prefixes set; in the BiRefNet
   graph, the preview node is replaced by a save node; in the two SAM 3 graphs,
   the per-frame detection and its preview are replaced by the core tracking
@@ -31,14 +32,26 @@ workflows/*.api.json
   padding, the previews are removed, and the CausVid LoRA (CC BY-NC 4.0) is
   replaced by lightx2v's Apache-2.0 LoRA (14B) or removed (1.3B, template
   defaults); in the frame-interpolation graphs, the template's FrameInterpolate
-  is kept (FILM) or replaced by RIFE VFI or GIMM-VFI; in the H3 graph, a second
-  image is wired to the node's last_frame and the turbo-LoRA branch (off in
-  the template) is removed.
+  is kept (FILM) or replaced by RIFE VFI; in the H3 graph, a second image is
+  wired to the node's last_frame and the turbo-LoRA branch (off in the
+  template) is removed; in the LTX-2.5 extend graph (from the first + last
+  frame template), the first-frame image becomes a short clip of the source's
+  last frames (LoadVideo, GetVideoComponents, ImageFromBatch) guiding at frame
+  0 with strength 1, the last-frame guide is removed, and the guide is resized
+  by stretching (lanczos) instead of a centre crop; in the Qwen3-VL text graph,
+  the single image becomes a few frames of a clip (LoadVideo,
+  GetVideoComponents) and the answer is capped at 320 tokens.
 
 Model weights are NOT included. Each workflow manifest (workflows/<id>.json)
 names the files it needs, where the official template downloads them from,
 and the licence of the weights:
-  LTX-2.5            LTX-2 Community License (Lightricks)
+  LTX-2.5            LTX-2.x Community License (11 Aug 2026): commercial use
+                     permitted for entities under USD 10M annual revenue
+                     (affiliates counted together), outputs belong to the user,
+                     published machine-generated content must be disclosed as
+                     such — https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x
+  Qwen3-VL-4B-Instruct (qwen3vl_4b_fp8_scaled, "Describe the clip")
+                     Apache-2.0 (Qwen; repackaged by Comfy-Org/Qwen3-VL)
   Z-Image-Turbo      Apache-2.0 (Tongyi-MAI)
   SeedVR2            Apache-2.0 (ByteDance Seed)
   BiRefNet           MIT
@@ -58,16 +71,11 @@ and the licence of the weights:
   RIFE (rife47.pth)  MIT (hzwer: ECCV2022-RIFE, Practical-RIFE); the node pack
                      downloads it from Hugging Face mirrors it lists, not from
                      the author: provenance DA VERIFICARE
-  GIMM-VFI           S-Lab License 1.0 (GSeanCDAT/GIMM-VFI; weights mirrored as
-                     Kijai/GIMM-VFI_safetensors) — "Redistribution and use for
-                     non-commercial purpose ... are permitted"; commercial use
-                     needs the authors' permission
 Read each licence before using the outputs commercially.
 
 Custom node packs the workflows above use (installed in your ComfyUI, not here):
   ComfyUI-Frame-Interpolation (Fannovel16)   MIT  — RIFE VFI
-  ComfyUI-GIMM-VFI (kijai)                   S-Lab License 1.0, non-commercial
-                                             — GIMMVFI_interpolate
+(GIMM-VFI, S-Lab License 1.0, non-commercial, is no longer a bundled engine.)
 
 client/ (the Flow window) and extensions/effectcraft/flow-host.jsx
   JustAE Flow 2 for After Effects, by the author of this project, brought to

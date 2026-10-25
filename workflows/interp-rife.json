@@ -29,7 +29,7 @@
   "license": {
     "weights": "MIT (RIFE by hzwer, Practical-RIFE; node pack ComfyUI-Frame-Interpolation by Fannovel16, MIT)",
     "openWeights": true,
-    "note": "The pack downloads rife47.pth itself from Hugging Face mirrors it lists (vfi_utils.py), not from the RIFE author: provenance of that file DA VERIFICARE."
+    "note": "The pack downloads rife47.pth itself from Hugging Face mirrors it lists (vfi_utils.py), not from the RIFE author: provenance of that file to be verified."
   },
   "api": "interp-rife.api.json",
   "models": [],

@@ -22,7 +22,7 @@
     "height": 768
   },
   "license": {
-    "weights": "MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: DA VERIFICARE on the licence text",
+    "weights": "MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: to be verified on the licence text",
     "openWeights": true
   },
   "api": "h3-flf.api.json",

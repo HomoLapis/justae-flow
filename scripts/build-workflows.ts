@@ -38,10 +38,18 @@ type Recipe = Omit<WorkflowManifest, 'api' | 'models' | 'source'> & {
   dropModels?: string[];
 };
 
+/** The LTX-2.x Community License, as the README, NOTICE and the Featured cards state it (licence text read 25 Oct 2026). */
+const LTX_LICENSE_NOTE = 'LTX-2.x Community License (11 Aug 2026): commercial use permitted for entities under USD 10M annual revenue '
+  + '(affiliates counted together), outputs belong to the user, published machine-generated content must be disclosed as such';
+const LTX_LICENSE_URL = 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x';
+
 const LTX_LICENSE = {
-  weights: 'LTX-2 Community License (Lightricks) — free below USD 10M annual revenue; read it before commercial use',
+  weights: `${LTX_LICENSE_NOTE} — ${LTX_LICENSE_URL}`,
   openWeights: true,
 };
+
+/** Qwen3-VL-4B-Instruct: apache-2.0 on its model card (Qwen/Qwen3-VL-4B-Instruct) and on Comfy-Org/Qwen3-VL (HF API, 25 Oct 2026). */
+const QWEN3VL_LICENSE = { weights: 'Apache-2.0 (Qwen3-VL-4B-Instruct, Qwen; repackaged by Comfy-Org/Qwen3-VL)', openWeights: true };
 
 const SAM_LICENSE = {
   weights: 'SAM License (Meta) — royalty-free, commercial use included; trade-control and lawful-use terms apply',
@@ -76,9 +84,10 @@ const VACE_OUTPAINT = {
  * Frame interpolation, from the official template `utility_video_frame_interpolation`
  * (LoadVideo → GetVideoComponents → FrameInterpolate → CreateVideo → SaveVideo, with
  * a multiplier and "Apply multiplier to FPS?"). FILM is the template as it ships
- * (core nodes, film_net_fp16). RIFE and GIMM-VFI swap the template's interpolator
- * for a custom node checked in this server's object_info; everything around it —
- * the multiplier, the frame-rate switch, the save — stays the template's.
+ * (core nodes, film_net_fp16). RIFE swaps the template's interpolator for a custom
+ * node checked in this server's object_info; everything around it — the multiplier,
+ * the frame-rate switch, the save — stays the template's. (GIMM-VFI was a third
+ * engine until 26 Oct: its S-Lab 1.0 licence is non-commercial, so it is not shipped.)
  */
 const INTERP = {
   // "Int (Multiplier)", "Boolean (Apply multiplier to FPS?)", and the audio the template carries over.
@@ -99,7 +108,7 @@ const INTERPOLATION: Recipe[] = [
     license: {
       weights: 'MIT (RIFE by hzwer, Practical-RIFE; node pack ComfyUI-Frame-Interpolation by Fannovel16, MIT)',
       openWeights: true,
-      note: 'The pack downloads rife47.pth itself from Hugging Face mirrors it lists (vfi_utils.py), not from the RIFE author: provenance of that file DA VERIFICARE.',
+      note: 'The pack downloads rife47.pth itself from Hugging Face mirrors it lists (vfi_utils.py), not from the RIFE author: provenance of that file to be verified.',
     },
     patch: (api) => {
       // RIFE VFI (ComfyUI-Frame-Interpolation) in place of the template's FrameInterpolationModelLoader + FrameInterpolate.
@@ -126,36 +135,10 @@ const INTERPOLATION: Recipe[] = [
     params: [{ ref: INTERP.multiplier, label: 'Multiplier' }, { ref: INTERP.multiplyFps, label: 'Multiply the frame rate' }],
     interpolate: INTERP,
     license: {
-      weights: 'Apache-2.0 (FILM, google-research/frame-interpolation); the file is Comfy-Org\'s repackaging (its model card says "other": DA VERIFICARE)',
+      weights: 'Apache-2.0 (FILM, google-research/frame-interpolation); the file is Comfy-Org\'s repackaging (its model card says "other": to be verified)',
       openWeights: true,
     },
     patch: (api) => { api['7'].inputs.filename_prefix = SLUG + '/interp_film'; },
-  },
-  {
-    id: 'interp-gimm',
-    template: 'utility_video_frame_interpolation',
-    title: 'GIMM-VFI · Frame interpolation (non-commercial)',
-    description: 'Slower, finer motion estimation for occlusions and crossing objects. Its licence allows non-commercial use only.',
-    task: 'interpolate-video', hosts: ['effectcraft'], output: 'video', input: 'video',
-    bindings: { video: '4.file' },
-    params: [{ ref: INTERP.multiplier, label: 'Multiplier' }, { ref: INTERP.multiplyFps, label: 'Multiply the frame rate' }],
-    interpolate: INTERP,
-    ownModels: true,
-    extraModels: [{ name: 'gimmvfi_r_arb_lpips_fp32.safetensors', directory: 'interpolation/gimm-vfi', url: 'https://huggingface.co/Kijai/GIMM-VFI_safetensors/resolve/main/gimmvfi_r_arb_lpips_fp32.safetensors' }],
-    license: {
-      weights: 'S-Lab License 1.0 (GIMM-VFI, GSeanCDAT/GIMM-VFI; node pack ComfyUI-GIMM-VFI by kijai, same licence) — non-commercial use only',
-      openWeights: true,
-      note: '"Redistribution and use for non-commercial purpose … are permitted"; commercial use needs the authors\' permission. The node downloads its weights from Kijai/GIMM-VFI_safetensors on first use.',
-    },
-    patch: (api) => {
-      api['16:1'] = { class_type: 'DownloadAndLoadGIMMVFIModel', inputs: { model: 'gimmvfi_r_arb_lpips_fp32.safetensors', precision: 'fp32', torch_compile: false }, _meta: { title: '(Down)Load GIMMVFI Model' } };
-      api['16:2'] = {
-        class_type: 'GIMMVFI_interpolate',
-        inputs: { gimmvfi_model: ['16:1', 0], images: ['16:3', 0], ds_factor: 1, interpolation_factor: ['16:9', 0], seed: 0, output_flows: false },
-        _meta: { title: 'GIMM-VFI Interpolate' },
-      };
-      api['7'].inputs.filename_prefix = SLUG + '/interp_gimm';
-    },
   },
 ];
 
@@ -174,7 +157,7 @@ const KEYFRAMES: Recipe[] = [
     bindings: { prompt: '105:104.prompt', image: '114.image', seed: '105:15.noise_seed', width: '105:104.width', height: '105:104.height', seconds: '105:111.value' },
     sizeMultiple: 32, maxLongSide: 1344, defaults: { seconds: 5, width: 1344, height: 768 },
     license: {
-      weights: 'MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: DA VERIFICARE on the licence text',
+      weights: 'MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: to be verified on the licence text',
       openWeights: true,
     },
     patch: (api) => {
@@ -240,6 +223,65 @@ const RECIPES: Recipe[] = [
     params: [{ ref: '405:383.value', label: 'Prompt enhancer (Gemma)' }],
     license: LTX_LICENSE,
     patch: (api) => { api['75'].inputs.filename_prefix = SLUG + '/ltx25_t2v'; },
+  },
+  {
+    id: 'ltx25-extend',
+    template: 'video_ltx2_5_flf2v',
+    title: 'LTX-2.5 · Extend (video guide)',
+    description: 'Carries a clip on: its last frames guide LTX-2.5 from the start of the new clip, so the motion goes on as it was.',
+    task: 'extend-video', hosts: ['effectcraft'], output: 'video', input: 'video',
+    bindings: {
+      prompt: '251:252.value', negative: '251:217.text', video: '300.file', seed: '251:196.noise_seed',
+      width: '251:215.value', height: '251:216.value', seconds: '251:198.value', fps: '251:205.value',
+    },
+    // EmptyLTXVLatentVideo steps by 32; the template is one stage at the full size (no latent upscaler).
+    sizeMultiple: 32, maxLongSide: 1536, defaults: { seconds: 2, width: 1280, height: 704 },
+    // LTXVAddGuide: "Must be 8*n + 1 frames" (its tooltip, object_info). 17 at 24 fps is 0.7 s of motion.
+    guide: { start: '302.batch_index', take: '302.length', frames: [17, 9] },
+    license: LTX_LICENSE,
+    patch: (api) => {
+      // The template guides with two stills (LTXVAddGuide at frame 0 and at −1, strength 0.7) and crops the guides off
+      // the latent before decoding (LTXVCropGuides). Here the first guide is the source's last frames, as video, and the
+      // second goes: LoadVideo → GetVideoComponents → ImageFromBatch (the last N) → the template's resize and
+      // LTXVPreprocess → LTXVAddGuide at frame 0, strength 1 (the frames that are already shot stay as they are).
+      for (const id of ['31', '39', '251:214', '251:195', '251:204']) delete api[id];
+      api['300'] = { class_type: 'LoadVideo', inputs: { file: 'tail.mov' }, _meta: { title: 'Load Video (the source\'s last frames)' } };
+      api['301'] = { class_type: 'GetVideoComponents', inputs: { video: ['300', 0] }, _meta: { title: 'Get Video Components' } };
+      api['302'] = { class_type: 'ImageFromBatch', inputs: { image: ['301', 0], batch_index: -17, length: 17 }, _meta: { title: 'Image From Batch (the guide frames)' } };
+      api['251:213'].inputs.input = ['302', 0];
+      // Stretched to the generation size, not cropped (its own "disabled" choice), and lanczos as the i2v template
+      // resizes: the result is laid back at the source's size with the inverse scale, so every pixel meets its own.
+      api['251:213'].inputs['resize_type.crop'] = 'disabled';
+      api['251:213'].inputs.scale_method = 'lanczos';
+      api['251:206'].inputs.strength = 1;
+      // What the removed last-frame guide fed (the guider, the crop, the audio-video concat) takes the first guide's outputs.
+      for (const node of Object.values(api)) {
+        for (const [k, v] of Object.entries(node.inputs)) if (Array.isArray(v) && v[0] === '251:204') node.inputs[k] = ['251:206', v[1]];
+      }
+      // The prompt enhancer (off, as in the template) reads one picture: the last guide frame.
+      api['303'] = { class_type: 'ImageFromBatch', inputs: { image: ['251:199', 0], batch_index: -1, length: 1 }, _meta: { title: 'Image From Batch (last frame)' } };
+      api['251:247'].inputs.image = ['303', 0];
+      api['68'].inputs.filename_prefix = SLUG + '/ltx25_extend';
+    },
+  },
+  {
+    id: 'describe-clip',
+    template: 'llm_qwen3vl_text_gen',
+    title: 'Qwen3-VL · Describe the clip',
+    description: 'A few frames of the clip in, a paragraph out: what is in the shot, what moves and how, the camera, the light. Local only.',
+    task: 'describe', hosts: [], output: 'text', input: 'video',
+    bindings: { prompt: '6.prompt', video: '9.file', seed: '6.sampling_mode.seed' },
+    text: { node: '7' },
+    license: QWEN3VL_LICENSE,
+    patch: (api) => {
+      // The template reads one image; Qwen3-VL in ComfyUI takes an image batch as several pictures in one turn
+      // (comfy/text_encoders/qwen3vl.py), so a few frames of the clip go in, in order, as a short video.
+      delete api['8'];
+      api['9'] = { class_type: 'LoadVideo', inputs: { file: 'frames.mp4' }, _meta: { title: 'Load Video (a few frames of the clip)' } };
+      api['10'] = { class_type: 'GetVideoComponents', inputs: { video: ['9', 0] }, _meta: { title: 'Get Video Components' } };
+      api['6'].inputs.image = ['10', 0];
+      api['6'].inputs.max_length = 320;
+    },
   },
   {
     id: 'zimage-t2i',
@@ -463,7 +505,9 @@ for (const r of RECIPES) {
   const absent = missingNodes(api, objectInfo);
   const outpaintRefs = r.outpaint ? [r.outpaint.take, r.outpaint.start, ...r.outpaint.scale, ...r.outpaint.pad, r.outpaint.chain.controlVideo, r.outpaint.chain.controlMasks,
     ...(r.outpaint.crop ? Object.values(r.outpaint.crop) : [])].map((ref) => ['outpaint', ref] as const) : [];
-  for (const [k, ref] of [...Object.entries(r.bindings), ...(r.params ?? []).filter((p) => !p.ref.startsWith('@')).map((p) => [p.label, p.ref] as const), ...outpaintRefs]) {
+  const guideRefs = r.guide ? [['guide', r.guide.start] as const, ['guide', r.guide.take] as const] : [];
+  if (r.text && !api[r.text.node]) { console.error(`✖ ${r.id}: text node ${r.text.node} not in graph`); failed++; }
+  for (const [k, ref] of [...Object.entries(r.bindings), ...(r.params ?? []).filter((p) => !p.ref.startsWith('@')).map((p) => [p.label, p.ref] as const), ...outpaintRefs, ...guideRefs]) {
     const dot = ref.indexOf('.', ref.lastIndexOf(':') + 1);
     const node = api[ref.slice(0, dot)];
     if (!node || !(ref.slice(dot + 1) in node.inputs)) { console.error(`✖ ${r.id}: binding ${k} → ${ref} not in graph`); failed++; }

@@ -10,8 +10,10 @@
 import type { ObjectInfo, WorkflowJson } from '../comfy/types.ts';
 import { snapFramesUp } from './form.ts';
 
-export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg' | 'matte-video' | 'reframe' | 'outpaint-video' | 'interpolate-video';
-export type MediaKind = 'image' | 'video';
+export type Task = 't2v' | 'i2v' | 'v2v' | 't2i' | 'i2i' | 'upscale-video' | 'upscale-image' | 'remove-bg' | 'matte-video' | 'reframe' | 'outpaint-video' | 'interpolate-video'
+  | 'extend-video' | 'describe';
+/** 'text': a workflow that answers in words (the Comp tab's "Describe the clip"). */
+export type MediaKind = 'image' | 'video' | 'text';
 
 /** "nodeId.field" — the node id may itself contain colons (subgraph paths). */
 export type FieldRef = string;
@@ -82,6 +84,14 @@ export interface WorkflowManifest {
    * input of its CreateVideo (dropped for slow motion: the sound would not stretch with the picture).
    */
   interpolate?: { multiplier: FieldRef; multiplyFps: FieldRef; audio: FieldRef };
+  /**
+   * Extend with a video guide (from the official template video_ltx2_5_flf2v): the ImageFromBatch that takes the
+   * last frames of the uploaded tail (start: a negative index, counted from the end; take: how many), and the guide
+   * lengths the workflow takes — 8n + 1, LTXVAddGuide's rule — longest first.
+   */
+  guide?: { start: FieldRef; take: FieldRef; frames: number[] };
+  /** A workflow that answers in words: the node whose UI output carries the text (PreviewAny). */
+  text?: { node: string };
   models: ModelFile[];
   source: { template: string; package: string; version: string };
   license: { weights: string; openWeights: boolean; note?: string };
