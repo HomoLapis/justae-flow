@@ -51,11 +51,13 @@ vision-language model writes the prompt from your frames), a **storyboard** buil
 placeholders with versions and status colours, and an estimate of time and credits under every Generate button.
 Higgsfield has things this does not: "Seed audio" (voices, ambience), an MCP bridge and its own model catalogue.
 
-## Setup from zero
+## Requirements
 
 You need: **Node.js 22.18+**; **EffectCraft 0.11.1+**; **ComfyUI 0.38+** with the official templates package (it
 ships with ComfyUI), reachable over HTTP; **ffmpeg** on the PATH (masters, Extend, Describe the clip). The LTX-2.5
 workflows need a GPU with 16 GB or more; the Wan VACE 14B reframe is meant for a cloud GPU with 48 GB or more.
+
+## Install and run
 
 ```bash
 git clone <REPO_URL> justae-flow && cd justae-flow
@@ -94,7 +96,146 @@ narrowed to make room, and it follows EffectCraft when it is moved, resized, min
 undock it; **Open JustAE Flow** in the panel docks it again and never opens a second one. On macOS and Linux it opens
 as a window of its own.
 
-## The tabs
+## Models to download
+
+All bundled workflows are **official ComfyUI templates** with **open weights**, converted to the API format by
+`scripts/build-workflows.ts` (no hand-edited graphs; every node checked in the server's `object_info`). No partner
+nodes, no closed APIs.
+
+| Id | Template (comfyui-workflow-templates 0.11.76) | Task | Weights licence |
+|---|---|---|---|
+| `ltx25-t2v` | `video_ltx2_5_t2v` | text → video with sound | LTX-2.x Community License |
+| `ltx25-i2v` | `video_ltx2_5_i2v` | frame under the marker (or an attached image) → video | LTX-2.x Community License |
+| `ltx25-extend` | `video_ltx2_5_flf2v` | a clip's last frames (video guide) → the next seconds (Comp ▸ Extend) | LTX-2.x Community License |
+| `describe-clip` | `llm_qwen3vl_text_gen` | a few frames → a paragraph for the prompt (local only) | Apache-2.0 (Qwen3-VL-4B) |
+| `zimage-t2i` | `image_z_image_turbo` | text → image | Apache-2.0 |
+| `seedvr2-upscale` | `utility_seedvr2_3b_int8_upscale_video` | video ×2 restoration upscale | Apache-2.0 |
+| `birefnet-rmbg` | `utility_birefnet_remove_background` | still → cut-out with alpha | MIT |
+| `sam3-matte` | `utility_video_segment_sam3` | clip + subject name → tracked matte video (luma) | SAM License (Meta) |
+| `sam3-reframe` | `utility_video_segment_sam3` | clip + subject name → a small mask per frame, for the auto crop | SAM License (Meta) |
+| `vace-reframe` | `video_wan_vace_outpainting` | clip in a new aspect → the space around it generated (VACE 14B, 720p) | Apache-2.0 |
+| `vace-reframe-draft` | `video_wan_vace_outpainting` | the same on the 1.3B model, 480p | Apache-2.0 |
+| `qwen-edit` | `image_qwen_image_edit_2511_int8` | image + prompt → edited image (PhotoCraft selections) | Apache-2.0 |
+| `seedvr2-upscale-image` | `utility_seedvr2_3b_int8_upscale_image` | image restoration upscale | Apache-2.0 |
+| `interp-rife` | `utility_video_frame_interpolation` | frames in between (×2, ×4), RIFE VFI in place of the template's interpolator | MIT |
+| `interp-film` | `utility_video_frame_interpolation` | the same, the template as it ships (core nodes, FILM) | Apache-2.0 |
+| `h3-flf` | `video_minimax_h3_i2v` | first + last frame → video with sound (Featured) | MiniMax H3 open weights; commercial use of local outputs needs MiniMax's licence |
+| `wan22-flf` | `video_wan2_2_14B_flf2v` | first + last frame → video (Featured) | Apache-2.0 |
+
+What the build changes, per template: the BiRefNet preview becomes a save; the SAM 3 per-frame detection becomes the
+core tracking nodes (`SAM3_VideoTrack` + `SAM3_TrackToMask`) and a save; the VACE graphs cut the clip to one run,
+scale and crop it before the padding and swap the template's CausVid LoRA (CC BY-NC 4.0) for lightx2v's Apache-2.0
+4-step LoRA (14B) or drop it (1.3B); `interp-rife` puts RIFE VFI (`ComfyUI-Frame-Interpolation`, checkpoint
+`rife47.pth`) in place of FrameInterpolate; `h3-flf` wires a second image to the node's `last_frame` and drops the
+turbo-LoRA branch (off in the template); `ltx25-extend` replaces the first-frame image with the source's last frames
+(LoadVideo → GetVideoComponents → ImageFromBatch → the template's resize, stretched rather than centre-cropped so the
+result can be laid back at the source's size, → LTXVPreprocess → LTXVAddGuide at frame 0, strength 1) and removes the
+last-frame guide; `describe-clip` feeds a few frames instead of one image. A clip longer than one VACE run (125 frames)
+goes in runs that each start from the last 8 frames the one before made, joined in ComfyUI. GIMM-VFI was an
+interpolation engine until 25 Oct 2026; its S-Lab License 1.0 is non-commercial, so it is no longer shipped.
+
+Each `workflows/<id>.json` manifest names the node fields the host fills in, the model files with their download URLs,
+and the licence. If your ComfyUI has another precision of the same weights, JustAE Flow uses it and says so on the card.
+
+```bash
+npm run verify:workflows -- http://127.0.0.1:8188   # what your server can run, and the URLs of what is missing
+```
+
+The LTX finishing tools need, besides, the ComfyUI-LTXVideo node pack and the Lightricks IC-LoRAs: see *LTX finishing ▸
+What you need on the ComfyUI* (`npm run verify:finishing http://127.0.0.1:8188` lists what is there).
+
+## Resources and credits
+
+**Settings ▸ Resources** lists the places a workflow can run. Everything there is kept by the server in your user
+folder — the registry in `resources.json`, the platform API key in `comfy-api-key.txt`, the proxy's token in
+`comfy-proxy-token.txt` — never in the project, the repository or the window's storage.
+
+| Resource | Address | Protocol, key | Cost |
+|---|---|---|---|
+| **Local ComfyUI** | `http://127.0.0.1:8188` | ComfyUI's own HTTP + WebSocket protocol; no key | your GPU |
+| **Comfy Cloud** | `https://cloud.comfy.org` | Comfy API v2 for jobs (`Authorization: Bearer`); the v1 Cloud API (`X-API-Key`) for the node catalogue, the model folders and the billing report | credits for GPU time |
+| **Deployment** | `https://<deployment>.run.comfy.app` — `comfy deploy status` prints it | Comfy API v2, the same key | credits per second of GPU while a worker runs |
+| **Your ComfyUI via [`comfy-api-proxy`](https://docs.comfy.org/development/comfyui-server/api-proxy)** | `http://127.0.0.1:8189` | Comfy API v2; none, or the proxy's `--token` | your GPU |
+
+The key goes over https only, or over plain http to this machine. Running jobs on Comfy Cloud by API needs a paid
+Cloud plan (*v1 Cloud API Overview*, "Subscription required"): measured on 25 Oct 2026, a free-tier key reads
+billing, nodes and models but every submit is refused with 403 "API key authentication is not available for free tier
+accounts". JustAE Flow shows those words, offers to run locally, and stops routing jobs to Cloud until the key changes
+or **Check** is pressed. Comfy API v2 runs on the server through the official SDK (`@comfyorg/sdk` 0.5.0): inputs go up
+as assets addressed by their blake3 hash, each Generate is one submission under one `Idempotency-Key` (a 429 — queue
+full, or a deployment starting a worker — is retried under the same key for up to 10 minutes), the job is polled every
+2 seconds, outputs come down through the server.
+
+**Where each task runs.** A table on the same page sets, per task, Local, Cloud, a deployment, the proxy or **Auto**
+(defaults: video Auto, image Local, generative reframe Cloud, reframe draft Local, upscale Cloud, matte Local, slow
+motion / fps Local, restyle Auto). Auto is Local when the local ComfyUI has the workflow's nodes and models, else the
+first other resource that has them; a row on a resource that is not set up falls back to Auto, so without a key
+everything stays local. The resource on a **Generate** button overrides the table; each `job.json` records the
+resource, why it was chosen, the execution time and the derived credits. What a resource can run is probed and kept
+ten minutes: the local ComfyUI's `/api/object_info`; on Comfy Cloud the v1 `/api/object_info` and
+`/api/experiment/models/{folder}`. A deployment and the proxy have no node catalogue on v2, so they are "unknown until
+a workflow has finished there" (a proxy in front of the local ComfyUI is judged by that ComfyUI). On Comfy Cloud a
+platform key reads the service, the node catalogue, the model folders and the billing report, while job submission
+needs a paid Cloud plan. Every feature was tested end to end on a local RTX 5080 16 GB, through `comfy-api-proxy` and on
+an RTX PRO 6000 deployment.
+
+**Credits, and the billing lag.** When the resource of the next Generate bills, the header shows the account's
+balance, read from the v1 billing report `GET /api/billing/usage/timeseries` (`summary.balance`, in **cents** despite
+the `_micros` suffix, converted at 211 credits = 1 $; openapi-cloud.yaml and comfy.org/cloud/pricing). That report is
+drawn from invoices, not live usage: the balance always carries the time it was read, is read again after every job
+on Cloud or a deployment, and when it has not moved yet the window says so. It is cached five minutes.
+
+**Estimates and costs are derived, never stated.** No endpoint returns a job's price (the v2 job carries
+`metrics.execution_ms`; SDK `types.gen.d.ts`). So, under every Generate button:
+
+- after a run: execution time × the GPU's rate — Comfy Cloud runs on the RTX PRO 6000, **736.39 credits per GPU hour**;
+  a deployment bills at the rate of its GPU: RTX PRO 6000 736.39, H100 1,314.53, H200 1,626.81, B200 2,369.53
+  credits/h (comfy.org/cloud/pricing, read 25 Oct 2026) — set in its card;
+- before a run: the fastest and slowest earlier runs of the same workflow on the same resource and GPU, scaled by the
+  slot for video, always with "≈" and its basis ("based on 3 runs on RTX PRO 6000"), or the rate alone when there is
+  none ("first run: 12.3 cr/min"). A slot longer than any run on record is flagged. When the balance is under twice
+  the estimate, a yellow line offers to switch to Local; a `402 insufficient_credits` ends the job with the same offer.
+
+The run history the estimates come from is `runs.json`, in the same user folder.
+
+### Your own deployment
+
+A deployment bills while a worker runs, not per job: deployed with `--min 0` it scales to zero between jobs (the next
+job waits for a worker: measured on 25 Oct, about 1–2 minutes from cold); with `--min 1` a worker stays up and bills
+while idle — its card says how much a day. A generic recipe with comfy-cli (docs.comfy.org, *Comfy API Quickstart*;
+comfy-cli's `comfy-build` and `comfy-deploy` skills):
+
+```bash
+pip install -U comfy-cli
+comfy build init <dir> --name <name> --models-dir <ComfyUI>/models --custom-nodes-dir <ComfyUI>/custom_nodes
+comfy build push
+comfy build release create --target linux/nvidia --watch
+comfy deploy refs compute          # GPU classes, regions, credits per hour, storage per GB-month
+comfy deploy up <dir> --gpu <class> --region <region> --min 0 --max 1 --watch
+comfy deploy status <dir>          # its endpoint: Settings ▸ Resources ▸ Add a deployment
+comfy deploy stop <dir>            # ends the charge; keeps the endpoint and the staged models
+```
+
+Put in the Build only what the heavy tasks need: the models a bundled workflow names are in its manifest
+(`workflows/<id>.json` → `models`, each with the URL its template downloads it from) — for example `vace-reframe` and
+`seedvr2-upscale`, whose nodes are all core ComfyUI. Costs, as `comfy deploy refs compute` listed them on 25 Oct 2026
+(comfy-cli 1.23.0): the GPU per hour while a worker runs (RTX PRO 6000 736.39 credits/h) and network storage for the
+staged models at **42.2 credits (0.20 $) per GB per month** (how storage is billed in detail: to be verified). JustAE
+Flow never builds, releases, deploys, starts, scales or stops anything on the platform: it talks to an endpoint you
+already have. On v2 workflows go in API format, there are no live previews, and a deployment has only the nodes and
+models of its build. To try v2 for free, run `pip install comfy-api-proxy` and `comfy-api-proxy` next to your ComfyUI.
+`npm run probe:cloud` asks Comfy Cloud what it offers this account — read-only, no job, no credit.
+
+A ComfyUI behind a router that asks for a bearer token (for example one you host yourself) also works as the *Local*
+address: put its address in **Settings ▸ ComfyUI address** and its token in **Access token** (sent as
+`Authorization: Bearer …`, and as `token=` on the WebSocket); a router's GPU menu (`/manager/monitor/pricing`) shows
+up in **GPU for jobs**. Describe the clip is not offered on such an address: it runs only on this machine.
+
+## Using it
+
+The Flow window's tabs, then the Comp tab's tools and the LTX finishing cards.
+
+### The tabs
 
 | Tab | What you do in EffectCraft | What Flow does |
 |---|---|---|
@@ -119,7 +260,21 @@ The panel's **layer tools** work on the selected clip: Cut out a subject (SAM 3,
 (generate the new space, Wan VACE 14B or the 1.3B draft), Auto crop (SAM 3, Position keyframes that follow the
 subject), Upscale ×2 (SeedVR2, laid exactly over the source, which is switched off — not deleted).
 
-## The Comp tab
+### Featured workflows
+
+Above the Workflow tab's library: LTX-2.5 image → video and text → video, MiniMax H3 first + last frame, Wan 2.2 first
++ last frame, Z-Image-Turbo, Qwen-Image-Edit 2511, SeedVR2 ×2 and SAM 3, each with where it runs — "runs on: Local ✓ ·
+Cloud ✗ · Proxy ✓ · *your deployment* ✓/?" from the probes (a deployment: ✓ once a run of that workflow finished
+there) — and, when the local ComfyUI lacks something, each missing file with the URL its template downloads it from;
+one that runs nowhere stays listed, greyed. *Use it* makes it the workflow of the Marker and Storyboard tabs (with your
+ComfyUI's precisions swapped in, e.g. LTX int8 → nvfp4). The LTX-2.5 cards carry the LTX-2.x licence line and its
+link. MiniMax H3 has *Draft / Final*: *Draft* is its own workflow, the 4-step turbo LoRA the official template names
+(`h3-flf-draft`, 4 steps — a quick look, never the final); *Final* is the base model, 20 steps, then a second job on its
+result: **+ SeedVR2 ×2** (on the same resource, original colours kept) or **+ LTX Refine** (to Full HD on the local
+ComfyUI, with a PNG 16-bit master beside the draft — see *LTX finishing*); its card carries the licence note (MiniMax
+commercial licence for locally generated outputs; in the EU: to be verified).
+
+### The Comp tab
 
 The Storyboard makes things *inside* a comp; the Comp tab transforms the comp itself — or its work area, or a layer —
 into something new beside it. Nothing in your comp is changed or deleted: a result is a new comp ("*&lt;Comp&gt;* ·
@@ -180,7 +335,7 @@ run makes goes into `<project>.justae-flow/<run id>/` next to the `.ecproj` — 
 it, the exact graph submitted (`submitted_<time>.api.json`) and the `job.json` (tool, source, sizes, resource, times,
 seed, model swaps; for Extend the guide frames and the frames that came back).
 
-## LTX finishing
+### LTX finishing
 
 LTX-2.5 with the IC-LoRAs of Lightricks' **LTX-2.5 Creative Lab** (Hugging Face), in the Comp tab: a second engine on
 *Upscale* and on *Cut-out*, and an **LTX finishing** family of cards after the other tools. Each tool is offered only
@@ -189,22 +344,22 @@ where its model card documents how the LoRA is driven (input, prompt, strength, 
 
 | Card | IC-LoRA (strength) | How it runs | What it makes |
 |---|---|---|---|
-| **Upscale ▸ LTX Refine** — *Full HD · 4K · 8K · Same size*, *Fast scene*, *Master* | Refine Details 1.0 | Tiled Fusion (`LTXVTiledFusionSampler`): one latent canvas, overlapping 1024×576 tiles fused every step, as the official `LTX-2.5_V2V_TiledFusion_Upscale` workflow | a new comp at the delivery size, the original under it switched off; the master next to the project |
-| **Archive restore** — *Restore · + Refine 30 % · Restore → Refine ×2* | Restore 1.0 (+ Refine Details 0.3 in the same pass) | Tiled Fusion on 960×544 tiles at 1440 wide (4:3) or 1920 (16:9); *Restore → Refine ×2* then lanczos ×2 and Refine | the same; Restore also colours monochrome and tinted sources from their content (its card) |
+| **Upscale ▸ LTX Refine** — *Full HD · 4K · 8K · Same size*, *Fast scene*, *Master* | Refine Details 1.0 | Tiled Fusion (`LTXVTiledFusionSampler`): one latent canvas, overlapping tiles fused every step, wired as the official `LTX-2.5_V2V_TiledFusion_Upscale` workflow — canvas, tiles and windows from the pack's `LTXVGetTilingSizes` | a new comp at the delivery size, the original under it switched off; the master next to the project |
+| **Archive restore** — *Restore · + Refine 30 % · Restore → Refine ×2* | Restore 1.0 (+ Refine Details 0.3 in the same pass) | Tiled Fusion on the pack's Full HD canvas with its qHD tiles (960×544 on 16:9, the Restore card's tile); *Restore → Refine ×2* then Refine on the pack's 4K canvas (twice its Full HD) | the same; Restore also colours monochrome and tinted sources from their content (its card) |
 | **Deblur** | Deblur 0.9 file, strength 1.0 | one pass, the official `LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled` chain (CFGGuider 1, euler_ancestral, 8 distilled sigmas, `LTXVCropGuides`), at the source size up to 1920×1088 | the same; defocus only (not motion blur) |
 | **De-compression** | Decompression 0.9, 1.0 | the same chain, near the card's 960×544 size by default | compression artefacts removed |
 | **Colorize** | Colorization 0.9, 1.0 | the same chain, near 960×544; *Scene* + *Colours* fill the card's `COLORIZE` sentence | natural colour for black-and-white footage |
 | **Clean plate** | Clean Plate 1.0, 1.0 | the same chain at the source size; *The empty place* + *Also remove* fill the card's sentence and negative | the background without people and vehicles |
 | **Day → Night** | Day-To-Night 0.9, 1.0 | the same chain near the card's 768×448 size | the same shot at night |
 | **Cut-out ▸ LTX Alpha** | Alpha Gen 0.9, 1.0, empty prompt | the same chain at the source size (≤ 1920×1088, ≤ 145 frames) | a soft luma matte (white = foreground), set as the layer's luma track matte like SAM 3's; *Export with alpha* works the same |
-| SDR → HDR | — | **to be verified** (greyed): its card runs a dedicated pipeline (ACEScct input, a fixed scene embedding, seam keyframes, float32 decode, EXR ACEScg + HLG); here its scene embedding sits in `models/loras/LTX2.5/` while its loader reads only `models/embeddings`, and EffectCraft's EXR import is not verified | — |
+| **SDR → HDR** | SDR-To-HDR 1.0 + its scene embedding, no prompt | one pass, the chain of the official `LTX-2.5_ICLoRA_SDR_to_HDR_Distilled` workflow its card names for ComfyUI: ACEScct input transform, the scene embedding as the conditioning, float32 decode, `LTXVHDRDecodePostprocess` | an EXR sequence in ACEScg (scene-linear, half float) and an HLG BT.2020 10-bit video next to the project; the comp shows an 8-bit tonemapped preview |
 
 Run on this machine with their own IC-LoRA: Refine (preview tile and Full HD), Restore, LTX Alpha (2 s at 1280×704 in
-1:16: a clean white matte of the boat and its sail — and of its reflection in the water) and De-compression (once, on a
-test pattern). Deblur, Colorize, Clean plate and Day → Night: their graphs are checked against the local ComfyUI and the
+1:16: a clean white matte of the boat and its sail — and of its reflection in the water), De-compression (once, on a
+test pattern) and SDR → HDR (2 s at 1280×704 in 1:52; sky values up to about 10 in the EXR). Deblur, Colorize, Clean plate and Day → Night: their graphs are checked against the local ComfyUI and the
 single-pass chain they share has run, but not with their own LoRA.
 
-**The five rules, built into the cards** (the author's, PLAN v3 §4.2b):
+**The five rules, built into the cards:**
 
 1. **8K goes through 4K.** *8K* is always Refine to 4K, lanczos ×2, then a light 2-step refine of the 8K canvas from the
    encoded image — never 8K in one pass (the Refine card: "8K in one pass invents detail"). The card says so.
@@ -221,20 +376,25 @@ single-pass chain they share has run, but not with their own LoRA.
 5. **Delivery: a 16-bit master.** PNG 16-bit by default, or EXR 16-bit float; the comp shows an 8-bit H.264 MP4 of the
    same frames (EffectCraft 0.11.1 decodes 8-bit H.264 only) — a preview, never the delivery.
 
-**Sizes and frames**, from the planner (`core/finishing/plan.ts`, JustAE Flow 2's port of ComfyUI-LTXVideo's own
-`tiled_fusion_plan.py` / `tiled_fusion_sizes.py`, so the tile count shown is the one the sampler walks):
+**Sizes and frames come from the LTX pack itself.** Every tiled graph carries the pack's `LTXVGetTilingSizes` node,
+wired as its official workflows wire it: it sets the canvas, the tile, the overlap and the temporal window the sampler
+uses. JustAE Flow chooses what to ask — the output size, and the pack's **qHD** tile (the nearest of its three tile
+sizes to the windows the IC-LoRAs were trained on) — and adds the cards' frames rule and the delivery at the source's
+aspect. Before a run the server asks the local ComfyUI for that node's answer (a one-node prompt, cached), so the card
+shows the pack's output size and tiles; when the ComfyUI cannot be asked (off, or busy with a long job) the card says
+*Sizes from the LTX pack at run time*.
 
 | | |
 |---|---|
-| Canvas | multiples of 32; delivered at the source's aspect (lanczos): 3840×2176 → 3840×2160 |
-| Delivery boxes | Full HD fits 1920×1080, 4K 3840×2160, 8K 7680×4320 (portrait turned); a 1280×704 clip → 1920×1056 · 3840×2112 · 7680×4224 |
-| Tiles | Refine 1024×576, Restore 960×544 (portrait swapped); overlap 0.5, blend 0.05, grid cycle 1 |
-| Tiles per step, from 1920×1080 | Full HD 3×3 = 9 · 4K 7×7 = 49 · 8K 14×15 = 210 |
-| Frames | 8n+1, at least 8 copies of the last frame added and cut after (the last frames of an LTX generation lose detail) |
-| Time | 97-frame windows (streaming), 8 distilled steps, cfg 1, euler; decode `VAEDecodeTiled` 1024 / 128 / 256 / 32 (the Refine card), or 512 / 64 / 128 / 32 (the official workflows' low-VRAM default) on 16 GB |
-| Single-pass sizes | Deblur and Clean plate: the source, up to 1920×1088; De-compression and Colorize: shorter side 544; Day → Night: shorter side 448; Alpha: the source exactly |
+| Canvas | the pack's: Full HD = 1920 on the long edge, 4K twice that, 8K four times; multiples of 32; delivered at the source's aspect inside it (lanczos): 1920×1088 → 1920×1080, 1344×768 → 1920×1088 → 1904×1088 |
+| Tiles | the pack's qHD tile (960×544 on a 16:9 frame; it follows the frame's aspect), its overlap 0.5; blend 0.05, cfg 1, euler, the 8 distilled sigmas (the cards) |
+| Tiles per step, from 1920×1080 | Full HD 3×3 = 9 · 4K 7×7 = 49 · 8K 15×15 = 225 |
+| Frames | 8n+1, at least 8 copies of the last frame added and cut after (the last frames of an LTX generation lose detail); the pack's window: 97 frames, or the whole clip up to 121 |
+| Time | runs measured here, times a tile count made from the pack's tile size and overlap (an approximation: on 53 answers of the pack it matched its grid 49 times, one row over 4 times) |
+| Decode | `VAEDecodeTiled` 1024 / 128 / 256 / 32 (the Refine card), or 512 / 64 / 128 / 32 (the official workflows' lower-VRAM setting) on 16 GB |
+| Single-pass sizes | Deblur and Clean plate: the source, up to 1920×1088; De-compression and Colorize: shorter side 544; Day → Night: shorter side 448; Alpha and SDR → HDR: the source |
 
-Every card says, before it runs, the tiles, frames, windows and tile-steps, and **how long it should take on this
+Every card says, before it runs, the pack's sizes and tiles, the frames, and **how long it should take on this
 machine**, from the tile count and runs measured here (an RTX 5080 16 GB, the number says so).
 
 **Measured on the RTX 5080 16 GB** (ComfyUI 0.38.0, NVFP4 transformer, Gemma-4 int8, DiffVAE bf16; 25–26 Oct 2026):
@@ -248,17 +408,19 @@ machine**, from the tile count and runs measured here (an RTX 5080 16 GB, the nu
 | De-compression (verify-finishing-run, a test pattern) | 1920×1080, 41 frames → 968×544 | one pass at 960×544, 41 → 49 frames | 1:44 (cold) | — |
 | *for comparison:* SeedVR2 ×2 | 1280×704, 121 frames → 2560×1408 | — | 14:44 | — |
 | Cut-out ▸ LTX Alpha | 1280×704, 49 frames → a luma matte | one pass at the source size, 49 → 57 frames | 1:16 | ≈ 2 min |
+| LTX Refine → Full HD, sizes from the pack (26 Oct) | 1280×704, 49 frames → 1920×1056, 49 PNG 16-bit + MP4 | the pack's 3×3 tiles of 960×544, 49 → 57 frames, one window | 5:42 | ≈ 6 min |
+| SDR → HDR | 1280×704, 49 frames → 49 EXR (ACEScg) + HLG video + preview | one pass at the source size, 49 → 57 frames | 1:52 | ≈ 2 min |
 | MiniMax H3 *Draft* (4-step turbo), then *+ LTX Refine* (`scripts/verify-h3-chain.ts`: the Featured graphs and `/api/finishing/graph`) | two generated stills → 1344×768, 124 frames → 1890×1080, 124 PNG 16-bit + MP4 | Draft 4 steps; Refine 9 tiles, 124 → 137 frames, 2 windows of 97, 144 tile-steps | Draft 3:57 · Refine 14:48 | Refine ≈ 15 min |
 
-On a card of 16 GB or less the tiled runs decode with the official workflows' low-VRAM tiles (512 / 64 / 128 / 32, "tuned
-for lower-VRAM machines" in their README) instead of the Refine card's 1024 / 128 / 256, which filled the RTX 5080's
+On a card of 16 GB or less the tiled runs decode with the official workflows' low-VRAM tiles (512 / 64 / 128 / 32, their
+setting for lower-VRAM machines) instead of the Refine card's 1024 / 128 / 256, which filled the RTX 5080's
 memory and took 27 min to decode the Full HD clip above; the two decodes of the same run (same seed) are 35 dB apart,
 with no seams. A preview tile keeps the card's decode. Lightricks state a 32 GB minimum for LTX-2.5; with the NVFP4
 transformer these runs fit 16 GB. Above Full HD the card warns that it takes hours (4K of a 5 s 720p clip: ≈ 1 h 13 min
 by the estimate); 4K and 8K are planned and their graphs validated against the local ComfyUI, not run here.
 
-**A/B on the same 5 s generated clip** (`P5_ab_seedvr2_vs_refine.png` in the test folder; fine detail = std of the luma
-Laplacian at 1920×1056, colour = mean ΔE76 against the source after a σ 3 blur): SeedVR2 ×2 adds far more detail at this
+**A/B on the same 5 s generated clip** (fine detail = std of the luma Laplacian at 1920×1056, colour = mean ΔE76
+against the source after a σ 3 blur): SeedVR2 ×2 adds far more detail at this
 size (20.4 vs the source's 8.2; sail seams, rigging, leaves — partly invented), LTX Refine to Full HD a little (10.1) and
 stays soft; both keep the colours (ΔE 1.3 and 1.6; LTX slightly brighter and ~4 % less saturated, as its card says).
 LTX Refine is meant to reach 4K from a ~1080p source (its card: "4K output is the sweet spot"), where each tile sees the
@@ -270,11 +432,13 @@ for archive footage, as its card says.
 resource JustAE Flow knows no LTX-2.5 model on — your deployment was built with core nodes, Wan VACE and SeedVR2 — is
 refused before anything is sent, with that reason.
 
-**What you need on the ComfyUI:** ComfyUI-LTXVideo 1.1.0 (`LTXVTiledFusionSampler`, `LTXAddVideoICLoRAGuide`,
-`LTXICLoRALoaderModelOnly`), VideoHelperSuite; the LTX-2.5 distilled transformer (NVFP4 or int8 on 16 GB), the Gemma-4
+**What you need on the ComfyUI:** ComfyUI-LTXVideo 1.1.0 (`LTXVGetTilingSizes`, `LTXVTiledFusionSampler`,
+`LTXAddVideoICLoRAGuide`, `LTXICLoRALoaderModelOnly`; for SDR → HDR also `LTXVLoadConditioning`, `LTXVVAEForceFloat32`,
+`LTXVHDRDecodePostprocess`), VideoHelperSuite; the LTX-2.5 distilled transformer (NVFP4 or int8 on 16 GB), the Gemma-4
 12B text encoder for LTX-2.5, the LTX-2.5 video VAE (`Lightricks/LTX-2.5`); and each IC-LoRA from its repo
 (`Lightricks/LTX-2.5-22b-IC-LoRA-<Name>`) — gated: open the page, press "Agree and Access", put the file in
-`models/loras` (sub-folders are fine). `npm run verify:finishing http://127.0.0.1:8188` lists what is there and checks
+`models/loras` (sub-folders are fine) — except the SDR → HDR scene embedding
+(`ltx-2.5-22b-ic-lora-sdr-to-hdr-scene-emb.safetensors`), which goes in `models/embeddings`, where its loader reads. `npm run verify:finishing http://127.0.0.1:8188` lists what is there and checks
 every graph against the server, read-only.
 
 **Files.** In `<project>.justae-flow/<run id>/`: the MP4 preview (`<name>_v001.mp4`), the master
@@ -283,7 +447,9 @@ canvases, tiles, frames, tile-steps), the files and prompts used, the seed, the 
 took, and the lowest free VRAM seen while it ran. *Reveal PNG 16-bit* in Results opens the folder.
 
 **EXR** is written by `SaveImageAdvanced` as 16-bit float, scene-linear (the sRGB frames linearised, Rec.709
-primaries); whether EffectCraft imports it is not verified — the comp keeps the MP4 preview either way.
+primaries); SDR → HDR writes ACEScg through the pack's own node. EffectCraft 0.11.1 imports an EXR sequence (checked on
+26 Oct with the SDR → HDR frames) but not as scene-linear: it shows it as sRGB in an 8 bpc project, highlights above 1.0
+clipped, at 30 fps until reinterpreted — the comp keeps the MP4 preview, the EXR is for a colour-managed grade.
 
 **MiniMax H3 ▸ Final ▸ + LTX Refine** (Featured): the base-model H3 clip, then LTX Refine to Full HD on it as a second
 job on the local ComfyUI — the pipeline Matt Hallett shows in "LTX Refine & Restore with Native Resolution" (generate
@@ -291,155 +457,9 @@ low, refine to 4K; here Full HD, 4K from the Comp tab). The PNG 16-bit master is
 the 4-step turbo LoRA the official template names (`minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16`, from
 Comfy-Org/MiniMax-H3; the local file has the same sha256), 4 steps — never Final.
 
-**Licence** (every LTX finishing card carries it): LTX-2.x Community License (11 Aug 2026): commercial use permitted
-for entities under USD 10M annual revenue (affiliates under common control counted together; clients receiving
-outputs are not the licensee), outputs belong to the user, machine-generated content must be disclosed when published
-— [LICENSE-2_x](https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x). Each IC-LoRA repo names the same licence.
-
-## Featured workflows
-
-Above the Workflow tab's library: LTX-2.5 image → video and text → video, MiniMax H3 first + last frame, Wan 2.2 first
-+ last frame, Z-Image-Turbo, Qwen-Image-Edit 2511, SeedVR2 ×2 and SAM 3, each with where it runs — "runs on: Local ✓ ·
-Cloud ✗ · Proxy ✓ · *your deployment* ✓/?" from the probes (a deployment: ✓ once a run of that workflow finished
-there) — and, when the local ComfyUI lacks something, each missing file with the URL its template downloads it from;
-one that runs nowhere stays listed, greyed. *Use it* makes it the workflow of the Marker and Storyboard tabs (with your
-ComfyUI's precisions swapped in, e.g. LTX int8 → nvfp4). The LTX-2.5 cards carry the LTX-2.x licence line and its
-link. MiniMax H3 has *Draft / Final*: *Draft* is its own workflow, the 4-step turbo LoRA the official template names
-(`h3-flf-draft`, 4 steps — a quick look, never the final); *Final* is the base model, 20 steps, then a second job on its
-result: **+ SeedVR2 ×2** (on the same resource, original colours kept) or **+ LTX Refine** (to Full HD on the local
-ComfyUI, with a PNG 16-bit master beside the draft — see *LTX finishing*); its card carries the licence note (MiniMax
-commercial licence for locally generated outputs; in the EU: to be verified).
-
-## Workflows
-
-All bundled workflows are **official ComfyUI templates** with **open weights**, converted to the API format by
-`scripts/build-workflows.ts` (no hand-edited graphs; every node checked in the server's `object_info`). No partner
-nodes, no closed APIs.
-
-| Id | Template (comfyui-workflow-templates 0.11.76) | Task | Weights licence |
-|---|---|---|---|
-| `ltx25-t2v` | `video_ltx2_5_t2v` | text → video with sound | LTX-2.x Community License |
-| `ltx25-i2v` | `video_ltx2_5_i2v` | frame under the marker (or an attached image) → video | LTX-2.x Community License |
-| `ltx25-extend` | `video_ltx2_5_flf2v` | a clip's last frames (video guide) → the next seconds (Comp ▸ Extend) | LTX-2.x Community License |
-| `describe-clip` | `llm_qwen3vl_text_gen` | a few frames → a paragraph for the prompt (local only) | Apache-2.0 (Qwen3-VL-4B) |
-| `zimage-t2i` | `image_z_image_turbo` | text → image | Apache-2.0 |
-| `seedvr2-upscale` | `utility_seedvr2_3b_int8_upscale_video` | video ×2 restoration upscale | Apache-2.0 |
-| `birefnet-rmbg` | `utility_birefnet_remove_background` | still → cut-out with alpha | MIT |
-| `sam3-matte` | `utility_video_segment_sam3` | clip + subject name → tracked matte video (luma) | SAM License (Meta) |
-| `sam3-reframe` | `utility_video_segment_sam3` | clip + subject name → a small mask per frame, for the auto crop | SAM License (Meta) |
-| `vace-reframe` | `video_wan_vace_outpainting` | clip in a new aspect → the space around it generated (VACE 14B, 720p) | Apache-2.0 |
-| `vace-reframe-draft` | `video_wan_vace_outpainting` | the same on the 1.3B model, 480p | Apache-2.0 |
-| `qwen-edit` | `image_qwen_image_edit_2511_int8` | image + prompt → edited image (PhotoCraft selections) | Apache-2.0 |
-| `seedvr2-upscale-image` | `utility_seedvr2_3b_int8_upscale_image` | image restoration upscale | Apache-2.0 |
-| `interp-rife` | `utility_video_frame_interpolation` | frames in between (×2, ×4), RIFE VFI in place of the template's interpolator | MIT |
-| `interp-film` | `utility_video_frame_interpolation` | the same, the template as it ships (core nodes, FILM) | Apache-2.0 |
-| `h3-flf` | `video_minimax_h3_i2v` | first + last frame → video with sound (Featured) | MiniMax H3 open weights; commercial use of local outputs needs MiniMax's licence |
-| `wan22-flf` | `video_wan2_2_14B_flf2v` | first + last frame → video (Featured) | Apache-2.0 |
-
-What the build changes, per template: the BiRefNet preview becomes a save; the SAM 3 per-frame detection becomes the
-core tracking nodes (`SAM3_VideoTrack` + `SAM3_TrackToMask`) and a save; the VACE graphs cut the clip to one run,
-scale and crop it before the padding and swap the template's CausVid LoRA (CC BY-NC 4.0) for lightx2v's Apache-2.0
-4-step LoRA (14B) or drop it (1.3B); `interp-rife` puts RIFE VFI (`ComfyUI-Frame-Interpolation`, checkpoint
-`rife47.pth`) in place of FrameInterpolate; `h3-flf` wires a second image to the node's `last_frame` and drops the
-turbo-LoRA branch (off in the template); `ltx25-extend` replaces the first-frame image with the source's last frames
-(LoadVideo → GetVideoComponents → ImageFromBatch → the template's resize, stretched rather than centre-cropped so the
-result can be laid back at the source's size, → LTXVPreprocess → LTXVAddGuide at frame 0, strength 1) and removes the
-last-frame guide; `describe-clip` feeds a few frames instead of one image. A clip longer than one VACE run (125 frames)
-goes in runs that each start from the last 8 frames the one before made, joined in ComfyUI. GIMM-VFI was an
-interpolation engine until 25 Oct 2026; its S-Lab License 1.0 is non-commercial, so it is no longer shipped.
-
-Each `workflows/<id>.json` manifest names the node fields the host fills in, the model files with their download URLs,
-and the licence. If your ComfyUI has another precision of the same weights, JustAE Flow uses it and says so on the card.
-
-```bash
-npm run verify:workflows -- http://127.0.0.1:8188   # what your server can run, and the URLs of what is missing
-```
-
-## Resources and credits
-
-**Settings ▸ Resources** lists the places a workflow can run. Everything there is kept by the server in your user
-folder — the registry in `resources.json`, the platform API key in `comfy-api-key.txt`, the proxy's token in
-`comfy-proxy-token.txt` — never in the project, the repository or the window's storage.
-
-| Resource | Address | Protocol, key | Cost |
-|---|---|---|---|
-| **Local ComfyUI** | `http://127.0.0.1:8188` | ComfyUI's own HTTP + WebSocket protocol; no key | your GPU |
-| **Comfy Cloud** | `https://cloud.comfy.org` | Comfy API v2 for jobs (`Authorization: Bearer`); the v1 Cloud API (`X-API-Key`) for the node catalogue, the model folders and the billing report | credits for GPU time |
-| **Deployment** | `https://<deployment>.run.comfy.app` — `comfy deploy status` prints it | Comfy API v2, the same key | credits per second of GPU while a worker runs |
-| **Your ComfyUI via [`comfy-api-proxy`](https://docs.comfy.org/development/comfyui-server/api-proxy)** | `http://127.0.0.1:8189` | Comfy API v2; none, or the proxy's `--token` | your GPU |
-
-The key goes over https only, or over plain http to this machine. Running jobs on Comfy Cloud by API needs a paid
-Cloud plan (*v1 Cloud API Overview*, "Subscription required"): measured on 25 Oct 2026, a free-tier key reads
-billing, nodes and models but every submit is refused with 403 "API key authentication is not available for free tier
-accounts". JustAE Flow shows those words, offers to run locally, and stops routing jobs to Cloud until the key changes
-or **Check** is pressed. Comfy API v2 runs on the server through the official SDK (`@comfyorg/sdk` 0.5.0): inputs go up
-as assets addressed by their blake3 hash, each Generate is one submission under one `Idempotency-Key` (a 429 — queue
-full, or a deployment starting a worker — is retried under the same key for up to 10 minutes), the job is polled every
-2 seconds, outputs come down through the server.
-
-**Where each task runs.** A table on the same page sets, per task, Local, Cloud, a deployment, the proxy or **Auto**
-(defaults: video Auto, image Local, generative reframe Cloud, reframe draft Local, upscale Cloud, matte Local, slow
-motion / fps Local, restyle Auto). Auto is Local when the local ComfyUI has the workflow's nodes and models, else the
-first other resource that has them; a row on a resource that is not set up falls back to Auto, so without a key
-everything stays local. The resource on a **Generate** button overrides the table; each `job.json` records the
-resource, why it was chosen, the execution time and the derived credits. What a resource can run is probed and kept
-ten minutes: the local ComfyUI's `/api/object_info`; on Comfy Cloud the v1 `/api/object_info` and
-`/api/experiment/models/{folder}`. A deployment and the proxy have no node catalogue on v2, so they are "unknown until
-a workflow has finished there" (a proxy in front of the local ComfyUI is judged by that ComfyUI). What we found on
-Comfy Cloud is in [docs/CLOUD_PROBE_2026-10-25.md](docs/CLOUD_PROBE_2026-10-25.md); the tests, with settings and
-results, in [docs/TEST_LOG_2026-10-25.md](docs/TEST_LOG_2026-10-25.md) (Italian).
-
-**Credits, and the billing lag.** When the resource of the next Generate bills, the header shows the account's
-balance, read from the v1 billing report `GET /api/billing/usage/timeseries` (`summary.balance`, in **cents** despite
-the `_micros` suffix, converted at 211 credits = 1 $; openapi-cloud.yaml and comfy.org/cloud/pricing). That report is
-drawn from invoices, not live usage: the balance always carries the time it was read, is read again after every job
-on Cloud or a deployment, and when it has not moved yet the window says so. It is cached five minutes.
-
-**Estimates and costs are derived, never stated.** No endpoint returns a job's price (the v2 job carries
-`metrics.execution_ms`; SDK `types.gen.d.ts`). So, under every Generate button:
-
-- after a run: execution time × the GPU's rate — Comfy Cloud runs on the RTX PRO 6000, **736.39 credits per GPU hour**;
-  a deployment bills at the rate of its GPU: RTX PRO 6000 736.39, H100 1,314.53, H200 1,626.81, B200 2,369.53
-  credits/h (comfy.org/cloud/pricing, read 25 Oct 2026) — set in its card;
-- before a run: the fastest and slowest earlier runs of the same workflow on the same resource and GPU, scaled by the
-  slot for video, always with "≈" and its basis ("based on 3 runs on RTX PRO 6000"), or the rate alone when there is
-  none ("first run: 12.3 cr/min"). A slot longer than any run on record is flagged. When the balance is under twice
-  the estimate, a yellow line offers to switch to Local; a `402 insufficient_credits` ends the job with the same offer.
-
-The run history the estimates come from is `runs.json`, in the same user folder.
-
-### Your own deployment
-
-A deployment bills while a worker runs, not per job: deployed with `--min 0` it scales to zero between jobs (the next
-job waits for a worker: measured on 25 Oct, about 1–2 minutes from cold); with `--min 1` a worker stays up and bills
-while idle — its card says how much a day. A generic recipe with comfy-cli (docs.comfy.org, *Comfy API Quickstart*;
-comfy-cli's `comfy-build` and `comfy-deploy` skills):
-
-```bash
-pip install -U comfy-cli
-comfy build init <dir> --name <name> --models-dir <ComfyUI>/models --custom-nodes-dir <ComfyUI>/custom_nodes
-comfy build push
-comfy build release create --target linux/nvidia --watch
-comfy deploy refs compute          # GPU classes, regions, credits per hour, storage per GB-month
-comfy deploy up <dir> --gpu <class> --region <region> --min 0 --max 1 --watch
-comfy deploy status <dir>          # its endpoint: Settings ▸ Resources ▸ Add a deployment
-comfy deploy stop <dir>            # ends the charge; keeps the endpoint and the staged models
-```
-
-Put in the Build only what the heavy tasks need: the models a bundled workflow names are in its manifest
-(`workflows/<id>.json` → `models`, each with the URL its template downloads it from) — for example `vace-reframe` and
-`seedvr2-upscale`, whose nodes are all core ComfyUI. Costs, as `comfy deploy refs compute` listed them on 25 Oct 2026
-(comfy-cli 1.23.0): the GPU per hour while a worker runs (RTX PRO 6000 736.39 credits/h) and network storage for the
-staged models at **42.2 credits (0.20 $) per GB per month** (how storage is billed in detail: to be verified). JustAE
-Flow never builds, releases, deploys, starts, scales or stops anything on the platform: it talks to an endpoint you
-already have. On v2 workflows go in API format, there are no live previews, and a deployment has only the nodes and
-models of its build. To try v2 for free, run `pip install comfy-api-proxy` and `comfy-api-proxy` next to your ComfyUI.
-`npm run probe:cloud` asks Comfy Cloud what it offers this account — read-only, no job, no credit.
-
-A ComfyUI behind a router that asks for a bearer token (for example one you host yourself) also works as the *Local*
-address: put its address in **Settings ▸ ComfyUI address** and its token in **Access token** (sent as
-`Authorization: Bearer …`, and as `token=` on the WebSocket); a router's GPU menu (`/manager/monitor/pricing`) shows
-up in **GPU for jobs**. Describe the clip is not offered on such an address: it runs only on this machine.
+**Licence.** The LTX finishing tools need the ComfyUI-LTXVideo node pack and the Lightricks IC-LoRAs, installed by you
+in your ComfyUI — not included here, see their own licences: [ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo),
+[LTX-2.x Community License](https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x).
 
 ## How it works
 
@@ -496,7 +516,7 @@ npm run scan:secrets             # also runs as the pre-commit hook
 npm run dev                      # UI dev server on :5198 (proxying the API on :5199)
 ```
 
-## Known limits
+## Limits and to be verified
 
 - One host at a time: switch between EffectCraft and PhotoCraft in *Settings ▸ App*. A Flow window for PhotoCraft is
   not in this version (PhotoCraft has its own storyboard page).
@@ -525,7 +545,8 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
   here, the other four were not run with their own LoRA.
 - LTX finishing does not deinterlace (the Restore card asks for it on interlaced sources) and does not use Restore's
   reference-image or prefix-frame options; pixel-aspect is taken as square.
-- The EXR master is scene-linear; whether EffectCraft imports EXR is not verified (the comp keeps the MP4 preview).
+- EffectCraft 0.11.1 reads an EXR master as an image sequence but not as scene-linear (sRGB, highlights clipped, 30 fps
+  until reinterpreted); the comp keeps the MP4 preview.
 - Upscale past 4K is not verified on a 16 GB GPU (the card says so); a Social pack's *+ Upscale ×2* makes 4K comps
   (2160×3840 for 9:16), at the edge of what was verified.
 - Storyboards written under the project's former name (`*.shiftfield.json`) are still read, where they are.
@@ -535,9 +556,8 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
 "other"); how a deployment's network storage is billed in detail; the upload limit of a deployment; time and VRAM of a
 full VACE 14B *Final* and of a full MiniMax H3 run on a 16 GB GPU; Wan 2.2 first + last frame end to end (its 14B
 weights are not on the test machine); whether open weights run on Comfy Cloud count for the challenge's *Open Weights
-Only*; SDR → HDR (its scene embedding has to be where `LTXVLoadConditioning` reads, `models/embeddings`); whether
-`core/finishing/plan.ts`, which re-implements ComfyUI-LTXVideo's tile-grid arithmetic, is a "Derivative of LTX-2" under
-ComfyUI-LTXVideo's LTX-2 Community License Agreement (see NOTICE).
+Only*; the LTX cards on the pack's qHD tile against the cards' own trained tile (Refine 1024×576; on a 4:3 scan the pack
+plans 960×736 tiles on 1920×1440, the Restore card 960×544 at 1440 wide) — quality not compared.
 
 ## Licence
 

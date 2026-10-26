@@ -10,12 +10,11 @@ Deadline: **30 October 2026, 9:00 PT (17:00 in Italy)**. Rules page: https://com
 - [ ] Author name in `NOTICE`; name/logo wording in `TRADEMARKS.md`.
 - [ ] README placeholders filled (tagline, presentation, closing link to JustAE / Homo Lapis).
 - [ ] `docs/media/` screenshot or GIF; `examples/` filled with your own SFW outputs (no unlicensed IP or faces).
-- [x] `npm run selftest` green (425 checks); `npm run verify:workflows` green on the demo machine except `wan22-flf`
+- [x] `npm run selftest` green (437 checks); `npm run verify:workflows` green on the demo machine except `wan22-flf`
       (its two 14B models are not downloaded there); `npm run verify:finishing http://127.0.0.1:8188` green (every LTX
       finishing graph valid against the local ComfyUI).
-- [ ] **Licence question, before publishing:** `core/finishing/plan.ts` re-implements ComfyUI-LTXVideo's tile-grid
-      arithmetic, and ComfyUI-LTXVideo is under the LTX-2 Community License Agreement, not an open-source licence —
-      see NOTICE ("DA VERIFICARE").
+- [x] No code from ComfyUI-LTXVideo in the repository (26 Oct): the LTX tile sizes come from the pack's own node at run
+      time; the pack and the IC-LoRAs are installed by the user, as every other model.
 - [x] Clean install from zero following only the README (new folder, `npm run setup`, `npm start`, selftest) — 25 Oct.
 - [ ] `npm run scan:secrets` clean; repository public.
 - [ ] Demo video recorded (the page sets no length; keep it short — it is judged on the work, not the editing).
@@ -53,9 +52,9 @@ own key through the official SDK. No telemetry, no account of its own.
 - **Bonus: VFX Workflow Built with LTX** — LTX-2.5 is the core video model: text → video and image → video in the
   Marker and Storyboard tabs, the Comp tab's Extend (official `video_ltx2_5_flf2v` template, core `LTXVAddGuide` /
   `LTXVCropGuides`), and **LTX finishing**: Lightricks' IC-LoRAs as VFX tools on the comp — LTX Refine (Tiled Fusion to
-  Full HD / 4K / 8K through 4K, the tile grid of ComfyUI-LTXVideo's own planner shown before the run), Archive restore
-  (Restore, then Refine), Deblur, De-compression, Colorize, Clean plate, Day → Night, LTX Alpha mattes — with 16-bit PNG
-  or EXR masters, and H3 → LTX Refine as a Final (licence: LTX-2.x Community License, see `NOTICE`).
+  Full HD / 4K / 8K through 4K, the tile grid the LTX pack itself reports shown before the run), Archive restore
+  (Restore, then Refine), Deblur, De-compression, Colorize, Clean plate, Day → Night, LTX Alpha mattes, SDR → HDR (EXR in
+  ACEScg + HLG) — with 16-bit PNG or EXR masters, and H3 → LTX Refine as a Final (licence: LTX-2.x Community License, see `NOTICE`).
 
 ## Demo script (about 3:45)
 

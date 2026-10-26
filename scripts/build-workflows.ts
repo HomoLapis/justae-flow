@@ -183,7 +183,7 @@ const KEYFRAMES: Recipe[] = [
   },
   {
     // Draft = the 4-step turbo LoRA the official template's note names (Comfy-Org/MiniMax-H3, "4 steps"); the local
-    // file's sha256 equals that repo's LFS sha256 (checked 25 Oct 2026, docs/TEST_LOG_2026-10-25.md, P4-3 c). The
+    // file's sha256 equals that repo's LFS sha256 (checked 25 Oct 2026). The
     // template's own turbo branch (LoraLoaderModelOnly + the steps switch) is kept and switched on; Final is h3-flf.
     id: 'h3-flf-draft',
     template: 'video_minimax_h3_i2v',
