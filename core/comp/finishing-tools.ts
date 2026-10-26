@@ -8,7 +8,7 @@
  *   Deblur · De-compression · Colorize · Clean plate · Day → Night
  *                          single-pass IC-LoRAs, at the size and in the sentence their cards give
  *   Cut-out ▸ LTX Alpha    Alpha Gen: a luma matte (white = foreground) like SAM 3's
- *   SDR → HDR              listed, not runnable: DA VERIFICARE (see its card below)
+ *   SDR → HDR              the SDR-To-HDR IC-LoRA with its scene embedding: an EXR (ACEScg) master and an HLG video
  *
  * The five rules the cards carry, from the user (PLAN v3 §4.2b): 8K goes through 4K; archive is Restore first, then
  * Refine; "Fast scene" duplicates frames before and removes them after; the prompt is a "Look" — rendering, not
@@ -26,6 +26,7 @@ import {
 import { SIZES_AT_RUN_TIME } from '../finishing/sizes.ts';
 import { describeIssues, lintPrompt, LINT_EXPLAINED, DEFAULT_PROMPTS } from '../finishing/prompt.ts';
 import { planSingle, SINGLE, type SingleLora } from '../finishing/single.ts';
+import { HDR_MAX_CONDITIONING_FPS, planHdr } from '../finishing/hdr.ts';
 import { describeFinishEstimate, estimateFinish, estimateSingle } from '../finishing/estimate.ts';
 import { LTX_LICENCE_LINE, LTX_LICENCE_URL } from '../finishing/licence.ts';
 import { fmt, needsVideo, opt, what, type SourceInfo, type ToolDef, type ToolExtra, type ToolOptions, type ToolPlan } from './common.ts';
@@ -56,7 +57,8 @@ const RESTORE_PRESET: Record<RestoreMode, FinishPresetId> = { restore: 'restore'
 /** What the engine needs to plan a run again: the tiled preset and options, or the single-pass LoRA and size. */
 export type FinishSpec =
   | { kind: 'tiled'; workflowId: string; options: FinishOptions; look: 'refine' | 'restore' }
-  | { kind: 'single'; workflowId: string; lora: SingleLora; size: 'source' | 'bucket'; master: 'png16' | 'exr16' | 'none' };
+  | { kind: 'single'; workflowId: string; lora: SingleLora; size: 'source' | 'bucket'; master: 'png16' | 'exr16' | 'none' }
+  | { kind: 'hdr'; workflowId: string };
 
 /** The finishing spec of a Comp tab run, or null when the tool and its options are not LTX finishing. */
 export function finishSpec(toolId: string, o: ToolOptions): FinishSpec | null {
@@ -72,6 +74,7 @@ export function finishSpec(toolId: string, o: ToolOptions): FinishSpec | null {
     return { kind: 'tiled', workflowId: 'ltx25-restore', look: 'restore', options: { ...DEFAULT_OPTIONS, preset: RESTORE_PRESET[mode], preview, duplicate: fast, format, refineInRestore: 0.3 } };
   }
   if (toolId === 'matte' && o.engine === 'ltx') return { kind: 'single', workflowId: 'ltx25-alpha', lora: 'alpha', size: 'source', master: 'none' };
+  if (toolId === 'sdr2hdr') return { kind: 'hdr', workflowId: 'ltx25-sdr2hdr' };
   const s = SINGLE_TOOLS.find((t) => t.id === toolId);
   if (s) {
     const size = opt(o, 'size', ['source', 'bucket'] as const, SINGLE[s.lora].defaultSize);
@@ -314,24 +317,41 @@ export function ltxAlphaPlan(src: SourceInfo, o: ToolOptions, manifest: (id: str
   return plan;
 }
 
-/* ─── SDR → HDR: listed, DA VERIFICARE ──────────────────────────────── */
+/* ─── SDR → HDR ─────────────────────────────────────────────────────── */
 
 const sdr2hdr: ToolDef = {
   id: 'sdr2hdr',
   name: 'SDR → HDR',
-  promise: 'An HDR master (EXR, scene-linear ACEScg) from SDR footage.',
+  promise: 'An HDR master from SDR footage: EXR frames in ACEScg (scene-linear) and an HLG check video.',
   icon: '☀',
   sources: ['workArea', 'comp', 'layer'],
   family: 'ltx',
   loras: ['sdr2hdr'],
   licence: LICENCE,
-  unavailable: 'To be verified. Its card runs a dedicated pipeline: an ACEScct input transform, a fixed scene embedding instead of a prompt, '
-    + 'seam keyframes, a float32 VAE decode and an EXR (ACEScg) + HLG export (official workflow HDR_workflows/LTX-2.5_ICLoRA_SDR_to_HDR_Distilled.json). '
-    + 'On this machine its scene embedding (ltx-2.5-22b-ic-lora-sdr-to-hdr-scene-emb.safetensors) is in models/loras/LTX2.5/, but the node that loads it '
-    + '(LTXVLoadConditioning) reads only models/embeddings — its list is empty; and whether EffectCraft imports EXR is not verified.',
   defaults: {},
-  plan() {
-    return { ok: false, reason: this.unavailable, workflowId: '', jobs: [], makes: '', notes: [], warnings: [], action: 'SDR → HDR', params: {}, variant: 'sdr2hdr' };
+  plan(src, _o, manifest) {
+    const workflowId = 'ltx25-sdr2hdr';
+    const plan: ToolPlan = {
+      ok: true, workflowId, jobs: [], makes: '', notes: [], warnings: [], action: 'Make the HDR master', params: {}, variant: 'sdr2hdr',
+    };
+    const bad = needsVideo(src);
+    if (bad) return { ...plan, ok: false, reason: bad };
+    if (!manifest(workflowId)) return { ...plan, ok: false, reason: `The workflow ${workflowId} is missing from workflows/.` };
+    const hp = planHdr({ width: src.width, height: src.height, frames: framesOf(src), fps: src.fps || 24 });
+    const seconds = hp.frames.source / (src.fps || 24);
+    plan.output = { width: hp.canvas.w, height: hp.canvas.h, seconds, fps: src.fps };
+    plan.jobs = [{ workflowId, seconds }];
+    plan.makes = `A new comp at ${hp.canvas.w}×${hp.canvas.h}: your ${what(src)} converted to HDR by LTX-2.5 (SDR-To-HDR IC-LoRA). `
+      + 'The master next to the project: an EXR sequence in ACEScg (scene-linear, half float) and an HLG BT.2020 10-bit video; '
+      + 'the comp shows an 8-bit tonemapped preview, the original under it, switched off.';
+    plan.notes.push(`One pass of the pack's SDR-to-HDR chain: the clip through an ACEScct input transform, ${hp.frames.source} → ${hp.frames.total} frames, 8 distilled steps, a float32 decode (its card).`);
+    plan.notes.push(`No prompt: its card drives it with a fixed scene embedding; the model is told ${hp.conditioningFps} fps (the card: ${HDR_MAX_CONDITIONING_FPS} at most).`);
+    plan.notes.push('EffectCraft 0.11.1 imports the EXR sequence but not as ACEScg (it shows it as sRGB, highlights above 1.0 clipped, at 30 fps until reinterpreted): grade the EXR in an ACES-managed tool.');
+    plan.notes.push(...hp.fixes);
+    plan.warnings.push(...hp.warnings);
+    const est = estimateSingle(hp);
+    plan.estimate = { seconds: est.seconds, line: describeFinishEstimate(est) };
+    return plan;
   },
 };
 

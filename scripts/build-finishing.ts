@@ -22,9 +22,10 @@ import { readFileSync } from 'node:fs';
 import { DEFAULT_OPTIONS, planFinish, type FinishPresetId } from '../core/finishing/plan.ts';
 import { parseTilingSummary, tilingKey } from '../core/finishing/sizes.ts';
 import { buildFinishGraph } from '../core/finishing/graph.ts';
-import { BASE_FILES, LORAS, type FinishModels, type LoraId } from '../core/finishing/models.ts';
+import { BASE_FILES, HDR_EMBEDDING, LORAS, type FinishModels, type LoraId } from '../core/finishing/models.ts';
 import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
 import { buildSingleGraph, planSingle, type SingleLora } from '../core/finishing/single.ts';
+import { buildHdrGraph, planHdr } from '../core/finishing/hdr.ts';
 import { LTX_LICENCE_LINE, LTX_LICENCE_URL } from '../core/finishing/licence.ts';
 import type { ModelFile, WorkflowManifest } from '../core/workflows/manifest.ts';
 import type { WorkflowJson } from '../core/comfy/types.ts';
@@ -76,6 +77,15 @@ function single(id: string, title: string, description: string, lora: SingleLora
   return { id, title, description, api: workflow as WorkflowJson, loras: [lora], template: 'LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json' };
 }
 
+function hdr(id: string, title: string, description: string): Out {
+  const plan = planHdr(SRC);
+  const { workflow } = buildHdrGraph({
+    plan, models: { transformer: models.transformer, vae: models.vae, lora: LORAS.sdr2hdr.file, embedding: HDR_EMBEDDING.file }, video: 'source.mp4', seed: 42,
+    exrDir: `${SLUG}/finish/exr`, exrPrefix: 'frame', preview: PREVIEW, hlgPrefix: `${SLUG}/finish/hlg`,
+  });
+  return { id, title, description, api: workflow as WorkflowJson, loras: ['sdr2hdr'], template: 'LTX-2.5_ICLoRA_SDR_to_HDR_Distilled.json' };
+}
+
 const OUT: Out[] = [
   tiled('ltx25-refine', 'LTX-2.5 · Refine (Tiled Fusion)', 'Rebuilt detail to Full HD, 4K or 8K (through 4K): the Refine Details IC-LoRA on overlapping tiles, sized by the LTX pack (LTXVGetTilingSizes).', 'refine-fhd', ['refine']),
   tiled('ltx25-restore', 'LTX-2.5 · Archive restore', 'Restore at 100 %, then Refine: the Restore IC-LoRA, then the Refine Details IC-LoRA, on tiles sized by the LTX pack (LTXVGetTilingSizes).', 'restore-archive', ['restore', 'refine']),
@@ -85,6 +95,7 @@ const OUT: Out[] = [
   single('ltx25-cleanplate', 'LTX-2.5 · Clean plate', 'People and vehicles removed, the background rebuilt (the Clean Plate IC-LoRA, one pass).', 'cleanplate'),
   single('ltx25-alpha', 'LTX-2.5 · Alpha matte', 'A soft-edged luma matte of the foreground (the Alpha Gen IC-LoRA, one pass, no prompt).', 'alpha'),
   single('ltx25-daynight', 'LTX-2.5 · Day → Night', 'The same shot relit at night (the Day-To-Night IC-LoRA, one pass).', 'daynight'),
+  hdr('ltx25-sdr2hdr', 'LTX-2.5 · SDR → HDR', 'An HDR master from SDR footage (the SDR-To-HDR IC-LoRA and its scene embedding, one pass): EXR in ACEScg and an HLG video.'),
 ];
 
 for (const o of OUT) {

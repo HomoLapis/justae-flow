@@ -1,0 +1,485 @@
+{
+  "1": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "source.mp4"
+    },
+    "_meta": {
+      "title": "Source video (SDR)"
+    }
+  },
+  "2": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Frames"
+    }
+  },
+  "3": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "batch_index": 0,
+      "length": 121
+    },
+    "_meta": {
+      "title": "Source range"
+    }
+  },
+  "4": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ],
+      "batch_index": 120,
+      "length": 1
+    },
+    "_meta": {
+      "title": "Last frame"
+    }
+  },
+  "5": {
+    "class_type": "RepeatImageBatch",
+    "inputs": {
+      "image": [
+        "4",
+        0
+      ],
+      "amount": 8
+    },
+    "_meta": {
+      "title": "Pad ×8"
+    }
+  },
+  "6": {
+    "class_type": "VHS_MergeImages",
+    "inputs": {
+      "images_A": [
+        "3",
+        0
+      ],
+      "images_B": [
+        "5",
+        0
+      ],
+      "merge_strategy": "match A",
+      "scale_method": "bicubic",
+      "crop": "disabled"
+    },
+    "_meta": {
+      "title": "Frames → 129 (8n+1)"
+    }
+  },
+  "7": {
+    "class_type": "ImageColorSpace",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "source": "sRGB",
+      "destination": "HDR ACEScct"
+    },
+    "_meta": {
+      "title": "SDR → ACEScct (input transform)"
+    }
+  },
+  "8": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "input": [
+        "7",
+        0
+      ],
+      "resize_type": "scale to multiple",
+      "resize_type.multiple": 32,
+      "scale_method": "lanczos"
+    },
+    "_meta": {
+      "title": "Guide to a multiple of 32"
+    }
+  },
+  "9": {
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": [
+        "8",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Guide size"
+    }
+  },
+  "10": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "LTX-2.5 distilled"
+    }
+  },
+  "11": {
+    "class_type": "LTXICLoRALoaderModelOnly",
+    "inputs": {
+      "model": [
+        "10",
+        0
+      ],
+      "lora_name": "ltx-2.5-22b-ic-lora-sdr-to-hdr-1.0.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "IC-LoRA SDR-To-HDR 1.0"
+    }
+  },
+  "12": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ltx-2.5-video-vae-bf16.safetensors"
+    },
+    "_meta": {
+      "title": "LTX-2.5 video VAE"
+    }
+  },
+  "13": {
+    "class_type": "LTXVVAEForceFloat32",
+    "inputs": {
+      "vae": [
+        "12",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAE float32 (HDR)"
+    }
+  },
+  "14": {
+    "class_type": "LTXVLoadConditioning",
+    "inputs": {
+      "file_name": "ltx-2.5-22b-ic-lora-sdr-to-hdr-scene-emb.safetensors",
+      "device": "cpu"
+    },
+    "_meta": {
+      "title": "Scene embedding (no prompt)"
+    }
+  },
+  "15": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "14",
+        0
+      ],
+      "frame_rate": 24
+    },
+    "_meta": {
+      "title": "conditioning (24 fps)"
+    }
+  },
+  "16": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": [
+        "9",
+        0
+      ],
+      "height": [
+        "9",
+        1
+      ],
+      "length": 129,
+      "batch_size": 1
+    },
+    "_meta": {
+      "title": "latent"
+    }
+  },
+  "17": {
+    "class_type": "LTXAddVideoICLoRAGuide",
+    "inputs": {
+      "positive": [
+        "15",
+        0
+      ],
+      "negative": [
+        "15",
+        1
+      ],
+      "vae": [
+        "13",
+        0
+      ],
+      "latent": [
+        "16",
+        0
+      ],
+      "image": [
+        "8",
+        0
+      ],
+      "frame_idx": 0,
+      "strength": 1,
+      "latent_downscale_factor": [
+        "11",
+        1
+      ],
+      "crop": "disabled",
+      "use_tiled_encode": false,
+      "tile_size": 256,
+      "tile_overlap": 64,
+      "use_streaming": false,
+      "tile_frames": 97
+    },
+    "_meta": {
+      "title": "IC-LoRA guide (the SDR clip)"
+    }
+  },
+  "18": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    },
+    "_meta": {
+      "title": "noise"
+    }
+  },
+  "19": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "17",
+        1
+      ],
+      "cfg": 1
+    },
+    "_meta": {
+      "title": "CFG 1"
+    }
+  },
+  "20": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "_meta": {
+      "title": "euler"
+    }
+  },
+  "21": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "_meta": {
+      "title": "sigmas (8 steps)"
+    }
+  },
+  "22": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "18",
+        0
+      ],
+      "guider": [
+        "19",
+        0
+      ],
+      "sampler": [
+        "20",
+        0
+      ],
+      "sigmas": [
+        "21",
+        0
+      ],
+      "latent_image": [
+        "17",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "sample"
+    }
+  },
+  "23": {
+    "class_type": "LTXVCropGuides",
+    "inputs": {
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "17",
+        1
+      ],
+      "latent": [
+        "22",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "crop the guide frames"
+    }
+  },
+  "24": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": [
+        "23",
+        2
+      ],
+      "vae": [
+        "13",
+        0
+      ],
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8
+    },
+    "_meta": {
+      "title": "decode (float32, ACEScct)"
+    }
+  },
+  "25": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "24",
+        0
+      ],
+      "batch_index": 0,
+      "length": 121
+    },
+    "_meta": {
+      "title": "Cut the pad"
+    }
+  },
+  "26": {
+    "class_type": "LTXVHDRDecodePostprocess",
+    "inputs": {
+      "image": [
+        "25",
+        0
+      ],
+      "transfer": "acescct",
+      "exposure": 0,
+      "save_exr": true,
+      "exr_color_space": "acescg",
+      "output_dir": "justae-flow/finish/exr",
+      "filename_prefix": "frame",
+      "half_precision": true
+    },
+    "_meta": {
+      "title": "EXR ACEScg (scene-linear)"
+    }
+  },
+  "27": {
+    "class_type": "ImageColorSpace",
+    "inputs": {
+      "image": [
+        "25",
+        0
+      ],
+      "source": "HDR ACEScct",
+      "destination": "HDR"
+    },
+    "_meta": {
+      "title": "ACEScct → HDR (HLG)"
+    }
+  },
+  "28": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "27",
+        0
+      ],
+      "fps": 24,
+      "color_space": "HDR",
+      "bit_depth": "auto",
+      "codec": "none",
+      "audio": [
+        "2",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "HLG video (BT.2020)"
+    }
+  },
+  "29": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "28",
+        0
+      ],
+      "filename_prefix": "justae-flow/finish/hlg",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "HLG check video"
+    }
+  },
+  "30": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "26",
+        0
+      ],
+      "fps": 24,
+      "bit_depth": 8,
+      "audio": [
+        "2",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Preview video (8-bit, tonemapped)"
+    }
+  },
+  "31": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "30",
+        0
+      ],
+      "filename_prefix": "justae-flow/finish/preview",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "Preview MP4"
+    }
+  }
+}

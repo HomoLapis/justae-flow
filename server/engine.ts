@@ -30,9 +30,10 @@ import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
 import { localVerdict, planFinish, tilingRequests, type FinishOptions, type FinishPlan } from '../core/finishing/plan.ts';
 import type { TilingRequest, TilingSizes } from '../core/finishing/sizes.ts';
 import { tilingLookup } from './tiling.ts';
-import { checkFiles, hasQuantizedTransformer, LORAS, lorasOf, requiredNodes, type LoraId, type NodeCatalog } from '../core/finishing/models.ts';
+import { checkFiles, comboOptions, hasQuantizedTransformer, HDR_EMBEDDING, LORAS, lorasOf, requiredNodes, type LoraId, type NodeCatalog } from '../core/finishing/models.ts';
 import { buildFinishGraph } from '../core/finishing/graph.ts';
 import { buildSingleGraph, planSingle, singleNodes, type SinglePlan } from '../core/finishing/single.ts';
+import { buildHdrGraph, hdrNodes, planHdr, type HdrPlan } from '../core/finishing/hdr.ts';
 import { validateGraph } from '../core/finishing/validate.ts';
 import { describeFinishEstimate, estimateFinish, estimateSingle } from '../core/finishing/estimate.ts';
 import { EffectCraftAdapter } from '../hosts/effectcraft/adapter.ts';
@@ -2276,10 +2277,15 @@ export class Engine {
     }
     let fp: FinishPlan | null = null;
     if (spec.kind === 'tiled') fp = planFinish({ width: info.width, height: info.height, pixelAspect: 1, frames: Math.max(1, Math.round(info.seconds * (info.fps || 24))), fps: info.fps || 24 }, spec.options, tiling);
-    const files = checkFiles(oi, fp ? lorasOf(fp) : [spec.kind === 'single' ? spec.lora : 'refine'], 'local');
+    const files = checkFiles(oi, fp ? lorasOf(fp) : [spec.kind === 'single' ? spec.lora : spec.kind === 'hdr' ? 'sdr2hdr' : 'refine'], 'local');
     if (!files.models) {
       plan.ok = false;
       plan.reason = this.missingText(files.missing);
+      return;
+    }
+    if (spec.kind === 'hdr' && !this.hdrEmbedding(oi)) {
+      plan.ok = false;
+      plan.reason = HDR_EMBEDDING.missing;
       return;
     }
     const quantized = hasQuantizedTransformer(oi);
@@ -2296,6 +2302,11 @@ export class Engine {
       plan.notes.push('Decode on this card (16 GB): the official workflows\' low-VRAM tiles, 512 px / 64 / 128 frames / 32 — the Refine card\'s 1024 / 128 / 256 took 27 min to decode a Full HD clip of 121 frames here.');
     }
     plan.notes.push(`On the local ComfyUI: ${files.models.transformer.replace(/\.safetensors$/, '')}, ${Object.values(files.models.loras).map((x) => String(x).split('/').pop()!.replace(/\.safetensors$/, '')).join(' + ')}.`);
+  }
+
+  /** The SDR → HDR scene embedding as LTXVLoadConditioning lists it (models/embeddings), or null. */
+  private hdrEmbedding(oi: NodeCatalog): string | null {
+    return comboOptions(oi, 'LTXVLoadConditioning', 'file_name').find((x) => HDR_EMBEDDING.pattern.test(x)) ?? null;
   }
 
   /**
@@ -2389,6 +2400,7 @@ export class Engine {
     if (!hasQuantizedTransformer(oi)) throw new Error('The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8): the bf16 one does not fit a 16 GB card.');
     let fp: FinishPlan | null = null;
     let sp: SinglePlan | null = null;
+    let hp: HdrPlan | null = null;
     let needs: LoraId[];
     let nodes: string[];
     if (spec.kind === 'tiled') {
@@ -2401,6 +2413,10 @@ export class Engine {
       if (!fp.sized && fo.preview) throw new Error('The LTX pack did not give its tiling sizes in time (is the local ComfyUI busy with another job?): a preview tile needs them to pick its tile. Try again when it is idle.');
       needs = lorasOf(fp);
       nodes = requiredNodes(fp, 'video', true);
+    } else if (spec.kind === 'hdr') {
+      hp = planHdr({ width, height, frames, fps });
+      needs = ['sdr2hdr'];
+      nodes = hdrNodes();
     } else {
       sp = planSingle(spec.lora, { width, height, frames, fps }, spec.size);
       if (sp.reason) throw new Error(sp.reason);
@@ -2411,6 +2427,8 @@ export class Engine {
     if (absent.length) throw new Error(`The local ComfyUI lacks ${absent.join(', ')} (ComfyUI-LTXVideo 1.1.0, VideoHelperSuite).`);
     const files = checkFiles(oi, needs, 'local');
     if (!files.models) throw new Error(this.missingText(files.missing));
+    const embedding = hp ? this.hdrEmbedding(oi) : null;
+    if (hp && !embedding) throw new Error(HDR_EMBEDDING.missing);
 
     const n = (card.versions.at(-1)?.n ?? 0) + 1;
     const seed = card.seed ?? Math.floor(Math.random() * 2 ** 47);
@@ -2421,7 +2439,7 @@ export class Engine {
 
     this.phase(card, 'Uploading');
     const uploaded = await this.runner().uploadFile(src.path, () => readFileSync(src.path), `flow_${card.id}${extname(src.path)}`, videoMime(src.path));
-    let graph: { workflow: Record<string, { class_type: string; inputs: Record<string, unknown>; _meta?: { title?: string } }>; saveNode: string | null | undefined; previewNode?: string };
+    let graph: { workflow: Record<string, { class_type: string; inputs: Record<string, unknown>; _meta?: { title?: string } }>; saveNode: string | null | undefined; previewNode?: string; hlgNode?: string };
     let prompts: Record<string, string>;
     if (fp && spec.kind === 'tiled') {
       const look = card.prompt.trim();
@@ -2434,6 +2452,15 @@ export class Engine {
       };
       prompts = p;
       graph = buildFinishGraph({ plan: fp, models: files.models, input: { video: uploaded }, prompts: p, seed, outputPrefix: `${prefix}/frame`, preview: previewVideo });
+    } else if (hp) {
+      // SDR → HDR: no prompt — the scene embedding is the conditioning (its card); the EXR frames are written by
+      // LTXVHDRDecodePostprocess into its own folder under ComfyUI's output, fetched below by name.
+      prompts = { conditioning: `scene embedding ${embedding}` };
+      const h = buildHdrGraph({
+        plan: hp, models: { transformer: files.models.transformer, vae: files.models.vae, lora: files.models.loras.sdr2hdr!, embedding: embedding! },
+        video: uploaded, seed, exrDir: `${prefix}/exr`, exrPrefix: 'frame', preview: previewVideo, hlgPrefix: `${prefix}/hlg`,
+      });
+      graph = { workflow: h.workflow, saveNode: null, previewNode: h.previewNode, hlgNode: h.hlgNode };
     } else {
       const single = SINGLE_TOOLS.find((x) => x.lora === sp!.lora);
       const key = single?.field?.key;
@@ -2444,14 +2471,14 @@ export class Engine {
     const loadId = Object.entries(graph.workflow).find(([, x]) => x.class_type === 'LoadVideo')?.[0] ?? '';
     const problems = validateGraph(graph.workflow, oi, [`${loadId}.file`]);
     if (problems.length) throw new Error(`The local ComfyUI would refuse the finishing graph: ${problems.slice(0, 3).join(' · ')}`);
-    const estimate = fp ? estimateFinish(fp) : estimateSingle(sp!);
+    const estimate = fp ? estimateFinish(fp) : estimateSingle(hp ?? sp!);
 
     const vram = this.vramWatch();
     let res: { outputs: OutputFile[]; jobId: string };
     let seenVram: { minFreeGb: number | null; totalGb: number | null; samples: number };
     try {
       // The run history knows each variant apart (core/comp/finishing-tools.ts: plan.jobs), for what it covered.
-      const covered = (fp ? fp.frames.source : sp!.frames.source) / fps;
+      const covered = (fp ? fp.frames.source : (hp ?? sp!).frames.source) / fps;
       res = await this.execute(card, graph.workflow as unknown as WorkflowJson, undefined, this.meta(m, covered, t.variant && t.variant !== 'ltx-alpha' ? `:${t.variant}` : ''));
     } finally {
       seenVram = vram.stop();
@@ -2480,6 +2507,21 @@ export class Engine {
         masterRec = { kind, dir, first: join(dir, `${saved.stem}_00000.${ext}`), count: outs.length };
       }
     }
+    if (hp) {
+      const dir = join(this.mediaDir, card.id, `${saved.stem}_exr16`);
+      mkdirSync(dir, { recursive: true });
+      let done = 0;
+      this.phase(card, 'Downloading the EXR master', 0, hp.frames.source);
+      await inPool(Array.from({ length: hp.frames.source }, (_, i) => i), 4, async (i) => {
+        const name = `frame_${String(i).padStart(5, '0')}.exr`;
+        const bytes = await this.runner().download({ filename: name, subfolder: `${prefix}/exr`, type: 'output', bucket: 'images', nodeId: '' });
+        writeFileSync(join(dir, `${saved.stem}_${String(i).padStart(5, '0')}.exr`), bytes);
+        this.phase(card, 'Downloading the EXR master', ++done, hp.frames.source);
+      });
+      const hlg = res.outputs.filter((o) => o.nodeId === graph.hlgNode && /\.(mp4|mov)$/i.test(o.filename)).pop();
+      if (hlg) writeFileSync(join(dir, `${saved.stem}_hlg.mp4`), await this.runner().download(hlg));
+      masterRec = { kind: 'exr16', dir, first: join(dir, `${saved.stem}_00000.exr`), count: hp.frames.source };
+    }
     const meter = this.running?.meter;
     const took = meter?.timed ? meter.executionMs / 1000 : (Date.now() - t0) / 1000;
     const record = {
@@ -2495,7 +2537,8 @@ export class Engine {
             steps: p.steps, fromImage: p.fromImage, load: p.load,
           })),
           load: fp.load, loadFormula: fp.loadFormula, fixes: fp.fixes, warnings: fp.warnings, decode: fp.options.decode ?? 'card',
-        } : { lora: sp!.lora, size: sp!.size, canvas: sp!.canvas, delivery: sp!.delivery, frames: sp!.frames, fixes: sp!.fixes, warnings: sp!.warnings },
+        } : hp ? { lora: 'sdr2hdr', canvas: hp.canvas, frames: hp.frames, conditioningFps: hp.conditioningFps, fixes: hp.fixes, warnings: hp.warnings, exr: 'ACEScg scene-linear, half float (LTXVHDRDecodePostprocess)', hlg: 'BT.2020 HLG 10-bit' }
+          : { lora: sp!.lora, size: sp!.size, canvas: sp!.canvas, delivery: sp!.delivery, frames: sp!.frames, fixes: sp!.fixes, warnings: sp!.warnings },
         models: files.models, prompts, seed,
         estimate: estimate ? { seconds: Math.round(estimate.seconds), basis: estimate.basis, tileSteps: estimate.tileSteps } : null,
         took: { seconds: Math.round(took * 10) / 10, basis: meter?.timed ? 'ComfyUI execution time' : 'wall-clock' },
@@ -2512,14 +2555,14 @@ export class Engine {
     }
 
     this.phase(card, 'Building the comp');
-    const delivery = (fp ? fp.delivery : sp!.delivery) ?? { w: 0, h: 0 };
+    const delivery = (fp ? fp.delivery : hp ? hp.canvas : sp!.delivery) ?? { w: 0, h: 0 };
     const upItem = await host.importFile(saved.abs);
     const up = await host.itemInfo(upItem);
     const w = up?.width || delivery.w || width;
     const h = up?.height || delivery.h || height;
     const duration = up?.duration || (crop ? fp!.frames.source / fps : src.info.duration || frames / fps);
     const compName = this.toolCompName(card, saved.n);
-    const what = fp ? fp.passes.map((p) => p.name).join(' → ') : (SINGLE_TOOLS.find((x) => x.lora === sp!.lora)?.name ?? sp!.lora);
+    const what = fp ? fp.passes.map((p) => p.name).join(' → ') : hp ? 'SDR → HDR' : (SINGLE_TOOLS.find((x) => x.lora === sp!.lora)?.name ?? sp!.lora);
     const comment = `${SLUG} card=${card.id} v${saved.n} · ${m.title} · ${what} · seed ${seed}${card.prompt ? `\n${card.prompt}` : ''}`;
     // The original under the result, scaled to it; for a preview tile, scaled to the full canvas and moved so the tile lines up.
     const canvas = crop?.canvas;

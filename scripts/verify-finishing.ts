@@ -35,6 +35,8 @@ import { lintPrompt, DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/pro
 import { validateGraph } from '../core/finishing/validate.ts';
 import { buildSingleGraph, planSingle, singleNodes, SINGLE, type SingleLora } from '../core/finishing/single.ts';
 import { estimateFinish } from '../core/finishing/estimate.ts';
+import { buildHdrGraph, hdrNodes, planHdr } from '../core/finishing/hdr.ts';
+import { HDR_EMBEDDING } from '../core/finishing/models.ts';
 
 let failures = 0;
 const ok = (name: string, cond: boolean, detail = ''): void => {
@@ -317,6 +319,19 @@ for (const lora of Object.keys(SINGLE) as SingleLora[]) {
   variants.push({
     name: `single pass · ${lora} (${pl.canvas.w}×${pl.canvas.h})`, nodes: singleNodes(master !== 'none'), tiled: false,
     build: (m) => buildSingleGraph({ plan: pl, models: m, video: 'flow_test.mp4', prompt: singlePrompt(lora, 'a sailboat on a lake'), seed: 42, outputPrefix: 'justae-flow/finish/test/frame', master, preview: { prefix: 'justae-flow/finish/test/preview', fps: 24, audio: true } }).workflow,
+    ignore: loadIgnore,
+  });
+}
+{
+  // SDR → HDR: the pack's single-pass chain with the scene embedding (core/finishing/hdr.ts).
+  const pl = planHdr({ width: 1280, height: 704, frames: 49, fps: 24 });
+  ok('SDR → HDR: 49 → 57 frames, 1280×704, the model told 24 fps; 60 fps would be told 30 (the card)', pl.frames.total === 57 && pl.canvas.w === 1280 && pl.conditioningFps === 24 && planHdr({ width: 1280, height: 704, frames: 49, fps: 60 }).conditioningFps === 30);
+  variants.push({
+    name: 'SDR → HDR (EXR ACEScg + HLG + preview)', nodes: hdrNodes(), tiled: false,
+    build: (m) => buildHdrGraph({
+      plan: pl, models: { transformer: m.transformer, vae: m.vae, lora: 'LTX2.5/ltx-2.5-22b-ic-lora-sdr-to-hdr-1.0.safetensors', embedding: HDR_EMBEDDING.file }, video: 'flow_test.mp4', seed: 42,
+      exrDir: 'justae-flow/finish/test/exr', exrPrefix: 'frame', preview: { prefix: 'justae-flow/finish/test/preview', fps: 24, audio: true }, hlgPrefix: 'justae-flow/finish/test/hlg',
+    }).workflow,
     ignore: loadIgnore,
   });
 }

@@ -107,7 +107,9 @@ export function validateGraph(graph: ApiGraph, oi: NodeCatalog, ignore: string[]
         if (outs && v[1] >= outs.length) problems.push(`${where}: ${name} links to output ${v[1]} of ${src.class_type}, which has ${outs.length}`);
         const want = spec[0];
         const got = outs?.[v[1]];
-        if (typeof want === 'string' && got && want !== '*' && got !== '*' && want !== got
+        // A match-type template (COMFY_MATCHTYPE_V3: ResizeImageMaskNode's input and output) takes the type it is given.
+        const template = (t: string): boolean => t === '*' || t === 'COMFY_MATCHTYPE_V3';
+        if (typeof want === 'string' && got && !template(want) && !template(got) && want !== got
           && !(want === 'COMBO' || Array.isArray(want)) && !want.includes(',') && !got.includes(',')) {
           problems.push(`${where}: ${name} wants ${want}, gets ${got} from node ${v[0]}`);
         }

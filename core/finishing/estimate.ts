@@ -98,8 +98,8 @@ export function estimateFinish(plan: FinishPlan): FinishEstimate | null {
   };
 }
 
-/** A single pass: its canvas as one tile of its area, one extent of the whole clip, 8 steps. */
-export function estimateSingle(plan: SinglePlan): FinishEstimate {
+/** A single pass (an IC-LoRA card, SDR → HDR): its canvas as one tile of its area, one extent of the whole clip, 8 steps. */
+export function estimateSingle(plan: Pick<SinglePlan, 'canvas' | 'steps'> & { frames: { total: number } }): FinishEstimate {
   const area = plan.canvas.w * plan.canvas.h;
   const per = secondsPerTileStep(plan.frames.total, area);
   return {

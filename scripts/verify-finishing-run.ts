@@ -11,6 +11,9 @@
  *       for its sizes first (one LTXVGetTilingSizes prompt), as the Comp tab does.
  *   node scripts/verify-finishing-run.ts <baseUrl> single <lora> [--frames N]
  *       a single-pass IC-LoRA (deblur, decompression, colorize, cleanplate, alpha, daynight) at its card's size.
+ *   node scripts/verify-finishing-run.ts <baseUrl> hdr --video <file>
+ *       SDR → HDR (core/finishing/hdr.ts): the EXR frames (ACEScg) LTXVHDRDecodePostprocess writes, the HLG video and the
+ *       8-bit preview; the EXR files are fetched through /view (they are in ComfyUI's output folder).
  *
  * The source is ffmpeg's testsrc2 (or --video <file>: a clip you generated), uploaded as one MP4, as the Comp tab
  * does. Outputs are downloaded to a temp folder and checked with ffprobe (size, count, rgb48 = 16-bit; the MP4).
@@ -29,6 +32,8 @@ import { checkFiles, type NodeCatalog } from '../core/finishing/models.ts';
 import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
 import { validateGraph } from '../core/finishing/validate.ts';
 import { buildSingleGraph, planSingle, SINGLE, type SingleLora } from '../core/finishing/single.ts';
+import { buildHdrGraph, planHdr } from '../core/finishing/hdr.ts';
+import { comboOptions } from '../core/finishing/models.ts';
 
 const [baseArg, mode = 'io', ...rest] = process.argv.slice(2);
 if (!baseArg) { console.error('usage: verify-finishing-run <baseUrl> io|preview|single <lora> [--frames N] [--video file] [--dup d]'); process.exit(2); }
@@ -92,6 +97,19 @@ if (mode === 'io') {
   graph['11'] = { class_type: 'CreateVideo', inputs: { images: out, fps: 24, bit_depth: 8, audio: ['2', 1] } };
   graph['12'] = { class_type: 'SaveVideo', inputs: { video: ['11', 0], filename_prefix: `${prefix}/preview`, format: 'auto', 'format.codec': 'auto' } };
   expect = { w: W, h: H, frames: N, save: true };
+} else if (mode === 'hdr') {
+  const all = checkFiles(oi, ['refine'], 'local');
+  const lora = comboOptions(oi, 'LTXICLoRALoaderModelOnly', 'lora_name').find((x) => /sdr-to-hdr-1/i.test(x));
+  const embedding = comboOptions(oi, 'LTXVLoadConditioning', 'file_name').find((x) => /sdr-to-hdr-scene-emb/i.test(x));
+  if (!all.models || !lora || !embedding) { console.error(`missing: ${[!all.models && 'base files', !lora && 'the SDR-To-HDR IC-LoRA', !embedding && 'the scene embedding in models/embeddings'].filter(Boolean).join(', ')}`); process.exit(2); }
+  const plan = planHdr({ width: W, height: H, frames: N, fps: 24 });
+  console.log(`  plan: ${plan.canvas.w}×${plan.canvas.h}, frames ${plan.frames.source} → ${plan.frames.total}, conditioning ${plan.conditioningFps} fps · ${lora} · ${embedding}`);
+  const built = buildHdrGraph({
+    plan, models: { transformer: all.models.transformer, vae: all.models.vae, lora, embedding }, video: uploaded, seed: 42,
+    exrDir: `${prefix}/exr`, exrPrefix: 'frame', preview: { prefix: `${prefix}/preview`, fps: 24, audio: false }, hlgPrefix: `${prefix}/hlg`,
+  });
+  graph = built.workflow;
+  expect = { w: plan.canvas.w, h: plan.canvas.h, frames: plan.frames.source, save: false };
 } else {
   const all = checkFiles(oi, mode === 'single' ? [rest[0] as SingleLora] : ['refine'], 'local');
   if (!all.models) { console.error(`missing: ${all.missing.map((m) => m.file).join(', ')}`); process.exit(2); }
@@ -182,6 +200,18 @@ if (expect.save) {
   const [w, hh, pix] = probe.split(',');
   ok(`PNG size ${expect.w}×${expect.h}`, Number(w) === expect.w && Number(hh) === expect.h, probe);
   ok('16-bit PNG (rgb48)', /rgb(a)?(48|64)/.test(pix), pix);
+}
+if (mode === 'hdr') {
+  // The EXR frames are not in the history's file lists: LTXVHDRDecodePostprocess writes them into its output_dir.
+  const hist = JSON.stringify(h[promptId].outputs);
+  console.log(`  outputs: ${hist.slice(0, 1200)}`);
+  for (const v of vids) {
+    const f = join(outDir, basename(v.filename));
+    await fetchOut(v, f);
+    console.log(`  ffprobe ${basename(v.filename)}: ${execFileSync('ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,pix_fmt,nb_read_frames,codec_name,color_transfer,color_primaries,color_space', '-of', 'csv=p=0', f]).toString().trim()}`);
+  }
+  console.log(`  files: ${outDir}`);
+  process.exit(failures ? 1 : 0);
 }
 ok('one MP4 preview', vids.length === 1, String(vids.length));
 if (vids[0]) {

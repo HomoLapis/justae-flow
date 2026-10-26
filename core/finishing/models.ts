@@ -34,6 +34,17 @@ export const LORAS: Record<LoraId, { what: string; file: string; repo: string; p
   sdr2hdr: { what: 'IC-LoRA SDR-To-HDR', file: 'ltx-2.5-22b-ic-lora-sdr-to-hdr-1.0.safetensors', repo: 'Lightricks/LTX-2.5-22b-IC-LoRA-SDR-To-HDR', patterns: [/ltx-2\.5.*ic-lora-sdr-to-hdr-1/i] },
 };
 
+/**
+ * The SDR → HDR scene embedding: its card says to pass it in place of a prompt; in ComfyUI it is loaded by the pack's
+ * LTXVLoadConditioning, which lists models/embeddings only (checked 26 Oct 2026) — not models/loras.
+ */
+export const HDR_EMBEDDING = {
+  file: 'ltx-2.5-22b-ic-lora-sdr-to-hdr-scene-emb.safetensors',
+  pattern: /sdr-to-hdr-scene-emb/i,
+  missing: 'The SDR → HDR scene embedding (ltx-2.5-22b-ic-lora-sdr-to-hdr-scene-emb.safetensors, from Lightricks/LTX-2.5-22b-IC-LoRA-SDR-To-HDR) '
+    + 'is not where its loader reads: put a copy in ComfyUI\'s models/embeddings (LTXVLoadConditioning lists only that folder) — no restart needed.',
+} as const;
+
 /** The base model files, where the official example workflows download them from (their "Model Links" notes). */
 export const BASE_FILES = {
   transformer: { file: 'ltx-2.5-22b-distilled-transformer-bf16.safetensors', directory: 'diffusion_models', url: `${HF}Lightricks/LTX-2.5/blob/main/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors` },

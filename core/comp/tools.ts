@@ -397,6 +397,7 @@ export function resultName(base: string, tool: string, options: ToolOptions, pla
     return `${clean} · ×${options.mode === 'slow4' ? 4 : 2} slow`;
   }
   if (tool === 'social') return `${clean} · social pack`;
+  if (tool === 'sdr2hdr') return `${clean} · HDR`;
   return `${clean} · ${tool}`;
 }
 

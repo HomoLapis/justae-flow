@@ -1022,7 +1022,10 @@ console.log('ltx finishing');
   const cz = toolById('colorize')!.plan(clip5, {}, man);
   check('Colorize: near the 960×544 training size, with a "Colours" field', cz.ok && cz.fields?.[0].key === 'colours' && cz.notes.some((n) => /992×544/.test(n)), JSON.stringify(cz.notes));
   const sh = toolById('sdr2hdr')!;
-  check('SDR → HDR is listed, not runnable: to be verified, with why', !!sh.unavailable && /models\/embeddings/.test(sh.unavailable) && !sh.plan(clip5, {}, man).ok);
+  const shp = sh.plan(clip5, {}, man);
+  check('SDR → HDR runs: no prompt (the scene embedding), the EXR ACEScg master and an HLG video, what EffectCraft makes of the EXR said on the card',
+    !sh.unavailable && shp.ok && !shp.prompt && shp.workflowId === 'ltx25-sdr2hdr' && /ACEScg/.test(shp.makes) && /HLG/.test(shp.makes)
+    && shp.notes.some((n) => /not as ACEScg/.test(n)) && shp.output?.width === 1280 && !!shp.estimate, JSON.stringify([shp.reason, shp.notes]));
   const ap = toolById('matte')!.plan(clip5, { engine: 'ltx' }, man);
   check('Cut-out ▸ LTX Alpha: no prompt, a luma matte like SAM 3\'s, ≤ 145 frames', ap.ok && !ap.prompt && ap.workflowId === 'ltx25-alpha' && ap.notes.some((n) => /White = foreground/.test(n)));
   check('every LTX finishing card carries the LTX-2.x licence line and its link', COMP_TOOLS.filter((t) => t.family === 'ltx').every((t) => t.licence?.line === LTX_LICENCE_LINE && /LICENSE-2_x/.test(t.licence.url)));
@@ -1097,6 +1100,20 @@ console.log('ltx finishing');
     && Object.values(dg).some((n) => n.class_type === 'CFGGuider' && n.inputs.cfg === 1) && Object.values(dg).some((n) => n.class_type === 'KSamplerSelect' && n.inputs.sampler_name === 'euler_ancestral')
     && Object.values(dg).some((n) => n.class_type === 'LTXVCropGuides') && Object.values(dg).some((n) => n.class_type === 'CLIPTextEncode' && /DEBLUR a sailboat on a lake\./.test(String(n.inputs.text))),
     engine.state().cards.find((c) => c.id === dId)?.error);
+
+  // SDR → HDR from the work area: the pack's chain, the EXR frames fetched by name from the node's own folder.
+  const { id: hId } = await engine.runCompTool({ tool: 'sdr2hdr', source: 'workArea', options: {}, cap: 8, prompt: '' });
+  await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === hId)?.status ?? ''));
+  const hc = engine.state().cards.find((c) => c.id === hId)!;
+  const hgr = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  const hn = (c: string) => Object.values(hgr).filter((n) => n.class_type === c);
+  const hv = hc.versions[0];
+  check('SDR → HDR: ACEScct in, the scene embedding as conditioning, float32 VAE, LTXVHDRDecodePostprocess writing ACEScg EXR; the EXR master and the HLG video next to the project',
+    hc.status === 'done' && hn('ImageColorSpace').some((n) => n.inputs.source === 'sRGB' && n.inputs.destination === 'HDR ACEScct')
+    && /sdr-to-hdr-scene-emb/.test(String(hn('LTXVLoadConditioning')[0]?.inputs.file_name)) && hn('LTXVVAEForceFloat32').length === 1
+    && hn('LTXVHDRDecodePostprocess')[0]?.inputs.exr_color_space === 'acescg' && hn('LTXVHDRDecodePostprocess')[0]?.inputs.save_exr === true
+    && !hn('CLIPTextEncode').length && hv?.exports?.[0]?.kind === 'exr16' && existsSync(hv.exports[0].path) && /_exr16[\\/]/.test(hv.exports[0].path)
+    && existsSync(hv.exports[0].path.replace(/_00000\.exr$/, '_hlg.mp4')), hc.error ?? JSON.stringify(hv?.exports));
 
   // LTX Alpha from a layer: a matte above it, like SAM 3's, exportable with alpha.
   await host.openComp(1);
