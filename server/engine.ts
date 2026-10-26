@@ -18,6 +18,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative } from 'node:path';
 import { ComfyClient, type ComfyHealth } from '../core/comfy/client.ts';
 import type { ObjectInfo, OutputFile, WorkflowJson } from '../core/comfy/types.ts';
+import type { RunRecord } from '../core/cost/estimate.ts';
 import { getRef, missingNodes, planLength, planSize, resolveModels, setRef, splitRef, type ModelCheck, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import { newCardId, type Box, type Card, type CardStatus, type CompareState, type Sidecar, type Version } from '../core/storyboard/types.ts';
 import { layerNameFromPrompt, slugFromPrompt } from '../core/lib/filenames.ts';
@@ -115,7 +116,7 @@ export interface CompRunView {
   compId: number;
   activeVersion: number | null;
   versions: Array<Pick<Version, 'n' | 'compId' | 'compName' | 'createdAt' | 'elapsedMs' | 'executionMs' | 'derivedCredits' | 'resource' | 'width' | 'height' | 'seconds' | 'exports'>
-    & { thumb: string | null; showing: CompareState['showing'] | null; canExport: boolean; file: string }>;
+    & { thumb: string | null; showing: CompareState['showing'] | null; canExport: boolean; file: string; billedCredits: number | null; billedAsOf: string | null; costBasis: string | null }>;
   /** A run of a pack (the Social pack): Results shows the pack's runs together. */
   group?: { id: string; label: string; at: string };
   updatedAt: string;
@@ -199,8 +200,10 @@ export class Engine {
   private running: {
     cardId: string; jobId: string | null; stop: (() => void) | null; cancelled: boolean;
     runner: Runner | null; why: string;
-    /** Summed over the generation's jobs (a long reframe is several). */
-    meter: { executionMs: number; credits: number; timed: boolean; billed: boolean };
+    /** Summed over the generation's jobs (a long reframe is several); the basis of the derived credits, in words. */
+    meter: { executionMs: number; credits: number; timed: boolean; billed: boolean; basis: string | null };
+    /** Every job this generation submitted: the run history has their derived and (later) billed figures. */
+    jobIds: string[];
     /** The graphs this generation submitted, as written next to its versions (relative to the media folder). */
     graphs: string[];
   } | null = null;
@@ -1193,6 +1196,29 @@ export class Engine {
     return card;
   }
 
+  /**
+   * A version's cost as the run history has it now: derived again (a deployment's start-up allowance), and billed
+   * once the hourly report has its hours (server/credits.ts). Falls back to the version's own derived figure.
+   */
+  private costOf(v: Version): { derivedCredits: number | null; billedCredits: number | null; billedAsOf: string | null; costBasis: string | null } {
+    const own = { derivedCredits: v.derivedCredits ?? null, billedCredits: null, billedAsOf: null, costBasis: null };
+    if (!v.resource || v.derivedCredits === null || v.derivedCredits === undefined) return own;
+    const ids = v.jobIds?.length ? v.jobIds : v.jobId ? [v.jobId] : [];
+    const found = ids.map((id) => this.services.runs.byJob(id, v.resource));
+    if (!found.length || found.some((r) => !r || r.derivedCredits === null)) return own;
+    const runs = found as RunRecord[];
+    // A version made before its jobs were all kept names only the last one: trusted when that job is all its time.
+    if (!v.jobIds?.length && Math.abs((runs[0].executionMs ?? -1) - (v.executionMs ?? -2)) > 1000) return own;
+    const sum = (f: (r: RunRecord) => number): number => Math.round(runs.reduce((n, r) => n + f(r), 0) * 100) / 100;
+    const billed = runs.every((r) => typeof r.billedCredits === 'number') ? sum((r) => r.billedCredits!) : null;
+    return {
+      derivedCredits: sum((r) => r.derivedCredits!),
+      billedCredits: billed,
+      billedAsOf: billed !== null ? runs.map((r) => r.billedAsOf ?? '').sort()[0] || null : null,
+      costBasis: runs[0].costBasis ?? null,
+    };
+  }
+
   private runView(c: Card): CompRunView {
     const t = c.tool!;
     return {
@@ -1200,7 +1226,7 @@ export class Engine {
       status: c.status, error: c.error, progress: c.progress, runsOn: this.routeView(c), compId: c.compId, activeVersion: c.activeVersion,
       versions: c.versions.map((v) => ({
         n: v.n, compId: v.compId ?? v.compare?.compId, compName: v.compName, createdAt: v.createdAt, elapsedMs: v.elapsedMs,
-        executionMs: v.executionMs ?? null, derivedCredits: v.derivedCredits ?? null, resource: v.resource, width: v.width, height: v.height,
+        executionMs: v.executionMs ?? null, ...this.costOf(v), resource: v.resource, width: v.width, height: v.height,
         seconds: v.seconds, exports: v.exports, file: v.file, thumb: v.thumb ?? null, showing: v.compare?.showing ?? null,
         canExport: (v.workflowId === 'sam3-matte' || v.workflowId === 'ltx25-alpha') && !!v.source?.file,
       })),
@@ -1496,7 +1522,7 @@ export class Engine {
     if (!next) return;
     const card = this.card(next);
     if (!card) return void this.pump();
-    this.running = { cardId: next, jobId: null, stop: null, cancelled: false, runner: null, why: '', meter: { executionMs: 0, credits: 0, timed: false, billed: false }, graphs: [] };
+    this.running = { cardId: next, jobId: null, stop: null, cancelled: false, runner: null, why: '', meter: { executionMs: 0, credits: 0, timed: false, billed: false, basis: null }, jobIds: [], graphs: [] };
     // Where the user is when a Comp tab run starts: given back at the end unless that was the run's own comp.
     const toolRun = !!card.tool && this.host.kind === 'timeline';
     if (toolRun) this.userComp ??= this.snap?.comp?.id;
@@ -1651,7 +1677,7 @@ export class Engine {
       this.running?.graphs.push(graphRel);
     } catch { /* provenance is a courtesy; the run goes on */ }
     const jobId = await runner.submit(api, meta, { previewMethod: 'auto' });
-    if (this.running) this.running.jobId = jobId;
+    if (this.running) { this.running.jobId = jobId; this.running.jobIds.push(jobId); }
     if (this.running?.cancelled) {
       await runner.cancel(jobId).catch(() => undefined);
       throw new Error('Canceled.');
@@ -1690,10 +1716,12 @@ export class Engine {
     });
     this.throwIfCancelled();
     // What it took: the server's execution time, and the credits derived from it (v2 records its own run).
-    const meter = await runner.meter(jobId).catch(() => ({ executionMs: null, derivedCredits: null }));
+    const meter = await runner.meter(jobId).catch(() => ({ executionMs: null, derivedCredits: null, costBasis: null }));
     if (this.running) {
       if (meter.executionMs !== null) { this.running.meter.executionMs += meter.executionMs; this.running.meter.timed = true; }
       if (meter.derivedCredits !== null) { this.running.meter.credits += meter.derivedCredits; this.running.meter.billed = true; }
+      // The first job's basis says the most (a cold start); the next ones of the same generation found the worker up.
+      this.running.meter.basis ??= meter.costBasis ?? null;
     }
     if (runner.resource.kind === 'local') {
       this.services.runs.add({
@@ -1722,13 +1750,15 @@ export class Engine {
     v.resource = r.id;
     v.executionMs = meter?.timed ? meter.executionMs : null;
     v.derivedCredits = meter?.billed ? Math.round(meter.credits * 100) / 100 : null;
+    if (this.running?.jobIds.length) v.jobIds = [...this.running.jobIds];
     writeFileSync(join(this.mediaDir, `${card.id}/${stem}.job.json`), JSON.stringify({
       ...v, card: card.id, host: { app: this.host.label, version: this.snap?.version, ...extra },
       resource: {
         id: r.id, kind: r.kind, label: r.label, url: r.url, why: this.running?.why,
         gpu: this.services.resources.gpuLabel(r), creditsPerHour: rate,
-        // Derived, not billed: no endpoint returns a job's cost (execution seconds × the GPU's rate).
-        cost: rate !== null ? { executionMs: v.executionMs, derivedCredits: v.derivedCredits, basis: 'execution_ms × rate (≈)' } : undefined,
+        // Derived, not billed: no endpoint returns a job's cost. The billed figure comes later, from the hourly report,
+        // into the run history (runs.json), never into this file.
+        cost: rate !== null ? { executionMs: v.executionMs, derivedCredits: v.derivedCredits, basis: `(${meter?.basis ?? 'GPU time of the job'}) × rate (≈)`, jobIds: v.jobIds } : undefined,
       },
       comfy: r.kind === 'local' ? { url: this.settings.comfyUrl, version: this.comfyHealth.version } : undefined,
       workflow: { id: m.id, template: m.source, license: m.license, submitted: this.running?.graphs ?? [] },

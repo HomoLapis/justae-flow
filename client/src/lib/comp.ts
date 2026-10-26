@@ -33,6 +33,11 @@ export interface RunVersion {
   elapsedMs: number;
   executionMs: number | null;
   derivedCredits: number | null;
+  /** The hourly billing report's figure for its jobs, once the report has their hours, and its as_of. */
+  billedCredits: number | null;
+  billedAsOf: string | null;
+  /** What derivedCredits counts, in words (a deployment: the worker's start-up and idle window too). */
+  costBasis: string | null;
   resource?: string;
   width?: number;
   height?: number;

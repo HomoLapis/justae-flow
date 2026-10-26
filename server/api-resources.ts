@@ -22,7 +22,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { describeEstimate, estimateRun, sumEstimates, type Estimate, type RunRecord } from '../core/cost/estimate.ts';
+import { creditsFor, describeEstimate, estimateRun, jobCredits, sumEstimates, WARM_WINDOW_MS, type Estimate, type RunRecord } from '../core/cost/estimate.ts';
 import type { WorkflowJson } from '../core/comfy/types.ts';
 import { tokenOk } from './bridge.ts';
 import type { Engine } from './engine.ts';
@@ -92,14 +92,19 @@ export function estimate(s: Services, engine: Engine, q: EstimateRequest): {
   shots: Array<Estimate & { workflowId: string; resource: string; label: string; text: string }>;
   total: Estimate & { shots: number; unknown: number; text: string; resources: string[] };
 } {
+  // A batch wakes a cold deployment once: its first shot there carries the start-up, the next ones only the idle window.
+  const woken = new Set<string>();
   const shots = (q.shots ?? []).map((shot) => {
     // A workflow of the Flow window's own library has no manifest: a still is an image task, a clip a video one.
     const r = pickFor(s, shot.task ?? q.task ?? (shot.scaleWithSlot === false ? 'image' : 'video'), shot.resource ?? q.resource, shot.workflowId, engine);
     const entry = engine.libraryEntry(shot.workflowId);
     const scaleWithSlot = shot.scaleWithSlot ?? (entry ? entry.manifest.output === 'video' : true);
     const gpu = s.resources.gpuLabel(r);
+    const cold = !woken.has(r.id) && s.v2.coldNow(r);
+    woken.add(r.id);
     const e = estimateRun(s.runs.of(shot.workflowId, r.id, gpu), {
       slotSeconds: shot.seconds ?? null, scaleWithSlot, creditsPerHour: s.resources.creditsPerHour(r), gpuLabel: gpu,
+      overhead: s.resources.overhead(r, cold),
     });
     return { ...e, workflowId: shot.workflowId, resource: r.id, label: r.label, text: describeEstimate(e, r.label) };
   });
@@ -167,11 +172,16 @@ export function resourceRoutes(s: Services, engine: Engine): Array<[string, RegE
       if (!resource || !r.workflowId || typeof r.wallMs !== 'number') return send(res, 400, { error: 'A run needs workflowId, resourceId and wallMs.' });
       const rate = s.resources.creditsPerHour(resource);
       const executionMs = typeof r.executionMs === 'number' && r.executionMs > 0 ? r.executionMs : null;
+      // Cold or warm as it was when the run was submitted (only a deployment has a worker around the job).
+      const last = s.runs.lastAt(resource.id);
+      const ov = s.resources.overhead(resource, resource.kind === 'deployment' && (resource.minWorkers ?? 0) === 0
+        && (last === null || Date.now() - r.wallMs - last > WARM_WINDOW_MS));
       s.runs.add({
         at: new Date().toISOString(), workflowId: r.workflowId, resourceId: resource.id, resourceKind: resource.kind, gpu: s.resources.gpuLabel(resource),
         executionMs, timing: executionMs !== null ? (r.timing ?? 'execution_ms') : 'wall', wallMs: r.wallMs,
         slotSeconds: typeof r.slotSeconds === 'number' && r.slotSeconds > 0 ? r.slotSeconds : null, scaleWithSlot: r.scaleWithSlot ?? true,
-        derivedCredits: rate !== null && executionMs !== null ? (executionMs / 3_600_000) * rate : null, creditsPerHour: rate, jobId: r.jobId,
+        derivedCredits: rate !== null && executionMs !== null ? jobCredits(executionMs, rate, ov) : null, creditsPerHour: rate, jobId: r.jobId,
+        ...(rate !== null ? { costBasis: ov.basis, overhead: ov.kind, overheadMs: ov.seconds * 1000, executionCredits: executionMs !== null ? creditsFor(executionMs, rate) : null } : {}),
       });
       send(res, 200, { ok: true });
     })],

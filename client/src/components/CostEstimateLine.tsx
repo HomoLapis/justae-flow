@@ -6,6 +6,7 @@
  *   Comfy Cloud · first run: 12.3 cr/min on RTX PRO 6000 · no run of this workflow here yet
  *   Local ComfyUI · no credits · ~32 s (based on 2 runs)
  *   8 shots · ≈ 310 cr (~$1.47) · ~24 min on Comfy Cloud · based on …
+ *   ≈ 107 cr (~$0.51) · ~8:45 min incl. worker start-up on a cold deployment · based on 1 run on RTX PRO 6000
  *
  * The numbers are the server's (POST /api/estimate): earlier runs of the same
  * workflow on the same resource and GPU, scaled by the slot for video, times
@@ -31,7 +32,9 @@ export function CostEstimateLine({ shots, resource, onSwitchLocal }: { shots: Sh
 
   return (
     <div className="space-y-1.5" data-testid="estimate-line">
-      <p className="text-[10px] leading-snug text-ink-mute" title="Derived from earlier runs of this workflow on this resource (execution time × the GPU's rate). No endpoint states a job's price in advance.">
+      <p className="text-[10px] leading-snug text-ink-mute" title={'Derived from earlier runs of this workflow on this resource (execution time × the GPU\'s rate). No endpoint states a job\'s price in advance.'
+        + (t.overhead === 'cold' ? `\nThe deployment's worker would be cold: ${Math.round(t.overheadSeconds)} s of start-up, model loading and idle window are included (≈ ${t.overheadCredits !== null ? formatCredits(t.overheadCredits) : '?'} cr; Settings ▸ Resources).`
+          : t.overhead === 'warm' ? '\nThe deployment\'s worker is up (a job ended there in the last minute): only its 30 s idle window is added.' : '')}>
         <span className={metered ? 'text-ink-dim' : undefined}>{t.text}</span>
         {answer.shots.length > 1 && t.resources.length > 1 && (
           <span> · {answer.shots.map((s) => s.label).filter((x, i, a) => a.indexOf(x) === i).join(' + ')}</span>

@@ -316,6 +316,7 @@ function runShot(ctx: RunCtx): Promise<void> {
       execStartedAt: null,
       executionMs: null,
       derivedCredits: null,
+      costBasis: null,
       timing: null,
       action: null,
     });
@@ -512,7 +513,7 @@ function runShot(ctx: RunCtx): Promise<void> {
             // The server's own account: started executing at, and once done the time and derived credits.
             setJ({
               execStartedAt: ev.startedAt ? Date.parse(ev.startedAt) : null,
-              executionMs: ev.executionMs, timing: ev.timing, derivedCredits: ev.derivedCredits,
+              executionMs: ev.executionMs, timing: ev.timing, derivedCredits: ev.derivedCredits, costBasis: ev.costBasis ?? null,
               stage: ev.status === 'queued' ? 'queued' : ev.status === 'running' ? 'running' : useApp.getState().job.stage,
             });
             break;
@@ -732,7 +733,7 @@ function runShot(ctx: RunCtx): Promise<void> {
             cost: resource.creditsPerHour !== null || estimate
               ? {
                   derivedCredits,
-                  basis: resource.creditsPerHour !== null ? 'execution_ms × rate (≈), not a billed amount' : 'your own GPU: no credits',
+                  basis: resource.creditsPerHour !== null ? `(${live.costBasis ?? 'GPU time of the job'}) × rate (≈), not a billed amount` : 'your own GPU: no credits',
                   gpuSeconds: executionMs !== null ? executionMs / 1000 : null,
                   gpu: resource.gpuLabel,
                   estimatedCredits: estimate && estimate.creditsLow !== null ? [estimate.creditsLow, estimate.creditsHigh] : null,

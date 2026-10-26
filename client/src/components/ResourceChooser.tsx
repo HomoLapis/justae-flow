@@ -20,8 +20,8 @@ function short(a: EstimateAnswer | null, metered: boolean): string {
   const t = a.total;
   const secs = t.secondsHigh !== null ? (t.secondsHigh < 60 ? `~${Math.round(t.secondsHigh)} s` : `~${Math.round(t.secondsHigh / 60)} min`) : '';
   if (!metered) return ['no credits', secs].filter(Boolean).join(' · ');
-  if (t.creditsHigh !== null) return [`≈ ${formatCredits(t.creditsHigh)} cr`, secs].filter(Boolean).join(' · ');
-  return t.creditsPerMinute !== null ? `first run: ${t.creditsPerMinute.toFixed(1)} cr/min` : '';
+  if (t.creditsHigh !== null) return [`≈ ${formatCredits(t.creditsHigh)} cr`, secs, t.overhead === 'cold' ? 'incl. start-up' : ''].filter(Boolean).join(' · ');
+  return t.creditsPerMinute !== null ? `first run: ${t.creditsPerMinute.toFixed(1)} cr/min${t.overhead === 'cold' && t.overheadCredits !== null ? ` + ≈ ${formatCredits(t.overheadCredits)} cr start-up` : ''}` : '';
 }
 
 /** What the capability probe knows about this workflow on this resource, in a few words. */
@@ -140,7 +140,8 @@ export function ResourceChooser({ shots, disabled, value, onChange, workflowId }
             <Option key={r.id} r={r} shots={shots} picked={choice === r.id} onPick={() => { pick(r.id); setOpen(false); }} workflowId={workflowId ?? shots[0]?.workflowId} />
           ))}
           <p className="px-2 pb-1 pt-1.5 text-[10px] leading-snug text-ink-mute">
-            ≈ from earlier runs of this workflow there (execution time × the GPU&rsquo;s rate). The pick stays until you change it.
+            ≈ from earlier runs of this workflow there (execution time × the GPU&rsquo;s rate, plus a deployment&rsquo;s worker
+            start-up when it would be cold). The pick stays until you change it.
           </p>
         </div>
       )}

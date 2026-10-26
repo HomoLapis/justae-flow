@@ -37,6 +37,8 @@ interface JobView {
   timing: string | null;
   derivedCredits: number | null;
   creditsPerHour: number | null;
+  /** What derivedCredits counts (a deployment: its worker's start-up and idle window too). */
+  costBasis?: string | null;
 }
 
 function bucketFor(contentType: string): string {
@@ -114,7 +116,7 @@ export class ServerV2Provider implements VideoProvider {
       if (stopped) return;
       try {
         const v = await this.job(jobId);
-        onEvent({ kind: 'meter', status: v.status, startedAt: v.startedAt, executionMs: v.executionMs, timing: v.timing, derivedCredits: v.derivedCredits, creditsPerHour: v.creditsPerHour });
+        onEvent({ kind: 'meter', status: v.status, startedAt: v.startedAt, executionMs: v.executionMs, timing: v.timing, derivedCredits: v.derivedCredits, creditsPerHour: v.creditsPerHour, costBasis: v.costBasis ?? null });
         if (v.status !== lastStatus) {
           lastStatus = v.status;
           if (v.status === 'queued') onEvent({ kind: 'queued' });

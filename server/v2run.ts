@@ -15,6 +15,9 @@
  * When a job finishes, its run goes into the run history with the execution
  * time the server reported (`metrics.execution_ms`) and the credits derived
  * from it — no endpoint returns a per-job cost — and the balance is read again.
+ * On a deployment the derived credits include what its worker bills around
+ * the job (start-up and model loading when it was cold, the idle window after:
+ * core/cost/estimate.ts overheadFor), decided when the job is submitted.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -22,7 +25,7 @@ import {
   ComfyError, Forbidden, IdempotencyKeyReuse, InsufficientCredits, InvalidWorkflow, JobFailed, MissingAsset, MissingCredentials,
   NotFound, QueueFull, Unauthorized, WorkflowFormatUi, type Job, type Output,
 } from '@comfyorg/sdk';
-import { creditsFor, type RunRecord } from '../core/cost/estimate.ts';
+import { creditsFor, jobCredits, WARM_WINDOW_MS, type Overhead, type RunRecord } from '../core/cost/estimate.ts';
 import type { Resource, ResourceRegistry } from './resources.ts';
 import type { RunLog } from './runs.ts';
 
@@ -46,10 +49,14 @@ export interface JobView {
   completedAt: string | null;
   executionMs: number | null;
   timing: RunRecord['timing'] | null;
-  /** Credits derived from the execution time; null where nothing bills. */
+  /** Credits derived from the execution time and the worker's overhead around it; null where nothing bills. */
   derivedCredits: number | null;
   creditsPerHour: number | null;
   gpuLabel: string | null;
+  /** What derivedCredits counts, in words; the overhead it includes (a deployment), and its seconds. */
+  costBasis: string | null;
+  overhead: Overhead['kind'] | null;
+  overheadSeconds: number;
 }
 
 /** An error in words the Flow window shows as they are, with what to do. */
@@ -106,13 +113,15 @@ export function mapV2Error(e: unknown, r: Resource): RunError {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const TERMINAL = new Set(['succeeded', 'failed', 'canceled', 'expired']);
 
-interface Tracked { resourceId: string; meta: RunMeta; submittedAt: number; recorded: boolean; last: Job | null }
+interface Tracked { resourceId: string; meta: RunMeta; submittedAt: number; recorded: boolean; last: Job | null; overhead: Overhead; submitWaitMs: number }
 
 export class V2Jobs {
   private registry: ResourceRegistry;
   private runs: RunLog;
   private tracked = new Map<string, Tracked>();
   private finished = new Set<(r: Resource) => void>();
+  /** When a job that had started last ended on each resource (its worker was up then). */
+  private lastEnded = new Map<string, number>();
 
   constructor(registry: ResourceRegistry, runs: RunLog) {
     this.registry = registry;
@@ -123,6 +132,19 @@ export class V2Jobs {
   onFinished(fn: (r: Resource) => void): () => void {
     this.finished.add(fn);
     return () => this.finished.delete(fn);
+  }
+
+  /**
+   * Would a job submitted now find the deployment's worker down? Min workers 0, no job of ours running there, and
+   * none ended there in the last minute (the 30 s idle window plus a margin). Always false off a deployment.
+   */
+  coldNow(r: Resource, now = Date.now()): boolean {
+    if (r.kind !== 'deployment' || (r.minWorkers ?? 0) >= 1) return false;
+    for (const t of this.tracked.values()) {
+      if (t.resourceId === r.id && !t.recorded && now - t.submittedAt < 6 * 3_600_000) return false;
+    }
+    const last = Math.max(this.lastEnded.get(r.id) ?? 0, this.runs.lastAt(r.id) ?? 0);
+    return now - last > WARM_WINDOW_MS;
   }
 
   private resource(id: string): Resource {
@@ -169,11 +191,14 @@ export class V2Jobs {
     const client = this.registry.sdk(r);
     const wf = client.workflows.fromJson(workflow);
     const idempotencyKey = randomUUID();
-    const giveUpAt = Date.now() + 10 * 60_000;
+    const t0 = Date.now();
+    const giveUpAt = t0 + 10 * 60_000;
+    // Cold or warm is decided now, before this job is on record: it is what the worker will bill around it.
+    const overhead = this.registry.overhead(r, this.coldNow(r, t0));
     for (;;) {
       try {
         const job = await client.submit(wf, { idempotencyKey });
-        this.tracked.set(job.id, { resourceId, meta, submittedAt: Date.now(), recorded: false, last: job });
+        this.tracked.set(job.id, { resourceId, meta, submittedAt: Date.now(), recorded: false, last: job, overhead, submitWaitMs: Date.now() - t0 });
         return { jobId: job.id };
       } catch (e) {
         const retryable = e instanceof QueueFull || (e instanceof ComfyError && e.httpStatus === 429);
@@ -203,12 +228,20 @@ export class V2Jobs {
     const view = this.view(r, job, t);
     if (TERMINAL.has(job.status) && t && !t.recorded) {
       t.recorded = true;
+      // A job that started kept the worker up until now; one cancelled before it started did not (and cost nothing).
+      if (job.startedAt) this.lastEnded.set(r.id, Date.now());
       if (job.status === 'succeeded') {
+        const rate = this.registry.creditsPerHour(r);
         this.runs.add({
           at: new Date().toISOString(), workflowId: t.meta.workflowId, resourceId: r.id, resourceKind: r.kind,
           gpu: this.registry.gpuLabel(r), executionMs: view.executionMs, timing: view.timing ?? 'wall', wallMs: Date.now() - t.submittedAt,
           slotSeconds: t.meta.slotSeconds, scaleWithSlot: t.meta.scaleWithSlot, derivedCredits: view.derivedCredits,
-          creditsPerHour: this.registry.creditsPerHour(r), jobId,
+          creditsPerHour: rate, jobId,
+          ...(rate !== null ? {
+            costBasis: view.costBasis ?? undefined, overhead: t.overhead.kind, overheadMs: t.overhead.seconds * 1000,
+            executionCredits: view.executionMs !== null ? creditsFor(view.executionMs, rate) : null,
+          } : {}),
+          submitWaitMs: t.submitWaitMs,
         });
       }
       // A cancelled or failed job may have run (and billed) too: the balance is read again either way.
@@ -230,6 +263,8 @@ export class V2Jobs {
       timing = 'wall';
     }
     const rate = this.registry.creditsPerHour(r);
+    // A job this server did not submit (polled after a restart): cold or warm as it would be now.
+    const ov = t?.overhead ?? this.registry.overhead(r, this.coldNow(r));
     const p = job.progress;
     return {
       id: job.id, resourceId: r.id, status: job.status, queuePosition: job.queuePosition,
@@ -241,8 +276,9 @@ export class V2Jobs {
       error: job.error ? { code: job.error.code, message: job.error.message, nodeId: job.error.node_id, classType: job.error.class_type } : null,
       createdAt: job.createdAt?.toISOString() ?? null, startedAt: job.startedAt?.toISOString() ?? null, completedAt: job.completedAt?.toISOString() ?? null,
       executionMs, timing,
-      derivedCredits: rate !== null && executionMs !== null ? creditsFor(executionMs, rate) : null,
+      derivedCredits: rate !== null && executionMs !== null ? jobCredits(executionMs, rate, ov) : null,
       creditsPerHour: rate, gpuLabel: this.registry.gpuLabel(r),
+      costBasis: rate !== null ? ov.basis : null, overhead: rate !== null ? ov.kind : null, overheadSeconds: rate !== null ? ov.seconds : 0,
     };
   }
 

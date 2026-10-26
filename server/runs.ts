@@ -35,10 +35,37 @@ export class RunLog {
     if (r.jobId && this.runs.some((x) => x.jobId === r.jobId && x.resourceId === r.resourceId)) return;
     this.runs.push(r);
     if (this.runs.length > KEEP) this.runs = this.runs.slice(-KEEP);
+    this.save();
+    for (const fn of this.listeners) fn(r);
+  }
+
+  private save(): void {
     const tmp = this.file + '.tmp';
     writeFileSync(tmp, JSON.stringify({ schema: 1, runs: this.runs }, null, 1));
     renameSync(tmp, this.file);
-    for (const fn of this.listeners) fn(r);
+  }
+
+  /** All runs, oldest first (read-only use: the billing reconciliation). */
+  all(): readonly RunRecord[] {
+    return this.runs;
+  }
+
+  /** One job's run, by its id (and resource, when given). */
+  byJob(jobId: string, resourceId?: string): RunRecord | undefined {
+    return this.runs.find((r) => r.jobId === jobId && (resourceId === undefined || r.resourceId === resourceId));
+  }
+
+  /** When the last run on a resource finished (ms), or null. */
+  lastAt(resourceId: string): number | null {
+    for (let i = this.runs.length - 1; i >= 0; i--) if (this.runs[i].resourceId === resourceId) return Date.parse(this.runs[i].at);
+    return null;
+  }
+
+  /** Change runs in place (the billed figure, a re-derived cost) and write the file once. */
+  patch(changes: Array<{ run: RunRecord; set: Partial<RunRecord> }>): void {
+    if (!changes.length) return;
+    for (const { run, set } of changes) Object.assign(run, set);
+    this.save();
   }
 
   /** Runs of one workflow on one resource (and GPU, when it bills by GPU). */

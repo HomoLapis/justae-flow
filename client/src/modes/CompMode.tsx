@@ -1065,6 +1065,15 @@ function tagOf(r: CompRun): string | null {
   return r.options.quality === 'final' ? 'Final' : 'Draft';
 }
 
+/** A result's cost, in the card's tooltip: what the figure is, and the other one when both are known. */
+function costNote(v: CompRun['versions'][number]): string {
+  if (v.derivedCredits === null) return '';
+  const derived = `derived ≈ ${formatCredits(v.derivedCredits)} cr: ${v.costBasis ?? 'GPU time of the job'} × the GPU's rate`;
+  if (v.billedCredits === null) return `\n${derived}. The billed figure follows when the hourly billing report has the hour.`;
+  const asOf = v.billedAsOf ? new Date(v.billedAsOf).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  return `\nbilled ≈ ${formatCredits(v.billedCredits)} cr: the hourly billing report's GPU amount, shared among the runs of the hour (report as of ${asOf})\n${derived}`;
+}
+
 function ResultCard({ run, state }: { run: CompRun; state: CompState }): JSX.Element {
   const load = useComp((s) => s.load);
   const focus = useComp((s) => s.focusRun);
@@ -1104,8 +1113,9 @@ function ResultCard({ run, state }: { run: CompRun; state: CompState }): JSX.Ele
             <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
             <span className="min-w-0 truncate text-xs text-ink" title={v?.compName ? `In the comp "${v.compName}"` : run.label}>{run.label}{v && v.n > 1 ? ` v${v.n}` : ''}</span>
             {v && !live && (
-              <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-mute" title={`wall-clock ${clockTime(v.elapsedMs)}${v.executionMs !== null ? ` · GPU execution ${clockTime(v.executionMs)}` : ''} · ${res?.label ?? v.resource ?? ''}`}>
-                {clockTime(v.executionMs ?? v.elapsedMs)} · {v.derivedCredits !== null ? `≈ ${formatCredits(v.derivedCredits)} cr` : metered ? '— cr' : 'no credits'}
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-mute" data-testid="run-cost"
+                title={`wall-clock ${clockTime(v.elapsedMs)}${v.executionMs !== null ? ` · GPU execution ${clockTime(v.executionMs)}` : ''} · ${res?.label ?? v.resource ?? ''}${costNote(v)}`}>
+                {clockTime(v.executionMs ?? v.elapsedMs)} · {v.billedCredits !== null ? `billed ≈ ${formatCredits(v.billedCredits)} cr (hourly report)` : v.derivedCredits !== null ? `≈ ${formatCredits(v.derivedCredits)} cr` : metered ? '— cr' : 'no credits'}
               </span>
             )}
           </div>

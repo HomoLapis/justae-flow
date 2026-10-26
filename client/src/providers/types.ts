@@ -89,7 +89,7 @@ export type ProviderEvent =
    * started executing, and once done the execution time and the credits
    * derived from it. Every poll carries one.
    */
-  | { kind: 'meter'; status: string; startedAt: string | null; executionMs: number | null; timing: string | null; derivedCredits: number | null; creditsPerHour: number | null };
+  | { kind: 'meter'; status: string; startedAt: string | null; executionMs: number | null; timing: string | null; derivedCredits: number | null; creditsPerHour: number | null; costBasis?: string | null };
 
 export interface SubmitCtx {
   /** Client identifier used for the WS connection. UUID v4 typically. */

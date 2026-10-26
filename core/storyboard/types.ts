@@ -77,6 +77,8 @@ export interface Version {
   height?: number;
   seconds?: number;
   jobId: string;
+  /** Every job the version took (a long reframe is several); jobId is the last. Absent on older versions. */
+  jobIds?: string[];
   createdAt: string;
   elapsedMs: number;
   /** Model files swapped for a local variant, said rather than hidden. */

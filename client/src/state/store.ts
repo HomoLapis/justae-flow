@@ -68,6 +68,8 @@ export interface JobState {
   /** Once done: the execution time the server reported, and the credits derived from it (≈). */
   executionMs: number | null;
   derivedCredits: number | null;
+  /** What derivedCredits counts, as the server said it (a deployment: its worker's start-up and idle window too). */
+  costBasis: string | null;
   /** Where executionMs came from: execution_ms, started→completed, history (local), or wall (the server reports none). */
   timing: string | null;
   /** What the error offers to do about itself ('run-locally' after a 402). */
@@ -280,6 +282,7 @@ const IDLE_JOB: JobState = {
   execStartedAt: null,
   executionMs: null,
   derivedCredits: null,
+  costBasis: null,
   timing: null,
   action: null,
 };

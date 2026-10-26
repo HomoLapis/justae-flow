@@ -30,6 +30,14 @@ export interface ResourceView {
   creditsPerHour: number | null;
   gpuLabel: string | null;
   needsKey: 'platform' | 'proxy' | 'none';
+  /** A deployment: what a cold job is billed beyond its run (start-up, model loading, 30 s idle), when set by hand. */
+  coldStartSeconds?: number;
+  /** A deployment: its staged models, GB, when known. */
+  stagedGb?: number;
+  /** A deployment: the allowance in force (null with min workers 1 or more), whether it is the measured default, and that measurement. */
+  coldStart?: { seconds: number | null; isDefault: boolean; measured: string };
+  /** A deployment: its network storage while it exists, credits per hour. */
+  storage?: { creditsPerHour: number; basis: 'staged' | 'measured'; gb: number };
 }
 
 export interface WorkflowCapability {
@@ -95,6 +103,34 @@ export interface Estimate {
   creditsPerMinute: number | null;
   gpuLabel: string | null;
   beyondHistory: boolean;
+  /** What the deployment's worker adds around the run ('cold': start-up included), in seconds and credits. */
+  overhead: 'cold' | 'warm' | 'always-on' | null;
+  overheadSeconds: number;
+  overheadCredits: number | null;
+}
+
+/** One finished run, as the server's run history keeps it (GET /api/runs). */
+export interface RunEntry {
+  at: string;
+  workflowId: string;
+  resourceId: string;
+  resourceKind: ResourceKind;
+  gpu: string | null;
+  executionMs: number | null;
+  wallMs: number;
+  derivedCredits: number | null;
+  creditsPerHour: number | null;
+  jobId?: string;
+  costBasis?: string;
+  overhead?: 'cold' | 'warm' | 'always-on' | 'none';
+  overheadMs?: number;
+  executionCredits?: number | null;
+  billedCredits?: number;
+  billedAsOf?: string;
+}
+
+export async function loadRuns(): Promise<RunEntry[]> {
+  return (await serverJson<{ runs: RunEntry[] }>('/api/runs')).runs;
 }
 
 export interface EstimateAnswer {
@@ -103,7 +139,7 @@ export interface EstimateAnswer {
 }
 
 export interface ResourcePatch {
-  resources?: Array<Partial<ResourceView> & { id: string; remove?: boolean }>;
+  resources?: Array<Partial<Omit<ResourceView, 'coldStartSeconds' | 'stagedGb'>> & { id: string; remove?: boolean; coldStartSeconds?: number | null; stagedGb?: number | null }>;
   tasks?: Record<string, string>;
   choice?: string;
   apiKey?: string | null;

@@ -77,7 +77,7 @@ export function ResourcesSettings(): JSX.Element {
           <ResourceCard key={d.id} r={d} caps={data.capabilities[d.id]} onCheck={load} toggle={(on) => apply({ resources: [{ id: d.id, enabled: on }] })}
             remove={() => apply({ resources: [{ id: d.id, remove: true }] })}>
             <UrlField value={d.url} placeholder="https://<deployment>.run.comfy.app" onSave={(url) => apply({ resources: [{ id: d.id, url }] })} />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
               <label className="flex items-center gap-1.5 text-[11px] text-ink-dim">
                 GPU
                 <select className="input h-7 min-h-0 w-auto py-0 text-[11px]" value={d.gpu ?? 'rtx-pro-6000'}
@@ -90,14 +90,31 @@ export function ResourcesSettings(): JSX.Element {
                 <input className="input h-7 min-h-0 w-14 py-0 text-[11px]" type="number" min={0} value={d.minWorkers ?? 0}
                   onChange={(e) => void apply({ resources: [{ id: d.id, minWorkers: Number(e.target.value) || 0 }] })} />
               </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-ink-dim" title="What a cold job is billed beyond its own run: worker start-up, model loading and the 30 s idle window. Empty = the measured default.">
+                start-up
+                <NumberField value={d.coldStartSeconds ?? null} placeholder={String(d.coldStart?.seconds ?? 265)} disabled={(d.minWorkers ?? 0) > 0}
+                  onSave={(v) => apply({ resources: [{ id: d.id, coldStartSeconds: v }] })} testId="cold-start-field" />
+                s
+              </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-ink-dim" title="The size of the models staged for this deployment, if you know it (comfy build): the storage line is computed from it.">
+                staged
+                <NumberField value={d.stagedGb ?? null} placeholder="GB" onSave={(v) => apply({ resources: [{ id: d.id, stagedGb: v }] })} />
+                GB
+              </label>
             </div>
-            <p className={'text-[10px] leading-snug ' + ((d.minWorkers ?? 0) > 0 ? 'text-warn' : 'text-ink-mute')}>
+            <p className={'text-[10px] leading-snug ' + ((d.minWorkers ?? 0) > 0 ? 'text-warn' : 'text-ink-mute')} data-testid="deployment-billing-note">
               {d.creditsPerHour} cr/h while a worker runs.
               {(d.minWorkers ?? 0) > 0
-                ? ` With --min ${d.minWorkers} a worker stays up and bills while idle too: about ${Math.round((d.creditsPerHour ?? 0) * 24 * (d.minWorkers ?? 0)).toLocaleString('en-US')} cr a day.`
-                : ' With --min 0 it scales to zero between jobs; the next job waits for a worker.'}
+                ? ` With --min ${d.minWorkers} a worker stays up and bills while idle too: about ${Math.round((d.creditsPerHour ?? 0) * 24 * (d.minWorkers ?? 0)).toLocaleString('en-US')} cr a day. No start-up allowance is added to a job: the worker bills continuously instead.`
+                : ` With --min 0 it scales to zero between jobs: a cold job (none here in the last minute) is billed about ${d.coldStart?.seconds ?? 265} s more than its own run — worker start-up, model loading and the 30 s idle window (${d.coldStart?.isDefault === false ? `set here; ${d.coldStart.measured}` : d.coldStart?.measured ?? 'measured'}). Estimates and costs add it; a job right after another adds only the idle window.`}
               {' '}Use the GPU and minimum you deployed with (<span className="font-mono">comfy deploy status</span>); JustAE Flow never starts, scales or stops it.
             </p>
+            {d.storage && (
+              <p className="truncate text-[10px] leading-snug text-ink-mute" data-testid="deployment-storage" title="Network storage for the staged models (comfy deploy refs compute: 42.2 cr per GB per month). The hourly billing report shows it every hour, with or without jobs (measured 25 Oct 2026); whether a stopped deployment still bills it is to be verified.">
+                storage ≈ {d.storage.creditsPerHour.toFixed(2)} cr/h while the deployment exists
+                {d.storage.basis === 'staged' ? ` (${d.storage.gb} GB × 42.2 cr/GB/month)` : ` — measured for a ${d.storage.gb} GB build (42.2 cr/GB/month)`}
+              </p>
+            )}
           </ResourceCard>
         ))}
         <button className="chip" onClick={() => void apply({ resources: [{ id: 'new', label: 'Deployment', url: '', enabled: true }] })} data-testid="add-deployment">
@@ -218,6 +235,30 @@ function CloudBalance(): JSX.Element {
       </p>
       <button className="btn-quiet h-6 shrink-0 px-2 text-[11px]" onClick={() => void loadCredits(true)}>Read again</button>
     </div>
+  );
+}
+
+/** A number saved on blur or Enter (not on every keystroke); empty saves null (the default). */
+function NumberField({ value, placeholder, disabled, onSave, testId }: {
+  value: number | null; placeholder: string; disabled?: boolean; onSave: (v: number | null) => Promise<void>; testId?: string;
+}): JSX.Element {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (): void => {
+    if (draft === null) return;
+    const t = draft.trim();
+    const v = t === '' ? null : Number(t);
+    if (v === null || (Number.isFinite(v) && v >= 0)) { if (v !== value) void onSave(v); }
+    setDraft(null);
+  };
+  return (
+    <input
+      className="input h-7 min-h-0 w-14 py-0 text-[11px]"
+      type="number" min={0} disabled={disabled} placeholder={placeholder} data-testid={testId}
+      value={draft ?? (value ?? '')}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+    />
   );
 }
 

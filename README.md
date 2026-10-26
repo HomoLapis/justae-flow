@@ -190,20 +190,32 @@ on Cloud or a deployment, and when it has not moved yet the window says so. It i
 
 - after a run: execution time × the GPU's rate — Comfy Cloud runs on the RTX PRO 6000, **736.39 credits per GPU hour**;
   a deployment bills at the rate of its GPU: RTX PRO 6000 736.39, H100 1,314.53, H200 1,626.81, B200 2,369.53
-  credits/h (comfy.org/cloud/pricing, read 25 Oct 2026) — set in its card;
+  credits/h (comfy.org/cloud/pricing, read 25 Oct 2026) — set in its card — plus what its worker bills around the job
+  (below);
 - before a run: the fastest and slowest earlier runs of the same workflow on the same resource and GPU, scaled by the
   slot for video, always with "≈" and its basis ("based on 3 runs on RTX PRO 6000"), or the rate alone when there is
   none ("first run: 12.3 cr/min"). A slot longer than any run on record is flagged. When the balance is under twice
   the estimate, a yellow line offers to switch to Local; a `402 insufficient_credits` ends the job with the same offer.
 
-The run history the estimates come from is `runs.json`, in the same user folder.
+**A deployment's worker bills around the job.** On a scale-to-zero deployment (`--min 0`) the billed GPU time includes
+the worker's start-up and model loading, and a 30-second idle window after the job, none of which is in the job's own
+timestamps (`started_at` → `completed_at`). On 25 Oct 2026 two cold jobs on an RTX PRO 6000 deployment with 55 GB of
+models were billed about twice their execution time, about 265 s more each, while a job cancelled before it started
+cost nothing. So the estimate and the derived cost add a start-up allowance when the worker would be cold — default
+265 s, idle window included, adjustable per deployment in Settings ▸ Resources — only the idle window when a job ended
+there in the last minute, and nothing with `--min 1` or more (that worker bills continuously instead; its card says
+how much a day). The hourly billing report lags behind: once it has the hour, each run gets its share of that hour's GPU
+amount, pro rata to its derived cost, and History and the result cards show "billed ≈ … cr (hourly report)" in place of
+the derived figure.
+
+The run history the estimates come from is `runs.json`, in the same user folder; the billed figures go there too.
 
 ### Your own deployment
 
 A deployment bills while a worker runs, not per job: deployed with `--min 0` it scales to zero between jobs (the next
-job waits for a worker: measured on 25 Oct, about 1–2 minutes from cold); with `--min 1` a worker stays up and bills
-while idle — its card says how much a day. A generic recipe with comfy-cli (docs.comfy.org, *Comfy API Quickstart*;
-comfy-cli's `comfy-build` and `comfy-deploy` skills):
+job waits for a worker, and its start-up is billed: see [Resources and credits](#resources-and-credits)); with
+`--min 1` a worker stays up and bills while idle — its card says how much a day. A generic recipe with comfy-cli
+(docs.comfy.org, *Comfy API Quickstart*; comfy-cli's `comfy-build` and `comfy-deploy` skills):
 
 ```bash
 pip install -U comfy-cli
@@ -220,7 +232,8 @@ Put in the Build only what the heavy tasks need: the models a bundled workflow n
 (`workflows/<id>.json` → `models`, each with the URL its template downloads it from) — for example `vace-reframe` and
 `seedvr2-upscale`, whose nodes are all core ComfyUI. Costs, as `comfy deploy refs compute` listed them on 25 Oct 2026
 (comfy-cli 1.23.0): the GPU per hour while a worker runs (RTX PRO 6000 736.39 credits/h) and network storage for the
-staged models at **42.2 credits (0.20 $) per GB per month** (how storage is billed in detail: to be verified). JustAE
+staged models at **42.2 credits (0.20 $) per GB per month** — the deployment's card shows it per hour (how storage is
+billed in detail: to be verified). JustAE
 Flow never builds, releases, deploys, starts, scales or stops anything on the platform: it talks to an endpoint you
 already have. On v2 workflows go in API format, there are no live previews, and a deployment has only the nodes and
 models of its build. To try v2 for free, run `pip install comfy-api-proxy` and `comfy-api-proxy` next to your ComfyUI.

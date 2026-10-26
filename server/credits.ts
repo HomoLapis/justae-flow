@@ -12,10 +12,19 @@
  * Read on demand, kept five minutes, and read again after every finished job
  * on Comfy Cloud or a deployment (they draw on the same credits: PLAN v3 §1,
  * comfy.org/cloud/pricing). If it has not moved yet, the view says so.
+ *
+ * The same report, by the hour and grouped by product, also says what the GPU
+ * of a deployment was billed in each hour ("Serverless GPU", in `cost_micros`
+ * of a dollar). `reconcile` reads it for the hours of deployment runs, at most
+ * every ten minutes, and gives each run its share of its hours (pro rata to
+ * its derived GPU time there): `billedCredits` with the report's `as_of`. The
+ * report lags, so a run's hours are read until they have settled. Figures go
+ * to runs.json in the user's folder only — never to a log.
  */
 
-import { centsToCredits, CREDITS_PER_USD } from '../core/cost/estimate.ts';
+import { centsToCredits, CREDITS_PER_USD, IDLE_SECONDS, microsToCredits, type RunRecord } from '../core/cost/estimate.ts';
 import { CLOUD_BASE, type ResourceRegistry } from './resources.ts';
+import type { RunLog } from './runs.ts';
 
 export interface CreditsView {
   ok: boolean;
@@ -43,6 +52,63 @@ export interface CreditsView {
 
 const TTL = 5 * 60_000;
 
+/* ─── The hourly report, given to runs ─────────────────────────────── */
+
+/** A deployment's GPU in the hourly report grouped by product (its `group_key`, read 26 Oct 2026). */
+export const DEPLOYMENT_GPU_PRODUCT = 'Serverless GPU';
+/** The report is read for runs at most this often. */
+export const RECONCILE_EVERY_MS = 10 * 60_000;
+/** Runs older than this without a settled figure are left as derived. */
+const LOOKBACK_MS = 3 * 24 * 3_600_000;
+/** A figure read this long after the end of the run's last hour is taken as settled: its hours are not read again. */
+const SETTLED_MS = 6 * 3_600_000;
+const HOUR = 3_600_000;
+
+export interface HourBucket { cost_micros?: number; group_key?: string; period_start?: string; period_end?: string }
+
+/** The span a run was billed over, as derived: start-up and execution before it finished, its idle window after. */
+export function billedSpan(r: RunRecord): { from: number; to: number } | null {
+  const end = Date.parse(r.at);
+  if (r.executionMs === null || !Number.isFinite(end)) return null;
+  const idle = r.overhead === 'cold' || r.overhead === 'warm' ? IDLE_SECONDS * 1000 : 0;
+  const before = Math.max(0, (r.overheadMs ?? 0) - idle);
+  return { from: end - r.executionMs - before, to: end + idle };
+}
+
+/**
+ * The report's GPU amount of each hour, shared among the deployment runs billed in that hour, pro rata to their
+ * derived GPU time in it (time × rate). A run gets a figure only when every hour it spans had ended by the
+ * report's as_of, at least one of them carries a GPU amount, and its span lies inside `window` (the hours read).
+ * Pure: the selftest feeds it a made-up report.
+ */
+export function attributeBilled(runs: readonly RunRecord[], buckets: HourBucket[], asOf: number, window: { from: number; to: number }, product = DEPLOYMENT_GPU_PRODUCT): Map<RunRecord, number> {
+  const gpu = buckets
+    .filter((b) => b.group_key === product && typeof b.cost_micros === 'number' && b.cost_micros > 0 && b.period_start && b.period_end)
+    .map((b) => ({ from: Date.parse(b.period_start!), to: Date.parse(b.period_end!), credits: microsToCredits(b.cost_micros!) }))
+    .filter((b) => Number.isFinite(b.from) && Number.isFinite(b.to) && b.to > b.from);
+  const runsHere = runs
+    .filter((r) => r.resourceKind === 'deployment' && r.creditsPerHour !== null && r.executionMs !== null)
+    .map((r) => ({ r, span: billedSpan(r) }))
+    .filter((x): x is { r: RunRecord; span: { from: number; to: number } } => x.span !== null);
+  const got = new Map<RunRecord, number>();
+  for (const b of gpu) {
+    const weights = runsHere.map((x) => Math.max(0, Math.min(x.span.to, b.to) - Math.max(x.span.from, b.from)) * x.r.creditsPerHour!);
+    const total = weights.reduce((n, w) => n + w, 0);
+    if (total <= 0) continue;
+    runsHere.forEach((x, i) => { if (weights[i] > 0) got.set(x.r, (got.get(x.r) ?? 0) + (b.credits * weights[i]) / total); });
+  }
+  const out = new Map<RunRecord, number>();
+  for (const x of runsHere) {
+    const v = got.get(x.r);
+    if (v === undefined || x.span.from < window.from || x.span.to > window.to) continue;
+    if (Math.ceil(x.span.to / HOUR) * HOUR > asOf) continue;
+    out.set(x.r, v);
+  }
+  return out;
+}
+
+const isoSeconds = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + 'Z';
+
 interface Balance {
   amount_micros?: number; prepaid_balance_micros?: number; cloud_credit_balance_micros?: number; currency?: string;
   amount_cents?: number; prepaid_balance_cents?: number; cloud_credit_balance_cents?: number;
@@ -57,12 +123,67 @@ export class Credits {
   private listeners = new Set<(v: CreditsView) => void>();
 
   private base: string;
+  private runs: RunLog | null;
+  private reconciledAt = 0;
+  private reconciling: Promise<number> | null = null;
 
-  /** `base`: Comfy Cloud, or a stand-in for the selftest. */
-  constructor(registry: ResourceRegistry, base = CLOUD_BASE) {
+  /** `base`: Comfy Cloud, or a stand-in for the selftest. `runs`: the history the hourly report is given to. */
+  constructor(registry: ResourceRegistry, base = CLOUD_BASE, runs: RunLog | null = null) {
     this.registry = registry;
     this.base = base;
+    this.runs = runs;
     registry.onChange(() => { this.readAt = 0; });
+  }
+
+  /**
+   * Give deployment runs their share of the hourly report, when it has their hours. Reads the report at most
+   * every ten minutes (`force` skips that, for the selftest), and only while some run in the last three days has
+   * no settled figure. Returns how many runs got a figure.
+   */
+  async reconcile(force = false): Promise<number> {
+    if (!this.runs) return 0;
+    if (this.reconciling) return this.reconciling;
+    if (!force && Date.now() - this.reconciledAt < RECONCILE_EVERY_MS) return 0;
+    this.reconciling = this.reconcileNow().finally(() => { this.reconciling = null; });
+    return this.reconciling;
+  }
+
+  private async reconcileNow(): Promise<number> {
+    const key = this.registry.key();
+    if (!key || !this.runs) return 0;
+    const now = Date.now();
+    const deployed = this.runs.all().filter((r) => r.resourceKind === 'deployment' && r.creditsPerHour !== null && r.executionMs !== null && now - Date.parse(r.at) < LOOKBACK_MS);
+    const pending = deployed.filter((r) => {
+      const span = billedSpan(r)!;
+      return !r.billedAsOf || Date.parse(r.billedAsOf) < Math.ceil(span.to / HOUR) * HOUR + SETTLED_MS;
+    });
+    if (!pending.length) return 0;
+    this.reconciledAt = now;
+    // The hours of the pending runs, widened to every run that shares them (each hour is shared among all its runs).
+    let from = Math.min(...pending.map((r) => billedSpan(r)!.from));
+    let to = Math.max(...pending.map((r) => billedSpan(r)!.to));
+    for (const r of deployed) {
+      const s = billedSpan(r)!;
+      if (s.to > from && s.from < to) { from = Math.min(from, s.from); to = Math.max(to, s.to); }
+    }
+    const start = Math.floor(from / HOUR) * HOUR;
+    // And the hour after: the report lags, and an idle window can end past the hour.
+    const end = Math.min(Math.ceil(to / HOUR) * HOUR + HOUR, Math.ceil(now / HOUR) * HOUR);
+    const q = new URLSearchParams({ granularity: 'hour', group_by: 'product', starting_on: isoSeconds(start), ending_before: isoSeconds(end) });
+    let body: { buckets?: HourBucket[]; as_of?: string };
+    try {
+      const r = await fetch(`${this.base}/api/billing/usage/timeseries?${q}`, { headers: { 'X-API-Key': key, Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
+      if (!r.ok) return 0;
+      body = await r.json() as typeof body;
+    } catch {
+      return 0;
+    }
+    const asOf = body.as_of && !Number.isNaN(Date.parse(body.as_of)) ? Date.parse(body.as_of) : now;
+    const billed = attributeBilled(deployed, Array.isArray(body.buckets) ? body.buckets : [], asOf, { from: start, to: end });
+    const billedAsOf = new Date(asOf).toISOString();
+    const changes = [...billed].map(([run, credits]) => ({ run, set: { billedCredits: Math.round(credits * 100) / 100, billedAsOf } }));
+    this.runs.patch(changes);
+    return changes.length;
   }
 
   onChange(fn: (v: CreditsView) => void): () => void {

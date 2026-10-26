@@ -14,6 +14,8 @@ import type { JobView, RunMeta, V2Jobs } from './v2run.ts';
 export interface JobMeter {
   executionMs: number | null;
   derivedCredits: number | null;
+  /** What derivedCredits counts, in words (a deployment: the worker's start-up and idle window too). */
+  costBasis?: string | null;
 }
 
 export interface Runner {
@@ -148,6 +150,6 @@ export class V2Runner implements Runner {
 
   async meter(jobId: string): Promise<JobMeter> {
     const v = this.last.get(jobId) ?? await this.jobs.status(this.resource.id, jobId);
-    return { executionMs: v.executionMs, derivedCredits: v.derivedCredits };
+    return { executionMs: v.executionMs, derivedCredits: v.derivedCredits, costBasis: v.costBasis };
   }
 }

@@ -9,10 +9,19 @@
  * that is drawn from invoices, not live usage (openapi-cloud.yaml,
  * `/api/billing/usage/timeseries`). So:
  *
- *   after   execution seconds × the GPU's rate                 ("≈", always)
+ *   after   (execution seconds + what the worker billed around them) × the
+ *           GPU's rate                                         ("≈", always)
  *   before  earlier runs of the same workflow on the same resource and GPU,
  *           scaled by the slot for video, as a range from the fastest to the
- *           slowest; with none on record, just the rate per minute
+ *           slowest, plus the same allowance; with none on record, just the
+ *           rate per minute (and the allowance)
+ *
+ * "What the worker billed around them": a deployment's flex worker bills "per
+ * second from the moment it starts, including startup and model loading, plus
+ * a short idle window (currently 30 seconds)" (docs.comfy.org, Serverless
+ * overview), none of which is inside the job's started_at → completed_at. See
+ * `overheadFor`. When the hourly billing report has the hour, the run also
+ * carries the billed figure (server/credits.ts, `attributeBilled`).
  *
  * Never a curve fitted past the data: a slot longer than any run on record is
  * flagged, because time per step jumps once a working set stops fitting in
@@ -58,6 +67,79 @@ export function centsToCredits(cents: number): number {
   return (cents / 100) * CREDITS_PER_USD;
 }
 
+/** Millionths of a dollar as credits: the hourly report's `cost_micros` are real micro-dollars (measured 26 Oct 2026), unlike its balance fields. */
+export function microsToCredits(micros: number): number {
+  return (micros / 1_000_000) * CREDITS_PER_USD;
+}
+
+/* ─── A deployment's worker, around the job ─────────────────────────── */
+
+/** The idle window a flex worker bills after its last job (docs.comfy.org, Serverless overview: "currently 30 seconds"). */
+export const IDLE_SECONDS = 30;
+
+/**
+ * What a cold job on a scale-to-zero deployment is billed beyond its own
+ * execution time: worker start-up and model loading, plus the 30 s idle window.
+ * Measured on 25 Oct 2026 on an RTX PRO 6000 with 55 GB of models: two cold
+ * jobs ran 260.1 s and 284.1 s (started_at → completed_at), and the hourly
+ * billing report's "Serverless GPU" for that hour came to about twice what
+ * that time alone gives at 736.39 cr/h — 265 s more per job. Editable per
+ * deployment (Settings ▸ Resources).
+ */
+export const COLD_START_DEFAULT_SECONDS = 265;
+
+/** A job finished on the same deployment this recently: its worker is still up (the idle window plus a margin). */
+export const WARM_WINDOW_MS = 60_000;
+
+/** Network storage for a deployment's staged models (`comfy deploy refs compute`, comfy-cli 1.23.0, read 25 Oct 2026). */
+export const STORAGE_CREDITS_PER_GB_MONTH = 42.2;
+/** Measured: the "Serverless Network Volume" line of the hourly report, every hour, for the 55 GB build. */
+export const MEASURED_STORAGE_CREDITS_PER_HOUR = 3.35;
+export const MEASURED_STORAGE_GB = 55;
+const HOURS_PER_MONTH = (365 * 24) / 12;
+
+/** Storage while a deployment exists, credits per hour: from its staged size when known, else the measured figure. */
+export function storagePerHour(stagedGb: number | null | undefined): { creditsPerHour: number; basis: 'staged' | 'measured' } {
+  return typeof stagedGb === 'number' && stagedGb > 0
+    ? { creditsPerHour: (stagedGb * STORAGE_CREDITS_PER_GB_MONTH) / HOURS_PER_MONTH, basis: 'staged' }
+    : { creditsPerHour: MEASURED_STORAGE_CREDITS_PER_HOUR, basis: 'measured' };
+}
+
+/**
+ * GPU time a run is billed beyond its own execution, and why.
+ *
+ *   cold       min workers 0 and no job here in the last minute: start-up, model loading and the idle window
+ *   warm       min workers 0, a job here in the last minute: the worker is up; the idle window after this one
+ *   always-on  min workers 1 or more: nothing on top (the worker bills continuously instead; Settings says how much)
+ *   none       not a deployment (Comfy Cloud bills the job; your GPU bills nothing)
+ */
+export interface Overhead {
+  kind: 'cold' | 'warm' | 'always-on' | 'none';
+  seconds: number;
+  basis: string;
+}
+
+export const BASIS = {
+  cold: 'GPU time of the job + worker start-up (measured) + 30 s idle',
+  warm: 'GPU time of the job + 30 s idle (the worker was already up)',
+  alwaysOn: 'GPU time of the job (min workers 1 or more: the worker bills continuously instead)',
+  none: 'GPU time of the job',
+} as const;
+
+export function overheadFor(r: { kind: string; minWorkers?: number; coldStartSeconds?: number }, cold: boolean): Overhead {
+  if (r.kind !== 'deployment') return { kind: 'none', seconds: 0, basis: BASIS.none };
+  if ((r.minWorkers ?? 0) >= 1) return { kind: 'always-on', seconds: 0, basis: BASIS.alwaysOn };
+  if (!cold) return { kind: 'warm', seconds: IDLE_SECONDS, basis: BASIS.warm };
+  // The allowance is what was measured per cold job, idle window included; never less than the idle window.
+  const total = typeof r.coldStartSeconds === 'number' && r.coldStartSeconds >= 0 ? r.coldStartSeconds : COLD_START_DEFAULT_SECONDS;
+  return { kind: 'cold', seconds: Math.max(total, IDLE_SECONDS), basis: BASIS.cold };
+}
+
+/** The derived credits of one finished job: its execution time plus the overhead, at the rate. */
+export function jobCredits(executionMs: number, creditsPerHour: number, overhead: Overhead): number {
+  return creditsFor(executionMs + overhead.seconds * 1000, creditsPerHour);
+}
+
 /** One finished run, as the run history keeps it. */
 export interface RunRecord {
   at: string;
@@ -76,10 +158,22 @@ export interface RunRecord {
   slotSeconds: number | null;
   /** The output scales with the slot (video), or is one thing per run (a still). */
   scaleWithSlot: boolean;
-  /** execution seconds × the GPU's rate, when the resource bills. */
+  /** (execution + overhead) seconds × the GPU's rate, when the resource bills (see costBasis). */
   derivedCredits: number | null;
   creditsPerHour: number | null;
   jobId?: string;
+  /** What derivedCredits counts, in words (BASIS). Absent on runs recorded before the start-up allowance. */
+  costBasis?: string;
+  /** The overhead derivedCredits includes (see Overhead), and its seconds. */
+  overhead?: Overhead['kind'];
+  overheadMs?: number;
+  /** Execution time × rate alone — what derivedCredits was before the start-up allowance (kept for comparison). */
+  executionCredits?: number | null;
+  /** How long the submit waited for the job to be accepted (a deployment answers 429 while it starts a worker). */
+  submitWaitMs?: number;
+  /** The hourly billing report's GPU amount attributed to this run (server/credits.ts), and the report's as_of. */
+  billedCredits?: number;
+  billedAsOf?: string;
 }
 
 export interface EstimateInput {
@@ -88,6 +182,8 @@ export interface EstimateInput {
   /** Null for a resource that does not bill (a local GPU, the proxy). */
   creditsPerHour: number | null;
   gpuLabel: string | null;
+  /** What the worker would bill around this run (a deployment); absent = nothing. */
+  overhead?: Overhead | null;
 }
 
 export interface Estimate {
@@ -108,6 +204,10 @@ export interface Estimate {
   gpuLabel: string | null;
   /** The slot is longer than any run on record: the high end is not reliable. */
   beyondHistory: boolean;
+  /** The worker's overhead included in the seconds and credits above ('cold': start-up included), and how much. */
+  overhead: Overhead['kind'] | null;
+  overheadSeconds: number;
+  overheadCredits: number | null;
 }
 
 /** Seconds a run would take for this slot, from one run on record. */
@@ -131,20 +231,24 @@ export function estimateRun(runs: RunRecord[], input: EstimateInput): Estimate {
   const secs = pool.map((r) => scaled(r, (timing === 'execution' ? r.executionMs! : r.wallMs) / 1000, input));
   const maxSlot = pool.reduce((m, r) => Math.max(m, r.slotSeconds ?? 0), 0);
   const beyondHistory = input.scaleWithSlot && pool.length > 0 && (input.slotSeconds ?? 0) > maxSlot + 0.01;
-  const secondsLow = secs.length ? Math.min(...secs) : null;
-  const secondsHigh = secs.length ? Math.max(...secs) : null;
+  // What the worker bills around the job (a deployment's start-up, its idle window) comes on top of every run's time.
+  const ov = input.overhead && input.overhead.kind !== 'none' ? input.overhead : null;
+  const extra = ov?.seconds ?? 0;
+  const secondsLow = secs.length ? Math.min(...secs) + extra : null;
+  const secondsHigh = secs.length ? Math.max(...secs) + extra : null;
   const perMin = input.creditsPerHour !== null ? input.creditsPerHour / 60 : null;
+  const over = { overhead: ov?.kind ?? null, overheadSeconds: extra, overheadCredits: ov && input.creditsPerHour !== null ? creditsFor(extra * 1000, input.creditsPerHour) : null };
   if (input.creditsPerHour === null) {
-    return { basis: 'free', runs: pool.length, timing, secondsLow, secondsHigh, creditsLow: null, creditsHigh: null, creditsPerMinute: null, gpuLabel: input.gpuLabel, beyondHistory };
+    return { basis: 'free', runs: pool.length, timing, secondsLow, secondsHigh, creditsLow: null, creditsHigh: null, creditsPerMinute: null, gpuLabel: input.gpuLabel, beyondHistory, ...over };
   }
   if (!pool.length) {
-    return { basis: 'rate', runs: 0, timing: null, secondsLow: null, secondsHigh: null, creditsLow: null, creditsHigh: null, creditsPerMinute: perMin, gpuLabel: input.gpuLabel, beyondHistory: false };
+    return { basis: 'rate', runs: 0, timing: null, secondsLow: null, secondsHigh: null, creditsLow: null, creditsHigh: null, creditsPerMinute: perMin, gpuLabel: input.gpuLabel, beyondHistory: false, ...over };
   }
   return {
     basis: 'timed', runs: pool.length, timing, secondsLow, secondsHigh,
     creditsLow: creditsFor(secondsLow! * 1000, input.creditsPerHour),
     creditsHigh: creditsFor(secondsHigh! * 1000, input.creditsPerHour),
-    creditsPerMinute: perMin, gpuLabel: input.gpuLabel, beyondHistory,
+    creditsPerMinute: perMin, gpuLabel: input.gpuLabel, beyondHistory, ...over,
   };
 }
 
@@ -161,6 +265,10 @@ export function sumEstimates(list: Estimate[]): Estimate & { shots: number; unkn
     secondsLow: add('secondsLow'), secondsHigh: add('secondsHigh'), creditsLow: add('creditsLow'), creditsHigh: add('creditsHigh'),
     creditsPerMinute: list[0]?.creditsPerMinute ?? null, gpuLabel: list[0]?.gpuLabel ?? null,
     beyondHistory: list.some((e) => e.beyondHistory), shots: list.length, unknown: list.length - known.length,
+    // A series starts its worker once: the cold shot carries the start-up, the others only the idle window.
+    overhead: list.some((e) => e.overhead === 'cold') ? 'cold' : list.find((e) => e.overhead)?.overhead ?? null,
+    overheadSeconds: list.reduce((n, e) => n + e.overheadSeconds, 0),
+    overheadCredits: list.some((e) => e.overheadCredits !== null) ? list.reduce((n, e) => n + (e.overheadCredits ?? 0), 0) : null,
   };
 }
 
@@ -196,10 +304,15 @@ function durationRange(lo: number, hi: number): string {
   return unit(a) === unit(b) && !/ h /.test(a) ? `${a.replace(/ [a-z]+$/, '')}–${b}` : `${a}–${b}`;
 }
 
-/** One line under a Generate button. Every number carries its basis; estimates always carry "≈". */
+/**
+ * One line under a Generate button. Every number carries its basis; estimates always carry "≈".
+ * A cold deployment's line says that its time and credits include the worker's start-up:
+ *   ≈ 107 cr (~$0.51) · ~8:45 min incl. worker start-up on JustAE Flow heavy · based on 1 run on RTX PRO 6000
+ */
 export function describeEstimate(e: Estimate & { shots?: number; unknown?: number }, where: string): string {
   const shots = e.shots && e.shots > 1 ? `${e.shots} shots · ` : '';
-  const time = e.secondsLow !== null && e.secondsHigh !== null ? `~${durationRange(e.secondsLow, e.secondsHigh)}` : '';
+  const cold = e.overhead === 'cold';
+  const time = e.secondsLow !== null && e.secondsHigh !== null ? `~${durationRange(e.secondsLow, e.secondsHigh)}${cold ? ' incl. worker start-up' : ''}` : '';
   const basisRuns = `${e.runs} run${e.runs === 1 ? '' : 's'}${e.timing === 'wall' ? ', wall-clock incl. queue' : ''}`;
   if (e.basis === 'free') {
     return `${shots}${where} · no credits${time ? ` · ${time}${e.beyondHistory ? '+' : ''} (based on ${basisRuns})` : ' · no run of this workflow here yet'}`;
@@ -207,7 +320,8 @@ export function describeEstimate(e: Estimate & { shots?: number; unknown?: numbe
   const rate = e.creditsPerMinute !== null ? `${e.creditsPerMinute.toFixed(1)} cr/min on ${e.gpuLabel ?? 'the GPU'}` : '';
   if (e.basis === 'rate' || e.creditsLow === null || e.creditsHigh === null) {
     const partial = e.unknown && e.shots && e.unknown < e.shots ? ` (${e.unknown} of ${e.shots} without a run yet)` : '';
-    return `${shots}${where} · first run: ${rate} · no run of this workflow here yet${partial}`;
+    const startUp = cold && e.overheadCredits !== null ? ` + ≈ ${formatCredits(e.overheadCredits)} cr worker start-up (~${formatDuration(e.overheadSeconds)})` : '';
+    return `${shots}${where} · first run: ${rate}${startUp} · no run of this workflow here yet${partial}`;
   }
   const cr = range(e.creditsLow, e.creditsHigh, formatCredits);
   const usd = formatUsd(usdFor((e.creditsLow + e.creditsHigh) / 2));

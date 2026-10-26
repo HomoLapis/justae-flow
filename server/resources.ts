@@ -28,7 +28,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { Comfy } from '@comfyorg/sdk';
-import { DEFAULT_GPU, GPUS, isGpuId, type GpuId } from '../core/cost/estimate.ts';
+import {
+  COLD_START_DEFAULT_SECONDS, DEFAULT_GPU, GPUS, isGpuId, MEASURED_STORAGE_GB, overheadFor, storagePerHour, type GpuId, type Overhead,
+} from '../core/cost/estimate.ts';
 import type { Task } from '../core/workflows/manifest.ts';
 
 export type ResourceKind = 'local' | 'cloud' | 'deployment' | 'proxy';
@@ -45,6 +47,14 @@ export interface Resource {
   gpu?: GpuId;
   /** A deployment's minimum workers, as the user deployed it: a warm worker bills while idle. */
   minWorkers?: number;
+  /**
+   * A deployment with min workers 0: what a cold job is billed beyond its own execution — worker start-up, model
+   * loading and the 30 s idle window. Absent = COLD_START_DEFAULT_SECONDS (265 s, measured 25 Oct 2026 on an RTX
+   * PRO 6000 with 55 GB of models).
+   */
+  coldStartSeconds?: number;
+  /** The size of the deployment's staged models, GB, when the user knows it: its storage line is computed from it. */
+  stagedGb?: number;
   /**
    * The proxy: the resource whose ComfyUI it stands in front of. comfy-api-proxy proxies the ComfyUI on
    * 127.0.0.1:8188 by default (docs.comfy.org, Comfy API v2 Overview), so it starts as 'local'; then that
@@ -109,6 +119,10 @@ export interface ResourceView extends Resource {
   needsKey: 'platform' | 'proxy' | 'none';
   /** A job this resource refused outright, with its words (see ResourceConfig.refusals). */
   refused?: { at: string; message: string };
+  /** A deployment: the start-up allowance in force (null with min workers 1 or more: no allowance), and whether it is the measured default. */
+  coldStart?: { seconds: number | null; isDefault: boolean; measured: string };
+  /** A deployment: its network storage while it exists, credits per hour, from its staged size or the measured figure. */
+  storage?: { creditsPerHour: number; basis: 'staged' | 'measured'; gb: number };
 }
 
 export interface ResourcesView {
@@ -122,7 +136,7 @@ export interface ResourcesView {
 }
 
 export interface ResourcePatch {
-  resources?: Array<Partial<Resource> & { id: string; remove?: boolean }>;
+  resources?: Array<Partial<Omit<Resource, 'coldStartSeconds' | 'stagedGb'>> & { id: string; remove?: boolean; coldStartSeconds?: number | null; stagedGb?: number | null }>;
   tasks?: Partial<Record<TaskId, string>>;
   choice?: string;
   /** A new platform key; '' or null removes it. Write-only. */
@@ -297,6 +311,11 @@ export class ResourceRegistry {
     return null;
   }
 
+  /** What the worker bills around a job on this resource, cold or warm (only a deployment has any). */
+  overhead(r: Resource, cold: boolean): Overhead {
+    return overheadFor(r, cold);
+  }
+
   /** Can it take a job now? Only configuration is checked here; reachability is the probe's job. */
   usable(r: Resource): { ok: boolean; reason?: string } {
     if (!r.enabled) return { ok: false, reason: 'switched off in Settings' };
@@ -344,6 +363,14 @@ export class ResourceRegistry {
         return {
           ...r, usable: u.ok, reason: u.reason, refused: this.refusal(r), creditsPerHour: this.creditsPerHour(r), gpuLabel: this.gpuLabel(r),
           needsKey: r.kind === 'cloud' || r.kind === 'deployment' ? 'platform' : r.kind === 'proxy' ? 'proxy' : 'none',
+          ...(r.kind === 'deployment' ? {
+            coldStart: {
+              seconds: (r.minWorkers ?? 0) >= 1 ? null : overheadFor(r, true).seconds,
+              isDefault: typeof r.coldStartSeconds !== 'number',
+              measured: `${COLD_START_DEFAULT_SECONDS} s measured on 25 Oct 2026 on an RTX PRO 6000 with ${MEASURED_STORAGE_GB} GB of models`,
+            },
+            storage: (() => { const s = storagePerHour(r.stagedGb); return { ...s, gb: s.basis === 'staged' ? r.stagedGb! : MEASURED_STORAGE_GB }; })(),
+          } : {}),
         };
       }),
       tasks: this.cfg.tasks,
@@ -379,6 +406,7 @@ export class ResourceRegistry {
           id: ch.id, kind: 'deployment', label: ch.label?.trim() || 'Deployment', url: url ?? '', enabled: ch.enabled ?? true,
           gpu: isGpuId(ch.gpu) ? ch.gpu : DEFAULT_GPU, minWorkers: typeof ch.minWorkers === 'number' ? Math.max(0, Math.round(ch.minWorkers)) : 0,
         });
+        this.setCosts(this.cfg.resources.at(-1)!, ch);
         continue;
       }
       const r = this.cfg.resources[at];
@@ -390,6 +418,7 @@ export class ResourceRegistry {
       if (typeof ch.label === 'string' && ch.label.trim()) r.label = ch.label.trim();
       if (r.kind === 'deployment' && isGpuId(ch.gpu)) r.gpu = ch.gpu;
       if (r.kind === 'deployment' && typeof ch.minWorkers === 'number') r.minWorkers = Math.max(0, Math.round(ch.minWorkers));
+      if (r.kind === 'deployment') this.setCosts(r, ch);
       if (r.kind === 'proxy' && ch.fronts !== undefined) r.fronts = ch.fronts && this.get(ch.fronts)?.kind === 'local' ? ch.fronts : undefined;
     }
     for (const [task, pick] of Object.entries(p.tasks ?? {})) {
@@ -399,6 +428,17 @@ export class ResourceRegistry {
     }
     if (typeof p.choice === 'string') this.cfg.choice = p.choice === 'default' || p.choice === 'auto' || this.get(p.choice) ? p.choice : 'default';
     this.changed();
+  }
+
+  /**
+   * A deployment's start-up allowance and staged size, from a patch: a number sets it (whole seconds, one-decimal
+   * GB, never negative), null puts it back to the default (measured allowance; storage from the measured build).
+   */
+  private setCosts(r: Resource, ch: { coldStartSeconds?: number | null; stagedGb?: number | null }): void {
+    if (ch.coldStartSeconds === null) delete r.coldStartSeconds;
+    else if (typeof ch.coldStartSeconds === 'number' && Number.isFinite(ch.coldStartSeconds)) r.coldStartSeconds = Math.min(3600, Math.max(0, Math.round(ch.coldStartSeconds)));
+    if (ch.stagedGb === null || ch.stagedGb === 0) delete r.stagedGb;
+    else if (typeof ch.stagedGb === 'number' && Number.isFinite(ch.stagedGb) && ch.stagedGb > 0) r.stagedGb = Math.round(ch.stagedGb * 10) / 10;
   }
 
   /** A new deployment entry's id. */
