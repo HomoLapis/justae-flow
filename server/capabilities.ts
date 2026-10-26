@@ -152,7 +152,13 @@ export class CapabilityProbe {
   private async probeLocal(r: Resource, caps: Capabilities): Promise<ObjectInfo | null> {
     const auth = this.localAuth();
     const c = new ComfyClient(r.url, { token: auth.token, gpu: auth.gpu });
-    const h = await c.health();
+    let h = await c.health();
+    // ComfyUI builds /object_info on its event loop: while another reader (the engine, at start-up) has it doing that
+    // for thousands of nodes, /system_stats waits past the 5 s check — seen 26 Oct, "unreachable" until re-checked.
+    if (!h.online) {
+      await new Promise((r) => setTimeout(r, 3000));
+      h = await c.health();
+    }
     caps.online = h.online;
     caps.message = h.message;
     caps.version = h.version;
