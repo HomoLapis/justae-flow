@@ -556,6 +556,8 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
   IC-LoRAs (Deblur, De-compression, Colorize, Clean plate, Day → Night, LTX Alpha) render the whole clip as one extent:
   at the source size and past ~121 frames they are heavier than a Refine tile; De-compression and LTX Alpha were run
   here, the other four were not run with their own LoRA.
+- LTX finishing's tile sizes come from the ComfyUI-LTXVideo pack's own node (Refine 960×544 at the qHD tile choice),
+  while the Lightricks model cards recommend 1024×576 for Refine; results not compared — to be verified.
 - LTX finishing does not deinterlace (the Restore card asks for it on interlaced sources) and does not use Restore's
   reference-image or prefix-frame options; pixel-aspect is taken as square.
 - EffectCraft 0.11.1 reads an EXR master as an image sequence but not as scene-linear (sRGB, highlights clipped, 30 fps
@@ -569,8 +571,7 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
 "other"); how a deployment's network storage is billed in detail; the upload limit of a deployment; time and VRAM of a
 full VACE 14B *Final* and of a full MiniMax H3 run on a 16 GB GPU; Wan 2.2 first + last frame end to end (its 14B
 weights are not on the test machine); whether open weights run on Comfy Cloud count for the challenge's *Open Weights
-Only*; the LTX cards on the pack's qHD tile against the cards' own trained tile (Refine 1024×576; on a 4:3 scan the pack
-plans 960×736 tiles on 1920×1440, the Restore card 960×544 at 1440 wide) — quality not compared.
+Only*; the LTX tile on a 4:3 scan (the pack plans 960×736 tiles on 1920×1440, the Restore card 960×544 at 1440 wide).
 
 ## Licence
 
