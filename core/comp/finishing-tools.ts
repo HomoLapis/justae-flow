@@ -289,7 +289,7 @@ export function ltxAlphaPlan(src: SourceInfo, o: ToolOptions, manifest: (id: str
   plan.jobs = [{ workflowId, seconds }];
   plan.makes = src.kind === 'layer'
     ? `A matte above "${src.name}", set as its luma track matte — soft edges for hair, smoke, glass. The clip itself is untouched.`
-    : `A new comp "${src.name} · cut-out": the render of the ${what(src)} with its matte as a luma track matte.`;
+    : `A new comp "${src.name} · LTX cut-out": the render of the ${what(src)} with its matte as a luma track matte.`;
   plan.notes.push('LTX Alpha Gen decides the foreground on its own: no prompt, no subject to name (its card). White = foreground, as SAM 3\'s matte.');
   plan.notes.push(`One pass at ${sp.canvas.w}×${sp.canvas.h}, ${sp.frames.source} → ${sp.frames.total} frames (the card: up to 1920×1088 and 145 frames).`);
   plan.warnings.push(...sp.warnings);
