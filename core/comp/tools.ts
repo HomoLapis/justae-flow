@@ -29,8 +29,7 @@ import { DELIVERY, planOutpaint, REFRAME_ASPECTS, aspectRatio } from '../reframe
 import { planSize } from '../workflows/manifest.ts';
 
 export type { SourceKind, SourceInfo, ToolOptions, ToolPlan, ToolDef } from './common.ts';
-import { FINISHING_TOOLS, LTX_SIZES, ltxAlphaPlan, ltxRefinePlan, SINGLE_TOOLS } from './finishing-tools.ts';
-import { LTX_LICENCE_LINE, LTX_LICENCE_URL } from '../finishing/licence.ts';
+import { FINISHING_TOOLS, LTX_CARD_LICENCE, LTX_SIZES, ltxAlphaPlan, ltxRefinePlan, SINGLE_TOOLS } from './finishing-tools.ts';
 import { fmt, needsVideo, opt, what, type SourceInfo, type ToolDef, type ToolOptions, type ToolPlan } from './common.ts';
 /** Long side past which an upscale is not claimed to work: 3840 px (UHD "4K"). */
 export const UPSCALE_VERIFIED_LONG_SIDE = 3840;
@@ -155,7 +154,7 @@ const upscale: ToolDef = {
   icon: '⤢',
   sources: ['workArea', 'comp', 'layer'],
   defaults: { engine: 'seedvr2', scale: 2, colour: 'keep', method: KEEP_COLOUR_DEFAULT, size: 'fhd', fast: 1, master: 'png16', preview: false },
-  licence: { line: LTX_LICENCE_LINE, url: LTX_LICENCE_URL },
+  licence: LTX_CARD_LICENCE,
   plan(src, o, manifest, extra) {
     // The second engine: LTX-2.5 with the Refine Details IC-LoRA, Tiled Fusion (core/comp/finishing-tools.ts).
     if (o.engine === 'ltx') return ltxRefinePlan(src, o, manifest, extra);
@@ -205,7 +204,7 @@ const matte: ToolDef = {
   icon: '◐',
   sources: ['workArea', 'comp', 'layer'],
   defaults: { engine: 'sam3' },
-  licence: { line: LTX_LICENCE_LINE, url: LTX_LICENCE_URL },
+  licence: LTX_CARD_LICENCE,
   plan(src, o, manifest) {
     // The second engine: LTX-2.5 with the Alpha Gen IC-LoRA — no prompt, soft edges (core/comp/finishing-tools.ts).
     if (o?.engine === 'ltx') return ltxAlphaPlan(src, o, manifest);

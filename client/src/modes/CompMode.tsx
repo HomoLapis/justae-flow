@@ -821,7 +821,7 @@ function Advanced({ tool, draft, set, setOpt, plan }: {
           Workflow: <span className="font-mono text-ink-dim">{plan?.workflowId ?? '—'}</span>
           {tool === 'reframe' && ' · official template video_wan_vace_outpainting'}
           {tool === 'upscale' && (o.engine === 'ltx'
-            ? ' · the chain of the official LTX-2.5_V2V_TiledFusion_Upscale workflow (ComfyUI-LTXVideo 1.1.0), planned by JustAE Flow 2\'s port of its planner'
+            ? ' · the node chain of the official LTX-2.5_V2V_TiledFusion_Upscale workflow (ComfyUI-LTXVideo 1.1.0), sized by the pack\'s own LTXVGetTilingSizes'
             : ' · official template utility_seedvr2_3b_int8_upscale_video')}
           {tool === 'matte' && (o.engine === 'ltx' ? ' · the official LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled chain with the Alpha Gen IC-LoRA' : ' · official template utility_video_segment_sam3 (tracking)')}
           {tool === 'restore' && ' · the chain of the official LTX-2.5_V2V_TiledFusion_Upscale workflow with the Restore IC-LoRA (its card), Refine Details after or inside it'}

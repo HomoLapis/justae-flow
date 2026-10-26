@@ -1,32 +1,31 @@
 /**
  * The tiled finishing graph, in ComfyUI API format, built from a plan.
  *
- * Ported from JustAE Flow 2 (client/src/finishing/graph.ts) unchanged in its
- * chain; JustAE Flow adds the MP4 preview beside the 16-bit frames (the comp
- * shows the preview, the frames are the master) and uses the video input that
- * Flow 2 kept for Comfy API v2 (the Comp tab uploads one file, as its other tools).
+ * From JustAE Flow 2 (client/src/finishing/graph.ts, the author's own app); JustAE Flow adds the MP4 preview beside the
+ * 16-bit frames (the comp shows the preview, the frames are the master) and takes the clip as one video file.
  *
- * One graph per job, every pass inside it, so a job is one prompt id and an 8K
- * job never leaves a half-done 4K on the server.
+ * One graph per job, every pass inside it, so a job is one prompt id and an 8K job never leaves a half-done 4K on the
+ * server.
  *
- * Per pass, the chain of the official LTX-2.5_V2V_TiledFusion_* workflows
- * (ComfyUI-LTXVideo 1.1.0, example_workflows/2.5):
+ * Per pass, the node chain of the official LTX-2.5_V2V_TiledFusion_Upscale workflow (ComfyUI-LTXVideo 1.1.0,
+ * example_workflows/2.5 — used as the description of the nodes' interface; none of its files is included here):
  *
- *   frames ─ ImageScale lanczos → canvas ─┬────────────── LTXAddVideoICLoRAGuide ─┐
- *   UNET ─ LTXICLoRALoaderModelOnly 1.0 ──┼─ (latent: EmptyLTXVLatentVideo,         │
- *   text ─ CLIPTextEncode ─ LTXVConditioning   or the encoded image for a light pass) │
- *                                                                                   ▼
- *          ManualSigmas + KSamplerSelect euler → LTXVTiledFusionSampler → VAEDecodeTiled
+ *   LTXVGetTilingSizes ─ canvas ─→ ImageScale lanczos ─────────────┬─ LTXAddVideoICLoRAGuide ──┐
+ *         │            └ canvas ─→ EmptyLTXVLatentVideo ────────────┘   (tile_frames ←)         │
+ *         └ tile_width, tile_height, overlap_frac, tile_frames ────→ LTXVTiledFusionSampler ←───┘ → VAEDecodeTiled
+ *   UNET ─ LTXICLoRALoaderModelOnly 1.0 ─────────────────────────────↗  ManualSigmas, KSamplerSelect euler
  *
- * Around it: frames in (a folder of PNGs, or one video), duplicated for fast
- * motion, padded with copies of the last frame to 8n+1, and on the way out
- * trimmed, de-duplicated, resized back to the source aspect and saved as 16-bit
- * PNG or EXR — never only SaveVideo's MP4 (the card: it "understates the result").
+ * The geometry is the pack's: every size above comes from that pass's LTXVGetTilingSizes node at run time. The node is
+ * given the same numbers the card asked it before the run (the display size, the padded frame count, the size
+ * choices), so what the card said is what runs.
+ *
+ * Around it: the clip in (one video), duplicated for fast motion, padded with copies of the last frame to 8n+1, and on
+ * the way out trimmed, de-duplicated, resized to the source's aspect and saved as 16-bit PNG or EXR — never only
+ * SaveVideo's MP4 (the card: it "understates the result").
  */
 
-import {
-  BLEND_VAR, CFG, GRID_CYCLE, OVERLAP_FRAC, SAMPLER, decodeOf, type FinishPlan,
-} from './plan.ts';
+import { BLEND_VAR, CFG, GRID_CYCLE, SAMPLER, decodeOf, passRequest, type FinishPlan } from './plan.ts';
+import { TILING_NODE, TILING_OUT, tilingInputs } from './sizes.ts';
 import type { FinishModels } from './models.ts';
 
 export interface ApiNode {
@@ -156,42 +155,53 @@ export function buildFinishGraph(args: FinishGraphArgs): FinishGraph {
     const neg = add('CLIPTextEncode', { clip: out(clip), text: restoreText ? prompts.restoreNegative : prompts.negative }, `${tag} · negative`);
     const cond = add('LTXVConditioning', { positive: out(pos), negative: out(neg), frame_rate: plan.conditioningFps }, `${tag} · conditioning`);
 
-    // 1. lanczos to the canvas (the preview resizes to the full canvas and then
-    //    cuts its one tile, so the tile is 1:1 with what the full run makes).
-    const full = i === 0 && plan.previewCrop ? plan.previewCrop.canvas : p.canvas;
+    // 0. the pack's sizes for this pass (the request the card asked before the run).
+    const tiling = add(TILING_NODE, tilingInputs(passRequest(plan.display, frames.total, p.tiling)),
+      `${tag} · LTX pack sizes (${p.tiling.canvas === 'initial' ? `${p.tiling.initialCanvas} canvas` : p.tiling.outputSize}, ${p.tiling.tileSize} tiles)`);
+    const T = (slot: number): Ref => out(tiling, slot);
+    const canvasW = T(p.tiling.canvas === 'initial' ? TILING_OUT.canvasW : TILING_OUT.outputW);
+    const canvasH = T(p.tiling.canvas === 'initial' ? TILING_OUT.canvasH : TILING_OUT.outputH);
+
+    // 1. lanczos to the pack's canvas (a preview resizes to the full canvas and then cuts its one tile, so the tile is
+    //    1:1 with what the full run makes).
     let image: Ref = out(add('ImageScale', {
-      image: cur, upscale_method: 'lanczos', width: full.w, height: full.h, crop: 'disabled',
-    }, `${tag} · lanczos ${full.w}×${full.h}`));
-    if (i === 0 && plan.previewCrop) {
-      const c = plan.previewCrop;
-      image = out(add('ImageCrop', { image, width: c.w, height: c.h, x: c.x, y: c.y }, `${tag} · tile ${c.w}×${c.h} at ${c.x},${c.y}`));
+      image: cur, upscale_method: 'lanczos', width: canvasW, height: canvasH, crop: 'disabled',
+    }, `${tag} · lanczos to the pack's canvas`));
+    const crop = i === 0 ? plan.previewCrop : null;
+    if (i === 0 && plan.options.preview && !crop) throw new Error('buildFinishGraph: a preview tile needs the LTX pack sizes first (asked before the run).');
+    if (crop) {
+      image = out(add('ImageCrop', {
+        image, width: T(TILING_OUT.tileW), height: T(TILING_OUT.tileH), x: crop.x, y: crop.y,
+      }, `${tag} · tile ${crop.w}×${crop.h} at ${crop.x},${crop.y}`));
     }
+    const latentW = crop ? T(TILING_OUT.tileW) : canvasW;
+    const latentH = crop ? T(TILING_OUT.tileH) : canvasH;
 
     const latent: Ref = p.fromImage
       ? out(add('VAEEncodeTiled', {
         pixels: image, vae: out(vae), tile_size: DECODE.tileSize, overlap: DECODE.overlap,
         temporal_size: DECODE.temporalSize, temporal_overlap: DECODE.temporalOverlap,
       }, `${tag} · encode`))
-      : out(add('EmptyLTXVLatentVideo', { width: p.canvas.w, height: p.canvas.h, length: frames.total, batch_size: 1 }, `${tag} · latent`));
+      : out(add('EmptyLTXVLatentVideo', { width: latentW, height: latentH, length: frames.total, batch_size: 1 }, `${tag} · latent`));
 
-    // 2. the IC-LoRA guide: factor 1, one fresh encode per temporal window.
+    // 2. the IC-LoRA guide: factor 1, one fresh encode per temporal window of the pack's length.
     const guide = add('LTXAddVideoICLoRAGuide', {
       positive: out(cond, 0), negative: out(cond, 1), vae: out(vae), latent, image,
       frame_idx: 0, strength: 1.0, latent_downscale_factor: 1, crop: 'disabled',
       use_tiled_encode: false, tile_size: 256, tile_overlap: 64,
-      use_streaming: true, tile_frames: frames.tileFrames,
+      use_streaming: true, tile_frames: T(TILING_OUT.tileFrames),
     }, `${tag} · IC-LoRA guide`);
 
-    // 4. one canvas, overlapping tiles fused after every step.
+    // 3. one canvas, overlapping tiles fused after every step — tiles, overlap and window from the pack.
     const sigmas = add('ManualSigmas', { sigmas: p.sigmas }, `${tag} · sigmas (${p.steps} steps)`);
     const sampled = add('LTXVTiledFusionSampler', {
       model, positive: out(guide, 0), negative: out(guide, 1), latents: out(guide, 2),
       sigmas: out(sigmas), sampler: out(sampler), seed, cfg: CFG,
-      tile_width: p.tile.w, tile_height: p.tile.h, overlap_frac: OVERLAP_FRAC, blend_var: BLEND_VAR,
-      grid_cycle: GRID_CYCLE, tile_frames: frames.tileFrames, vae: out(vae), canvas_device: 'auto',
-    }, `${tag} · Tiled Fusion ${p.grid.x}×${p.grid.y}`);
+      tile_width: T(TILING_OUT.tileW), tile_height: T(TILING_OUT.tileH), overlap_frac: T(TILING_OUT.overlapFrac), blend_var: BLEND_VAR,
+      grid_cycle: GRID_CYCLE, tile_frames: T(TILING_OUT.tileFrames), vae: out(vae), canvas_device: 'auto',
+    }, `${tag} · Tiled Fusion${p.grid ? ` ${p.grid.x}×${p.grid.y}` : ''}`);
 
-    // 5. tiled decode.
+    // 4. tiled decode.
     cur = out(add('VAEDecodeTiled', {
       samples: out(sampled), vae: out(vae), tile_size: DECODE.tileSize, overlap: DECODE.overlap,
       temporal_size: DECODE.temporalSize, temporal_overlap: DECODE.temporalOverlap,
@@ -204,7 +214,8 @@ export function buildFinishGraph(args: FinishGraphArgs): FinishGraph {
     cur = out(add('VHS_SelectEveryNthImage', { images: cur, select_every_nth: frames.duplicate, skip_first_images: 0 }, 'Drop the duplicates'));
   }
   const last = plan.passes[plan.passes.length - 1].canvas;
-  if (!plan.previewCrop && (last.w !== plan.delivery.w || last.h !== plan.delivery.h)) {
+  // The delivery needs the pack's canvas known before the run; without it the frames stay on the pack's canvas.
+  if (!plan.previewCrop && plan.delivery && last && (last.w !== plan.delivery.w || last.h !== plan.delivery.h)) {
     cur = out(add('ImageScale', {
       image: cur, upscale_method: 'lanczos', width: plan.delivery.w, height: plan.delivery.h, crop: 'disabled',
     }, `Delivery ${plan.delivery.w}×${plan.delivery.h}`));

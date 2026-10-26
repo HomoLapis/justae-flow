@@ -895,11 +895,12 @@ async function runLtxRefine(
   const r = await fetch('/api/finishing/graph', { method: 'POST', headers: { ...serverHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ file, size: 'fhd' }) });
   const d = await r.json() as {
     error?: string; graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>; loadNode: string; saveNode: string; previewNode: string;
-    plan: { delivery: { w: number; h: number }; tiles: number }; estimate: { line: string };
+    plan: { delivery: { w: number; h: number } | null; tiles: number | null }; estimate: { line: string };
   };
   if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`);
-  const size = `${d.plan.delivery.w}×${d.plan.delivery.h}`;
-  say(`Final: uploading the draft for LTX Refine to ${size} (${d.plan.tiles} tiles; ${d.estimate.line.split(' (')[0]})…`);
+  // Sizes and tiles are the LTX pack's (LTXVGetTilingSizes); when the local ComfyUI could not say them yet, they come at run time.
+  const size = d.plan.delivery ? `${d.plan.delivery.w}×${d.plan.delivery.h}` : 'Full HD (the LTX pack sets the size)';
+  say(`Final: uploading the draft for LTX Refine to ${size} (${d.plan.tiles ?? 'the pack’s'} tiles; ${d.estimate.line.split(' (')[0]})…`);
   const up = await provider.uploadInput(readFileAsBlob(file, mimeForPath(file)), basename(file));
   d.graph[d.loadNode].inputs.file = up.reference ?? up.name;
   const { jobId } = await provider.submit(d.graph as never, ctx);

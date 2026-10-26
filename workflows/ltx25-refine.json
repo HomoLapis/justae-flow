@@ -1,7 +1,7 @@
 {
   "id": "ltx25-refine",
   "title": "LTX-2.5 · Refine (Tiled Fusion)",
-  "description": "Rebuilt detail to Full HD, 4K or 8K (through 4K): the Refine Details IC-LoRA on overlapping 1024×576 tiles.",
+  "description": "Rebuilt detail to Full HD, 4K or 8K (through 4K): the Refine Details IC-LoRA on overlapping tiles, sized by the LTX pack (LTXVGetTilingSizes).",
   "task": "finish-video",
   "hosts": [],
   "output": "video",

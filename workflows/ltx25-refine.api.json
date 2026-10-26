@@ -177,6 +177,20 @@
     }
   },
   "15": {
+    "class_type": "LTXVGetTilingSizes",
+    "inputs": {
+      "width": 1280,
+      "height": 704,
+      "frame_count": 129,
+      "tile_size": "qHD",
+      "initial_canvas_size": "FullHD",
+      "output_size": "FullHD"
+    },
+    "_meta": {
+      "title": "Refine Full HD · LTX pack sizes (FullHD, qHD tiles)"
+    }
+  },
+  "16": {
     "class_type": "ImageScale",
     "inputs": {
       "image": [
@@ -184,19 +198,31 @@
         0
       ],
       "upscale_method": "lanczos",
-      "width": 1920,
-      "height": 1056,
+      "width": [
+        "15",
+        4
+      ],
+      "height": [
+        "15",
+        5
+      ],
       "crop": "disabled"
     },
     "_meta": {
-      "title": "Refine Full HD · lanczos 1920×1056"
+      "title": "Refine Full HD · lanczos to the pack's canvas"
     }
   },
-  "16": {
+  "17": {
     "class_type": "EmptyLTXVLatentVideo",
     "inputs": {
-      "width": 1920,
-      "height": 1056,
+      "width": [
+        "15",
+        4
+      ],
+      "height": [
+        "15",
+        5
+      ],
       "length": 129,
       "batch_size": 1
     },
@@ -204,7 +230,7 @@
       "title": "Refine Full HD · latent"
     }
   },
-  "17": {
+  "18": {
     "class_type": "LTXAddVideoICLoRAGuide",
     "inputs": {
       "positive": [
@@ -220,11 +246,11 @@
         0
       ],
       "latent": [
-        "16",
+        "17",
         0
       ],
       "image": [
-        "15",
+        "16",
         0
       ],
       "frame_idx": 0,
@@ -235,13 +261,16 @@
       "tile_size": 256,
       "tile_overlap": 64,
       "use_streaming": true,
-      "tile_frames": 97
+      "tile_frames": [
+        "15",
+        7
+      ]
     },
     "_meta": {
       "title": "Refine Full HD · IC-LoRA guide"
     }
   },
-  "18": {
+  "19": {
     "class_type": "ManualSigmas",
     "inputs": {
       "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
@@ -250,7 +279,7 @@
       "title": "Refine Full HD · sigmas (8 steps)"
     }
   },
-  "19": {
+  "20": {
     "class_type": "LTXVTiledFusionSampler",
     "inputs": {
       "model": [
@@ -258,19 +287,19 @@
         0
       ],
       "positive": [
-        "17",
+        "18",
         0
       ],
       "negative": [
-        "17",
+        "18",
         1
       ],
       "latents": [
-        "17",
+        "18",
         2
       ],
       "sigmas": [
-        "18",
+        "19",
         0
       ],
       "sampler": [
@@ -279,12 +308,24 @@
       ],
       "seed": 42,
       "cfg": 1,
-      "tile_width": 1024,
-      "tile_height": 576,
-      "overlap_frac": 0.5,
+      "tile_width": [
+        "15",
+        2
+      ],
+      "tile_height": [
+        "15",
+        3
+      ],
+      "overlap_frac": [
+        "15",
+        6
+      ],
       "blend_var": 0.05,
       "grid_cycle": 1,
-      "tile_frames": 97,
+      "tile_frames": [
+        "15",
+        7
+      ],
       "vae": [
         "9",
         0
@@ -295,11 +336,11 @@
       "title": "Refine Full HD · Tiled Fusion 3×3"
     }
   },
-  "20": {
+  "21": {
     "class_type": "VAEDecodeTiled",
     "inputs": {
       "samples": [
-        "19",
+        "20",
         0
       ],
       "vae": [
@@ -315,11 +356,11 @@
       "title": "Refine Full HD · decode"
     }
   },
-  "21": {
+  "22": {
     "class_type": "ImageFromBatch",
     "inputs": {
       "image": [
-        "20",
+        "21",
         0
       ],
       "batch_index": 0,
@@ -329,11 +370,11 @@
       "title": "Cut the pad"
     }
   },
-  "22": {
+  "23": {
     "class_type": "SaveImageAdvanced",
     "inputs": {
       "images": [
-        "21",
+        "22",
         0
       ],
       "filename_prefix": "justae-flow/finish/frame",
@@ -345,11 +386,11 @@
       "title": "PNG 16-bit"
     }
   },
-  "23": {
+  "24": {
     "class_type": "CreateVideo",
     "inputs": {
       "images": [
-        "21",
+        "22",
         0
       ],
       "fps": 24,
@@ -363,11 +404,11 @@
       "title": "Preview video (8-bit)"
     }
   },
-  "24": {
+  "25": {
     "class_type": "SaveVideo",
     "inputs": {
       "video": [
-        "23",
+        "24",
         0
       ],
       "filename_prefix": "justae-flow/finish/preview",

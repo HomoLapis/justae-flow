@@ -4,8 +4,8 @@
  * Tiled passes (Refine, Restore): every spatial tile receives the WHOLE prompt.
  * A subject named in it — "a woman", "the red car" — can stamp itself into
  * every tile of a 49-tile 4K canvas (the Refine card: "a subject named in it can
- * be painted into tiles that do not contain it"; the official Upscale workflow:
- * "Do not name specific objects, people, or props"). So the card's field is
+ * be painted into tiles that do not contain it"; the notes of the official Upscale
+ * workflow give the same advice). So the card's field is
  * called "Look" and describes only the rendering — sharpness, grain, light —
  * and a Restore look describes the period, the place, the light, the materials
  * and what people wear, with everything the model must not invent in the

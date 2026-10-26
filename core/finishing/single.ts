@@ -26,7 +26,7 @@
  * 8 frames and trim") — except where that would push Alpha Gen past 145 frames.
  */
 
-import { PAD_FRAMES, SIGMAS_8, snap32, up8n1, type Size } from './plan.ts';
+import { PAD_FRAMES, SIGMAS_8, up8n1, type Size } from './plan.ts';
 import { addPreview, type ApiGraph, type PreviewVideo } from './graph.ts';
 import type { FinishModels, LoraId } from './models.ts';
 
@@ -70,6 +70,11 @@ function even(v: number): number {
   return Math.max(2, Math.round(v / 2) * 2);
 }
 
+/** The nearest multiple of 32, at least 32 (the cards: the generation size is a multiple of 32 on both sides). */
+function to32(v: number): number {
+  return Math.max(32, Math.round(v / 32) * 32);
+}
+
 export function planSingle(lora: SingleLora, src: SingleSource, size: 'source' | 'bucket' = SINGLE[lora].defaultSize): SinglePlan {
   const spec = SINGLE[lora];
   const fixes: string[] = [];
@@ -92,7 +97,7 @@ export function planSingle(lora: SingleLora, src: SingleSource, size: 'source' |
     h = src.height * k;
     if (k < 1) fixes.push(`The source is larger than ${box.w}×${box.h}, the largest size the cards name: generated at ${Math.round(w)}×${Math.round(h)}.`);
   }
-  const canvas = { w: snap32(w), h: snap32(h) };
+  const canvas = { w: to32(w), h: to32(h) };
   if (canvas.w !== Math.round(w) || canvas.h !== Math.round(h)) fixes.push(`Canvas ${canvas.w}×${canvas.h} (multiples of 32).`);
   const delivery = lora === 'alpha' ? { w: src.width, h: src.height } : { w: even(w), h: even(h) };
 

@@ -7,7 +7,8 @@
  *       cut the pad, drop the duplicates, save 16-bit PNG + the MP4 preview:
  *       every frame back must be the frame sent, in order. Seconds.
  *   node scripts/verify-finishing-run.ts <baseUrl> preview
- *       the real Refine preview tile (one 1024×576 tile of the Full HD canvas, 8 steps).
+ *       the real Refine preview tile (one of the LTX pack's tiles of its Full HD canvas, 8 steps): the pack is asked
+ *       for its sizes first (one LTXVGetTilingSizes prompt), as the Comp tab does.
  *   node scripts/verify-finishing-run.ts <baseUrl> single <lora> [--frames N]
  *       a single-pass IC-LoRA (deblur, decompression, colorize, cleanplate, alpha, daynight) at its card's size.
  *
@@ -21,7 +22,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { planFinish, DEFAULT_OPTIONS } from '../core/finishing/plan.ts';
+import { planFinish, tilingRequests, DEFAULT_OPTIONS } from '../core/finishing/plan.ts';
+import { parseTilingSummary, summaryFromHistory, tilingKey, tilingProbeGraph, type TilingSizes } from '../core/finishing/sizes.ts';
 import { buildFinishGraph, type ApiGraph } from '../core/finishing/graph.ts';
 import { checkFiles, type NodeCatalog } from '../core/finishing/models.ts';
 import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
@@ -96,10 +98,25 @@ if (mode === 'io') {
   console.log(`  models: ${all.models.transformer} · ${all.models.textEncoder} · ${all.models.vae} · ${Object.values(all.models.loras).join(', ')}`);
   const preview = { prefix: `${prefix}/preview`, fps: 24, audio: false };
   if (mode === 'preview') {
-    const plan = planFinish({ width: W, height: H, pixelAspect: 1, frames: N, fps: 24 }, { ...DEFAULT_OPTIONS, preset: 'refine-fhd', preview: true });
+    const src = { width: W, height: H, pixelAspect: 1, frames: N, fps: 24 };
+    const o = { ...DEFAULT_OPTIONS, preset: 'refine-fhd' as const, preview: true };
+    // The LTX pack's sizes first: one LTXVGetTilingSizes prompt per request, its summary from /history.
+    const answers = new Map<string, TilingSizes>();
+    for (const r of tilingRequests(src, o)) {
+      const q = await fetch(`${base}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: tilingProbeGraph(r), client_id: 'justae-finish-verify' }) });
+      const id = ((await q.json()) as { prompt_id: string }).prompt_id;
+      for (let i = 0; i < 200 && !answers.has(tilingKey(r)); i++) {
+        await new Promise((d) => setTimeout(d, 150));
+        const t = summaryFromHistory(((await (await fetch(`${base}/history/${id}`)).json()) as Record<string, unknown>)[id]);
+        const sz = t ? parseTilingSummary(t) : null;
+        if (sz) { answers.set(tilingKey(r), sz); console.log(`  the LTX pack: ${t!.split(String.fromCharCode(10)).slice(1, 7).map((l) => l.trim()).join(' · ')}`); }
+      }
+    }
+    const plan = planFinish(src, o, (r) => answers.get(tilingKey(r)) ?? null);
+    if (!plan.delivery) { console.error('the LTX pack gave no sizes'); process.exit(1); }
     graph = buildFinishGraph({ plan, models: all.models, input: { video: uploaded }, prompts: { ...DEFAULT_PROMPTS }, seed: 42, outputPrefix: `${prefix}/frame`, preview }).workflow;
     expect = { w: plan.delivery.w, h: plan.delivery.h, frames: plan.frames.source, save: true };
-    console.log(`  plan: ${plan.passes.map((p) => `${p.name} ${p.canvas.w}×${p.canvas.h}`).join(', ')} · frames ${plan.frames.source}→${plan.frames.total}`);
+    console.log(`  plan: ${plan.passes.map((p) => `${p.name} ${p.canvas!.w}×${p.canvas!.h}`).join(', ')} · frames ${plan.frames.source}→${plan.frames.total}`);
   } else {
     const lora = rest[0] as SingleLora;
     if (!(lora in SINGLE)) { console.error(`single: one of ${Object.keys(SINGLE).join(', ')}`); process.exit(2); }

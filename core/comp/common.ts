@@ -6,6 +6,13 @@
  */
 
 import type { WorkflowManifest } from '../workflows/manifest.ts';
+import type { TilingRequest, TilingSizes } from '../finishing/sizes.ts';
+
+/** What a tool's plan may get beyond the source and options. */
+export interface ToolExtra {
+  prompt?: string;
+  tiling?: (r: TilingRequest) => TilingSizes | null;
+}
 
 export type SourceKind = 'workArea' | 'comp' | 'layer';
 
@@ -87,8 +94,12 @@ export interface ToolDef {
   licence?: { line: string; url: string };
   /** A card that is listed but cannot run, with why (DA VERIFICARE: its model card does not say how, or a file is not where the node reads). */
   unavailable?: string;
-  /** `extra.prompt`: the card's text as typed now (the LTX "Look" is checked on every plan). */
-  plan(src: SourceInfo, options: ToolOptions, manifest: (id: string) => WorkflowManifest | undefined, extra?: { prompt?: string }): ToolPlan;
+  /**
+   * `extra.prompt`: the card's text as typed now (the LTX "Look" is checked on every plan). `extra.tiling`: the LTX
+   * pack's sizes the server has (LTXVGetTilingSizes, asked on the local ComfyUI) — without it a tiled LTX card says its
+   * sizes come at run time.
+   */
+  plan(src: SourceInfo, options: ToolOptions, manifest: (id: string) => WorkflowManifest | undefined, extra?: ToolExtra): ToolPlan;
 }
 
 

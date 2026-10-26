@@ -1,12 +1,12 @@
 /**
- * How long a finishing run takes on this machine, before it runs — from the
- * plan's own tile count and runs measured on the GPU it was tested on.
+ * How long a finishing run takes on this machine, before it runs — from a tile count and runs measured on the GPU it
+ * was tested on.
  *
- * The planner knows exactly what the sampler walks: tiles per step × temporal
- * windows × steps (tile-steps). What it does not know is how long one tile-step
- * takes, nor the rest of a job (loading the models, encoding the guide, decoding
- * and saving every frame), so those come from runs measured on an RTX 5080 16 GB
- * (ComfyUI 0.38.0 in WSL, NVFP4 transformer, Gemma-4 int8, DiffVAE bf16):
+ * The count is JustAE Flow's clean-room approximation (core/finishing/sizes.ts, windowsToCover) from the sizes the LTX
+ * pack's LTXVGetTilingSizes returns — tiles per step × temporal windows × steps (tile-steps); it is not the sampler's
+ * own plan, and a card shows the pack's tile grid beside it. How long one tile-step takes, and the rest of a job
+ * (loading the models, encoding the guide, decoding and saving every frame), come from runs measured on an RTX 5080
+ * 16 GB (ComfyUI 0.38.0 in WSL, NVFP4 transformer, Gemma-4 int8, DiffVAE bf16):
  *
  *   seconds ≈ load + tile-steps × s/tile-step(window) + output megapixel-frames × s/Mpx-frame
  *
@@ -16,10 +16,13 @@
  * said as such. Every estimate carries "≈" and "measured on an RTX 5080".
  */
 
-import { FRAME_STEP, TILE, type FinishPlan } from './plan.ts';
+import { FRAME_STEP, type FinishPlan } from './plan.ts';
 import type { SinglePlan } from './single.ts';
 
 export const MEASURED_ON = 'RTX 5080 16 GB';
+
+/** The tile the measured runs used (1024×576, the Refine card's); other tiles are scaled by area. */
+export const MEASURED_TILE_AREA = 1024 * 576;
 
 /**
  * Sampling, per tile-step, measured from ComfyUI's own step progress (the time between the first and the last of
@@ -45,7 +48,7 @@ export const MEASURED_SECONDS_PER_MPX_FRAME = (46 + 111) / ((1920 * 1056 * 121) 
 const latentFrames = (f: number): number => Math.floor((Math.max(1, f) - 1) / FRAME_STEP) + 1;
 
 /** Seconds per tile-step at this window length and tile area: interpolated between measured windows, scaled by area. */
-export function secondsPerTileStep(frames: number, area: number = TILE.refine.w * TILE.refine.h): { seconds: number; basis: string } {
+export function secondsPerTileStep(frames: number, area: number = MEASURED_TILE_AREA): { seconds: number; basis: string } {
   const runs = [...MEASURED_STEPS].sort((a, b) => latentFrames(a.frames) - latentFrames(b.frames));
   const lf = latentFrames(frames);
   const lo = [...runs].reverse().find((r) => latentFrames(r.frames) <= lf) ?? runs[0];
@@ -56,7 +59,7 @@ export function secondsPerTileStep(frames: number, area: number = TILE.refine.w 
     const t = (lf - latentFrames(lo.frames)) / (latentFrames(hi.frames) - latentFrames(lo.frames));
     per = lo.secondsPerTileStep + t * (hi.secondsPerTileStep - lo.secondsPerTileStep);
   }
-  const k = area / TILE.refine.w / TILE.refine.h;
+  const k = area / MEASURED_TILE_AREA;
   const near = Math.abs(latentFrames(lo.frames) - lf) <= Math.abs(latentFrames(hi.frames) - lf) ? lo : hi;
   return {
     seconds: per * k,
@@ -75,16 +78,22 @@ function outputSeconds(w: number, h: number, frames: number): number {
   return ((w * h * frames) / 1e6) * MEASURED_SECONDS_PER_MPX_FRAME;
 }
 
-/** A tiled plan: load + Σ passes (tile-steps × seconds per tile-step) + decoding and saving the frames. */
-export function estimateFinish(plan: FinishPlan): FinishEstimate {
-  const first = secondsPerTileStep(plan.frames.tileFrames, plan.passes[0].tile.w * plan.passes[0].tile.h);
+/**
+ * A tiled plan: load + Σ passes (tile-steps × seconds per tile-step) + decoding and saving the frames. Null while the
+ * plan has no sizes from the LTX pack (there is nothing to count).
+ */
+export function estimateFinish(plan: FinishPlan): FinishEstimate | null {
+  if (!plan.sized || plan.load === null) return null;
+  const window = (p: FinishPlan['passes'][number]): number => p.sizes!.tileFrames;
+  const area = (p: FinishPlan['passes'][number]): number => p.tile!.w * p.tile!.h;
+  const first = secondsPerTileStep(window(plan.passes[0]), area(plan.passes[0]));
   let sampling = 0;
-  for (const p of plan.passes) sampling += p.load * secondsPerTileStep(plan.frames.tileFrames, p.tile.w * p.tile.h).seconds;
+  for (const p of plan.passes) sampling += (p.load ?? 0) * secondsPerTileStep(window(p), area(p)).seconds;
   // Each pass decodes its canvas.
-  const out = plan.passes.reduce((s, p) => s + outputSeconds(p.canvas.w, p.canvas.h, plan.frames.total), 0);
+  const out = plan.passes.reduce((s, p) => s + outputSeconds(p.canvas!.w, p.canvas!.h, plan.frames.total), 0);
   return {
     seconds: MEASURED_LOAD_SECONDS + sampling + out,
-    basis: `${first.basis}; plus ~1 min loading and the decode and save of every frame`,
+    basis: `${first.basis}; ≈ ${plan.load} tile-steps counted from the pack's tile size and overlap (an approximation); plus ~1 min loading and the decode and save of every frame`,
     tileSteps: plan.load,
   };
 }

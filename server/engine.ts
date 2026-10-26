@@ -27,7 +27,9 @@ import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/o
 import { COMP_TOOLS, ltxExtendFrames, ltxGuidedFrames, resultName, toolById, type SourceInfo, type SourceKind, type ToolDef, type ToolOptions, type ToolPlan } from '../core/comp/tools.ts';
 import { finishSpec, SINGLE_TOOLS, type FinishSpec } from '../core/comp/finishing-tools.ts';
 import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
-import { localVerdict, planFinish, type FinishOptions, type FinishPlan } from '../core/finishing/plan.ts';
+import { localVerdict, planFinish, tilingRequests, type FinishOptions, type FinishPlan } from '../core/finishing/plan.ts';
+import type { TilingRequest, TilingSizes } from '../core/finishing/sizes.ts';
+import { tilingLookup } from './tiling.ts';
 import { checkFiles, hasQuantizedTransformer, LORAS, lorasOf, requiredNodes, type LoraId, type NodeCatalog } from '../core/finishing/models.ts';
 import { buildFinishGraph } from '../core/finishing/graph.ts';
 import { buildSingleGraph, planSingle, singleNodes, type SinglePlan } from '../core/finishing/single.ts';
@@ -1094,8 +1096,10 @@ export class Engine {
     const cap = renderCap(req.cap);
     const { info } = await this.compSource(req.source, cap, req.layerId);
     const options = { ...tool.defaults, ...(req.options ?? {}) };
-    const plan = tool.plan(info, options, (id) => this.library.get(id)?.manifest, { prompt: req.prompt });
-    await this.finishingChecks(tool, options, plan, info, req.resource);
+    // A tiled LTX card's sizes are the LTX pack's: asked on the local ComfyUI (cached), a few seconds at most.
+    const tiling = await this.tilingForCard(tool.id, options, info, req.resource);
+    const plan = tool.plan(info, options, (id) => this.library.get(id)?.manifest, { prompt: req.prompt, tiling });
+    await this.finishingChecks(tool, options, plan, info, req.resource, tiling);
     // Extend takes only the last frame: the render cap does not apply to it.
     if (req.source !== 'layer' && tool.renders !== false && info.requested > cap + 1e-3) {
       plan.warnings.unshift(`The ${req.source === 'workArea' ? 'work area' : 'comp'} lasts ${info.requested.toFixed(1)} s: the render stops at ${cap} s (Work-area render cap).`);
@@ -2252,7 +2256,10 @@ export class Engine {
   }
 
   /** A finishing card's plan, completed with what only the server knows: the local ComfyUI's files, where it would run. */
-  private async finishingChecks(tool: ToolDef, options: ToolOptions, plan: ToolPlan, info: SourceInfo, resource?: string | null): Promise<void> {
+  private async finishingChecks(
+    tool: ToolDef, options: ToolOptions, plan: ToolPlan, info: SourceInfo, resource?: string | null,
+    tiling?: (r: TilingRequest) => TilingSizes | null,
+  ): Promise<void> {
     const spec = finishSpec(tool.id, options);
     if (!spec || !plan.ok) return;
     const entry = this.library.get(spec.workflowId);
@@ -2268,7 +2275,7 @@ export class Engine {
       return;
     }
     let fp: FinishPlan | null = null;
-    if (spec.kind === 'tiled') fp = planFinish({ width: info.width, height: info.height, pixelAspect: 1, frames: Math.max(1, Math.round(info.seconds * (info.fps || 24))), fps: info.fps || 24 }, spec.options);
+    if (spec.kind === 'tiled') fp = planFinish({ width: info.width, height: info.height, pixelAspect: 1, frames: Math.max(1, Math.round(info.seconds * (info.fps || 24))), fps: info.fps || 24 }, spec.options, tiling);
     const files = checkFiles(oi, fp ? lorasOf(fp) : [spec.kind === 'single' ? spec.lora : 'refine'], 'local');
     if (!files.models) {
       plan.ok = false;
@@ -2289,6 +2296,29 @@ export class Engine {
       plan.notes.push('Decode on this card (16 GB): the official workflows\' low-VRAM tiles, 512 px / 64 / 128 frames / 32 — the Refine card\'s 1024 / 128 / 256 took 27 min to decode a Full HD clip of 121 frames here.');
     }
     plan.notes.push(`On the local ComfyUI: ${files.models.transformer.replace(/\.safetensors$/, '')}, ${Object.values(files.models.loras).map((x) => String(x).split('/').pop()!.replace(/\.safetensors$/, '')).join(' + ')}.`);
+  }
+
+  /**
+   * The LTX pack's sizes for a tiled finishing card (LTXVGetTilingSizes, one-node prompts on the local ComfyUI, cached
+   * per request): what the card shows before a run. Undefined for other tools; a lookup that answers null where the
+   * pack could not be asked in time (the card then says the sizes come at run time).
+   */
+  private async tilingForCard(toolId: string, options: ToolOptions, info: SourceInfo, resource?: string | null, waitMs = 4000): Promise<((r: TilingRequest) => TilingSizes | null) | undefined> {
+    const spec = finishSpec(toolId, options);
+    if (!spec || spec.kind !== 'tiled' || info.media !== 'video' || !info.width || !info.height) return undefined;
+    // Only where the card would run: LTX finishing runs on the local ComfyUI (a card routed elsewhere is refused anyway).
+    const entry = this.library.get(spec.workflowId);
+    if (entry) {
+      const r = this.services.resources.resolve(taskOf(entry.manifest.task, entry.manifest.id), resource ?? null, (x) => this.services.caps.has(x, entry.manifest.id)).resource;
+      if (this.finishingElsewhere(r, entry.manifest.id)) return undefined;
+    }
+    const frames = Math.max(1, Math.round(info.seconds * (info.fps || 24)));
+    const reqs = tilingRequests({ width: info.width, height: info.height, pixelAspect: 1, frames, fps: info.fps || 24 }, spec.options);
+    try {
+      return await tilingLookup(this.comfy, reqs, waitMs);
+    } catch {
+      return () => null;
+    }
   }
 
   private vramTotal: { at: number; gb: number | null } | null = null;
@@ -2362,7 +2392,13 @@ export class Engine {
     let needs: LoraId[];
     let nodes: string[];
     if (spec.kind === 'tiled') {
-      fp = planFinish({ width, height, pixelAspect: 1, frames, fps }, { ...spec.options, decode: await this.decodeFor(spec.options) });
+      const fo = { ...spec.options, decode: await this.decodeFor(spec.options) };
+      const src0 = { width, height, pixelAspect: 1, frames, fps };
+      // The LTX pack's sizes for this clip (the same requests the graph's LTXVGetTilingSizes nodes get): the delivery,
+      // the preview tile and the estimate need them before the run. A busy ComfyUI answers after its current job.
+      this.phase(card, 'Asking the LTX pack for the sizes');
+      fp = planFinish(src0, fo, await tilingLookup(this.comfy, tilingRequests(src0, fo), 90_000));
+      if (!fp.sized && fo.preview) throw new Error('The LTX pack did not give its tiling sizes in time (is the local ComfyUI busy with another job?): a preview tile needs them to pick its tile. Try again when it is idle.');
       needs = lorasOf(fp);
       nodes = requiredNodes(fp, 'video', true);
     } else {
@@ -2451,11 +2487,17 @@ export class Engine {
         spec, sourceFrames: counted, frames, fps,
         plan: fp ? {
           preset: fp.options.preset, preview: !!crop, delivery: fp.delivery, frames: fp.frames, previewCrop: fp.previewCrop,
-          passes: fp.passes.map((p) => ({ name: p.name, lora: p.lora, extraLora: p.extraLora, canvas: p.canvas, tile: p.tile, tiles: p.grid.count, grid: [p.grid.x, p.grid.y], steps: p.steps, fromImage: p.fromImage, load: p.load })),
+          passes: fp.passes.map((p) => ({
+            name: p.name, lora: p.lora, extraLora: p.extraLora, tiling: p.tiling, canvas: p.canvas, tile: p.tile,
+            tiles: p.grid ? p.grid.x * p.grid.y : null, grid: p.grid ? [p.grid.x, p.grid.y] : null,
+            tilesEstimated: p.approx ? { spatial: p.approx.spatial, grid: [p.approx.x, p.approx.y], temporal: p.approx.temporal } : null,
+            pack: p.sizes ? { summary: p.sizes.summary, chunks: p.sizes.chunks, tileFrames: p.sizes.tileFrames, overlapFrac: p.sizes.overlapFrac } : null,
+            steps: p.steps, fromImage: p.fromImage, load: p.load,
+          })),
           load: fp.load, loadFormula: fp.loadFormula, fixes: fp.fixes, warnings: fp.warnings, decode: fp.options.decode ?? 'card',
         } : { lora: sp!.lora, size: sp!.size, canvas: sp!.canvas, delivery: sp!.delivery, frames: sp!.frames, fixes: sp!.fixes, warnings: sp!.warnings },
         models: files.models, prompts, seed,
-        estimate: { seconds: Math.round(estimate.seconds), basis: estimate.basis, tileSteps: estimate.tileSteps },
+        estimate: estimate ? { seconds: Math.round(estimate.seconds), basis: estimate.basis, tileSteps: estimate.tileSteps } : null,
         took: { seconds: Math.round(took * 10) / 10, basis: meter?.timed ? 'ComfyUI execution time' : 'wall-clock' },
         vram: { ...seenVram, basis: 'lowest vram_free of /system_stats, read every 5 s while the job ran' },
         master: masterRec ? { kind: masterRec.kind, dir: masterRec.dir, frames: masterRec.count } : null,
@@ -2470,11 +2512,11 @@ export class Engine {
     }
 
     this.phase(card, 'Building the comp');
-    const delivery = fp ? fp.delivery : sp!.delivery;
+    const delivery = (fp ? fp.delivery : sp!.delivery) ?? { w: 0, h: 0 };
     const upItem = await host.importFile(saved.abs);
     const up = await host.itemInfo(upItem);
-    const w = up?.width || delivery.w;
-    const h = up?.height || delivery.h;
+    const w = up?.width || delivery.w || width;
+    const h = up?.height || delivery.h || height;
     const duration = up?.duration || (crop ? fp!.frames.source / fps : src.info.duration || frames / fps);
     const compName = this.toolCompName(card, saved.n);
     const what = fp ? fp.passes.map((p) => p.name).join(' → ') : (SINGLE_TOOLS.find((x) => x.lora === sp!.lora)?.name ?? sp!.lora);
@@ -2495,7 +2537,7 @@ export class Engine {
     const fmtT = (sec: number): string => (sec < 90 ? `${Math.round(sec)} s` : `${Math.round(sec / 60)} min`);
     this.notice = `${what} in the new comp "${compName}" (${w}×${h}${crop ? ', one tile' : ''}): ${frames} frames`
       + `${masterRec ? `; the ${masterRec.kind === 'exr16' ? 'EXR' : 'PNG 16-bit'} master is next to the project` : ''}, the comp shows an 8-bit MP4 preview. `
-      + `Estimated ${describeFinishEstimate(estimate).split(' (')[0]}, took ${fmtT(took)}.`;
+      + `${estimate ? `Estimated ${describeFinishEstimate(estimate).split(' (')[0]}, took` : 'Took'} ${fmtT(took)}.`;
     this.recordVersion(card, m, {
       n: saved.n, file: saved.rel, kind: 'video', workflowId: m.id, prompt: card.prompt, seed, width: w, height: h, seconds: duration,
       jobId: res.jobId, createdAt: new Date().toISOString(), elapsedMs: Date.now() - t0, remaps,

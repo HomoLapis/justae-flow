@@ -84,8 +84,8 @@ export function requiredNodes(plan: FinishPlan, input: 'frames' | 'video' = 'fra
     'UNETLoader', 'CLIPLoader', 'VAELoader', 'CLIPTextEncode', 'ImageScale', 'ImageFromBatch',
     'RepeatImageBatch', 'EmptyLTXVLatentVideo', 'LTXVConditioning', 'ManualSigmas', 'KSamplerSelect',
     'VAEDecodeTiled', 'SaveImageAdvanced',
-    // ComfyUI-LTXVideo
-    'LTXICLoRALoaderModelOnly', 'LTXAddVideoICLoRAGuide', 'LTXVTiledFusionSampler',
+    // ComfyUI-LTXVideo (the user's install): the sizes, the IC-LoRA loader and guide, the sampler
+    'LTXVGetTilingSizes', 'LTXICLoRALoaderModelOnly', 'LTXAddVideoICLoRAGuide', 'LTXVTiledFusionSampler',
     // VideoHelperSuite: batches joined (the pad)
     'VHS_MergeImages',
   ];

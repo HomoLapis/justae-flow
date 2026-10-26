@@ -34,7 +34,8 @@ import { WorkflowLibrary } from '../server/library.ts';
 import { makeServices } from '../server/services.ts';
 import { FAKE_KEY, fakeV2, resourceChecks } from './selftest-resources.ts';
 import { LTX_LICENCE_LINE } from '../core/finishing/licence.ts';
-import { DEFAULT_OPTIONS as FINISH_DEFAULTS, planFinish, tileGrid } from '../core/finishing/plan.ts';
+import { DEFAULT_OPTIONS as FINISH_DEFAULTS, planFinish, tilingRequests } from '../core/finishing/plan.ts';
+import { parseTilingSummary, tilingKey, windowsToCover, type TilingRequest } from '../core/finishing/sizes.ts';
 import { DEFAULT_PROMPTS as FINISH_PROMPTS, lintPrompt } from '../core/finishing/prompt.ts';
 import { TASKS } from '../server/resources.ts';
 
@@ -194,6 +195,19 @@ for (const m of library.list()) {
     }
   }
 }
+// LTXVGetTilingSizes, faked: the answers the real pack gave (scripts/fixtures/ltx-tiling.json, recorded by
+// verify-finishing --record), matched on size and choices; the frame count only changes the temporal line there.
+const tilingFixture = (JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'ltx-tiling.json'), 'utf8')) as { answers: Record<string, string> }).answers;
+const tilingAsked: string[] = [];
+function fakeTiling(inp: Record<string, unknown>): string {
+  const r: TilingRequest = { width: Number(inp.width), height: Number(inp.height), frames: Number(inp.frame_count), tileSize: inp.tile_size as TilingRequest['tileSize'], initialCanvas: inp.initial_canvas_size as TilingRequest['initialCanvas'], outputSize: inp.output_size as TilingRequest['outputSize'] };
+  tilingAsked.push(tilingKey(r));
+  const exact = tilingFixture[tilingKey(r)];
+  if (exact) return exact;
+  const [size, , ...choices] = tilingKey(r).split('·');
+  const near = Object.entries(tilingFixture).find(([k]) => k.startsWith(`${size}·`) && k.endsWith(`·${choices.join('·')}`));
+  return (near ?? Object.entries(tilingFixture)[0])[1];
+}
 const fake = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://x');
   const body = await new Promise<string>((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(b)); });
@@ -213,6 +227,12 @@ const fake = createServer(async (req, res) => {
       setTimeout(() => {
         history[p.prompt_id] = { status: { status_str: 'success' }, outputs: { 7: { text: ['<think>frames</think>Description: A small sailboat glides to the right on a calm lake at dawn.'] } } };
       }, 150);
+      return json({ prompt_id: p.prompt_id });
+    }
+    // The LTX pack's sizes, asked before a run: one LTXVGetTilingSizes node, its summary in /history.
+    if (classes.length === 1 && classes[0] === 'LTXVGetTilingSizes') {
+      const inp = (Object.values(p.prompt as Record<string, { inputs: Record<string, unknown> }>)[0]).inputs;
+      history[p.prompt_id] = { status: { status_str: 'success', completed: true }, outputs: { 1: { text: [fakeTiling(inp)] } } };
       return json({ prompt_id: p.prompt_id });
     }
     // LTX finishing: the 16-bit frames on the SaveImageAdvanced node, the MP4 on the SaveVideo node (the engine reads them by node id).
@@ -955,36 +975,47 @@ console.log('comp tab');
 
 console.log('ltx finishing');
 {
-  // The planner, ported from Flow 2: the official grid, frames, the 8K ladder.
-  check('Tiled Fusion grid = ComfyUI-LTXVideo\'s planner: Full HD 9, 4K 49, 8K 210 tiles of 1024×576',
-    tileGrid(1920, 1088, 1024, 576).count === 9 && tileGrid(3840, 2176, 1024, 576).count === 49 && tileGrid(7680, 4352, 1024, 576).count === 210);
-  const fhd = planFinish({ width: 1280, height: 704, pixelAspect: 1, frames: 121, fps: 24 }, { ...FINISH_DEFAULTS, preset: 'refine-fhd', preview: false });
-  check('Refine Full HD of a 5 s 1280×704 clip: 1920×1056, 3×3 tiles, 121 → 129 frames in 2 windows of 97, 144 tile-steps',
-    fhd.delivery.w === 1920 && fhd.delivery.h === 1056 && fhd.passes[0].grid.count === 9 && fhd.frames.total === 129 && fhd.frames.pad === 8 && fhd.frames.windows === 2 && fhd.load === 144);
-  const r8 = planFinish({ width: 1920, height: 1080, pixelAspect: 1, frames: 48, fps: 24 }, { ...FINISH_DEFAULTS, preset: 'refine-8k', preview: false });
-  check('8K goes through 4K: Refine 3840×2176, then a 2-step pass at 7680×4352 from the image', r8.passes.length === 2 && r8.passes[0].canvas.w === 3840 && r8.passes[1].canvas.w === 7680 && r8.passes[1].fromImage && r8.passes[1].steps === 2);
-  const dup = planFinish({ width: 1280, height: 704, pixelAspect: 1, frames: 121, fps: 24 }, { ...FINISH_DEFAULTS, preset: 'refine-fhd', preview: false, duplicate: 2 });
+  // The plan: what each pass asks the LTX pack for; the pack's answers (the recorded fixture) give the sizes.
+  // The recorded answer for the request (or, for a frame count not recorded, the one for the same size and choices).
+  const lookup = (r: TilingRequest) => parseTilingSummary(tilingFixture[tilingKey(r)] ?? fakeTiling({ width: r.width, height: r.height, frame_count: r.frames, tile_size: r.tileSize, initial_canvas_size: r.initialCanvas, output_size: r.outputSize }));
+  const sail = { width: 1280, height: 704, pixelAspect: 1, frames: 121, fps: 24 };
+  check('every tiled pass asks the LTX pack (LTXVGetTilingSizes): Full HD → its FullHD output, 8K → 4K then 8K, qHD tiles',
+    JSON.stringify(tilingRequests(sail, { ...FINISH_DEFAULTS, preset: 'refine-fhd', preview: false }).map((r) => r.outputSize)) === '["FullHD"]'
+    && JSON.stringify(tilingRequests(sail, { ...FINISH_DEFAULTS, preset: 'refine-8k', preview: false }).map((r) => r.outputSize)) === '["4K","8K"]'
+    && tilingRequests(sail, { ...FINISH_DEFAULTS, preset: 'restore', preview: false })[0].tileSize === 'qHD');
+  const fhd = planFinish(sail, { ...FINISH_DEFAULTS, preset: 'refine-fhd', preview: false }, lookup);
+  check('Refine Full HD of a 5 s 1280×704 clip, on the pack\'s answer: 1920×1056, its 3×3 tiles, 121 → 129 frames, 2 chunks; ≈ 144 tile-steps by the estimate\'s count',
+    fhd.delivery?.w === 1920 && fhd.delivery.h === 1056 && fhd.passes[0].grid?.x === 3 && fhd.passes[0].grid.y === 3 && fhd.frames.total === 129 && fhd.frames.pad === 8 && fhd.passes[0].sizes?.chunks === 2 && fhd.load === 144, JSON.stringify([fhd.delivery, fhd.passes[0].grid, fhd.load]));
+  check('…without the pack\'s answer the plan has no sizes (the card says "at run time"), and no code here makes them up', (() => { const b = planFinish(sail, { ...FINISH_DEFAULTS, preset: 'refine-fhd', preview: false }); return !b.sized && b.delivery === null && b.passes[0].canvas === null && b.load === null; })());
+  const r8 = planFinish({ width: 1920, height: 1080, pixelAspect: 1, frames: 120, fps: 24 }, { ...FINISH_DEFAULTS, preset: 'refine-8k', preview: false }, lookup);
+  check('8K goes through 4K: Refine on the pack\'s 3840×2176, then a 2-step pass on its 7680×4352 from the image', r8.passes.length === 2 && r8.passes[0].canvas?.w === 3840 && r8.passes[1].canvas?.w === 7680 && r8.passes[1].fromImage && r8.passes[1].steps === 2, JSON.stringify(r8.passes.map((p) => p.canvas)));
+  const dup = planFinish(sail, { ...FINISH_DEFAULTS, preset: 'refine-fhd', preview: false, duplicate: 2 });
   check('Fast scene ×2: 121 → 242 → 257 frames (8n+1, 15 copies of the last frame), conditioning at 48 fps', dup.frames.content === 242 && dup.frames.total === 257 && dup.frames.pad === 15 && dup.conditioningFps === 48);
+  check('the estimate\'s clean-room count: 960-px windows at overlap 0.5 cover 1920 in 3, 129 frames in 97-frame windows in 2', windowsToCover(1920, 960, 0.5) === 3 && windowsToCover(129, 97, 0.5) === 2);
   check('the Look check: subjects flagged, rendering words pass', lintPrompt('crisp detail, a sailboat on the lake', 'refine').length === 2 && lintPrompt(FINISH_PROMPTS.positive, 'refine').length === 0);
 
   // The cards' plans.
   const man = (id: string) => library.get(id)?.manifest;
   const clip5 = { kind: 'layer' as const, media: 'video' as const, width: 1280, height: 704, fps: 24, seconds: 121 / 24, requested: 121 / 24, name: 'Sailboat' };
-  const lp = toolById('upscale')!.plan(clip5, { engine: 'ltx', size: 'fhd' }, man, { prompt: 'crisp detail, the boat' });
-  check('Upscale ▸ LTX Refine: Full HD 1920×1056, an optional "Look", the time from the tile count, measured on an RTX 5080',
+  const lp = toolById('upscale')!.plan(clip5, { engine: 'ltx', size: 'fhd' }, man, { prompt: 'crisp detail, the boat', tiling: lookup });
+  check('Upscale ▸ LTX Refine: Full HD 1920×1056 (the pack\'s), an optional "Look", the time from the tile count, measured on an RTX 5080',
     lp.ok && lp.workflowId === 'ltx25-refine' && lp.output?.width === 1920 && lp.output.height === 1056 && lp.prompt?.label === 'Look' && !!lp.prompt.optional
     && lp.prompt.placeholder === 'sharpness, grain, light — not the subjects' && /measured on an RTX 5080/.test(lp.estimate?.line ?? '') && (lp.estimate?.seconds ?? 0) > 0, JSON.stringify([lp.reason, lp.output, lp.estimate]));
   check('…a subject in the Look is warned about, with what the check is', lp.warnings.some((w) => /"boat"/.test(w) && /simple check/.test(w)));
   check('…the master is a PNG 16-bit sequence, the comp an MP4 preview', lp.notes.some((n) => /PNG 16-bit sequence/.test(n) && /MP4 preview/.test(n)));
-  const l8 = toolById('upscale')!.plan(clip5, { engine: 'ltx', size: '8k' }, man);
+  const l8 = toolById('upscale')!.plan(clip5, { engine: 'ltx', size: '8k' }, man, { tiling: lookup });
   check('…8K says it goes through 4K', l8.ok && l8.output?.width === 7680 && l8.notes.some((n) => /8K always goes through 4K/.test(n)));
+  const lx = toolById('upscale')!.plan(clip5, { engine: 'ltx', size: 'fhd' }, man);
+  check('…without the pack\'s answer the card says the sizes come from the LTX pack at run time, and gives no output size or time', lx.ok && !lx.output && !lx.estimate && lx.notes.some((n) => /Sizes from the LTX pack at run time/.test(n)), JSON.stringify(lx.notes.slice(0, 2)));
+  check('…the sizes line says they are the pack\'s', lp.notes.some((n) => /3×3 = 9 tiles of 960×544/.test(n) && /from the LTX pack \(LTXVGetTilingSizes\)/.test(n)), JSON.stringify(lp.notes.slice(0, 2)));
   check('…the LTX variants are cards of their own', lp.variant === 'ltx:fhd' && l8.variant === 'ltx:8k' && toolById('upscale')!.plan(clip5, { engine: 'ltx', size: 'fhd', fast: 2, preview: true }, man).variant === 'ltx:fhd·f2·tile');
   check('…and SeedVR2 stays the default engine', toolById('upscale')!.defaults.engine === 'seedvr2' && toolById('upscale')!.plan(clip5, { scale: 2 }, man).workflowId === 'seedvr2-upscale');
   const arch = { ...clip5, width: 640, height: 480, seconds: 2, requested: 2 };
-  const rr = toolById('restore')!.plan(arch, { mode: 'restore-refine' }, man);
-  check('Archive restore + Refine 30 %: one pass at 1440×1088 (4:3), Refine 0.3 as the second IC-LoRA', rr.ok && /Refine Details at 30 %/.test(rr.makes) && rr.notes.some((n) => /\+ Refine 30 %/.test(n) && /1440×1088/.test(n)), JSON.stringify([rr.reason, rr.makes, rr.notes[0]]));
-  const ra = toolById('restore')!.plan(arch, { mode: 'archive' }, man);
-  check('Archive order: Restore first, then Refine ×2 (2880×2160)', ra.ok && ra.output?.width === 2880 && ra.output.height === 2160 && ra.notes.some((n) => /Restore first, then Refine/.test(n)));
+  const rr = toolById('restore')!.plan(arch, { mode: 'restore-refine' }, man, { tiling: lookup });
+  check('Archive restore + Refine 30 %: one pass on the pack\'s Full HD canvas, Refine 0.3 as the second IC-LoRA', rr.ok && /Refine Details at 30 %/.test(rr.makes) && rr.notes.some((n) => /\+ Refine 30 %/.test(n) && /1920×1440/.test(n)), JSON.stringify([rr.reason, rr.makes, rr.notes[0]]));
+  check('…on a 4:3 scan the card\'s 1440-wide canvas and 960×544 tile are said beside the pack\'s', rr.notes.some((n) => /Restore card works a 4:3 source at 1440 wide/.test(n)) && rr.warnings.some((w) => /another shape than the 960×544/.test(w)), JSON.stringify([rr.notes, rr.warnings]));
+  const ra = toolById('restore')!.plan(arch, { mode: 'archive' }, man, { tiling: lookup });
+  check('Archive order: Restore first, then Refine ×2 on the pack\'s 4K (2× its Full HD): 3840×2880', ra.ok && ra.output?.width === 3840 && ra.output.height === 2880 && ra.notes.some((n) => /Restore first, then Refine/.test(n)), JSON.stringify(ra.output));
   check('Restore says Colorization is a tool of its own (not documented as combinable)', rr.notes.some((n) => /Colorization IC-LoRA is a separate tool/.test(n)));
   const db = toolById('deblur')!.plan(clip5, {}, man);
   check('Deblur: one pass at the source size, the card\'s sentence, a scene to write', db.ok && db.prompt?.label === 'Scene' && !db.prompt.optional && db.output?.width === 1280 && db.notes.some((n) => /sentence the card trained on/.test(n)));
@@ -1011,8 +1042,14 @@ console.log('ltx finishing');
   const g = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
   const byClass = (c: string) => Object.values(g).filter((n) => n.class_type === c);
   const tf = byClass('LTXVTiledFusionSampler')[0]?.inputs;
-  check('its graph: the clip uploaded into LoadVideo, Tiled Fusion with 1024×576 tiles, overlap 0.5, blend 0.05, cfg 1, 97-frame windows',
-    byClass('LoadVideo')[0]?.inputs.file === 'uploaded.png' && tf?.tile_width === 1024 && tf.tile_height === 576 && tf.overlap_frac === 0.5 && tf.blend_var === 0.05 && tf.cfg === 1 && tf.tile_frames === 97);
+  const toPack = (v: unknown, slot: number): boolean => Array.isArray(v) && g[v[0] as string]?.class_type === 'LTXVGetTilingSizes' && v[1] === slot;
+  check('its graph: the clip uploaded into LoadVideo, Tiled Fusion with the LTX pack\'s tiles, overlap and window (links to LTXVGetTilingSizes), blend 0.05, cfg 1',
+    byClass('LoadVideo')[0]?.inputs.file === 'uploaded.png' && toPack(tf?.tile_width, 2) && toPack(tf?.tile_height, 3) && toPack(tf?.overlap_frac, 6) && toPack(tf?.tile_frames, 7) && tf?.blend_var === 0.05 && tf.cfg === 1,
+    JSON.stringify(tf));
+  check('…the pack was asked before the run with the inputs its node gets in the graph', (() => {
+    const n = byClass('LTXVGetTilingSizes')[0]?.inputs;
+    return !!n && tilingAsked.includes(`${n.width}x${n.height}·${n.frame_count}f·${n.tile_size}·${n.initial_canvas_size}·${n.output_size}`);
+  })(), JSON.stringify([byClass('LTXVGetTilingSizes')[0]?.inputs, tilingAsked.slice(-3)]));
   check('…the 8 distilled sigmas, the Refine IC-LoRA at 1.0; on a 16 GB card the official workflows\' low-VRAM decode, 512/64/128/32',
     byClass('ManualSigmas')[0]?.inputs.sigmas === '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0'
     && /refine-details/.test(String(byClass('LTXICLoRALoaderModelOnly')[0]?.inputs.lora_name)) && byClass('LTXICLoRALoaderModelOnly')[0]?.inputs.strength_model === 1
@@ -1022,33 +1059,34 @@ console.log('ltx finishing');
   const lv = lc.versions[0];
   check('the master: every 16-bit frame next to the project, recorded with the version', lv?.exports?.[0]?.kind === 'png16' && existsSync(lv.exports[0].path) && /_png16[\\/]/.test(lv.exports[0].path));
   const lComp = host.comps.at(-1)!;
-  check('a new comp at the delivery size (1344×768 → 1890×1080), the original under it at 140.625 %, switched off',
-    lComp.width === 1890 && lComp.height === 1080 && lComp.layers[1].visible === false && Math.abs((lComp.layers[1].scale ?? 0) - 140.625) < 0.01 && /LTX Full HD/.test(lComp.name), JSON.stringify([lComp.width, lComp.height, lComp.layers[1], lComp.name]));
+  check('a new comp at the delivery size (1344×768 → the pack\'s 1920×1088 → 1904×1088 at the source\'s aspect), the original under it at 141.67 %, switched off',
+    lComp.width === 1904 && lComp.height === 1088 && lComp.layers[1].visible === false && Math.abs((lComp.layers[1].scale ?? 0) - 141.667) < 0.01 && /LTX Full HD/.test(lComp.name), JSON.stringify([lComp.width, lComp.height, lComp.layers[1], lComp.name]));
   // The run's own record sits under "host" in job.json, as every Comp tab tool's does.
   const lJob = JSON.parse(readFileSync(join(engine.state().mediaDir, lv.file.replace(/\.\w+$/, '.job.json')), 'utf8')).host;
-  check('its job.json: the plan (tiles, frames), the estimate and its basis, the time it took, the VRAM seen, the licence',
-    lJob.finishing?.plan?.passes?.[0]?.tiles === 9 && lJob.finishing.estimate.seconds > 0 && / in \d+(–\d+)? s/.test(lJob.finishing.estimate.basis) && typeof lJob.finishing.took.seconds === 'number'
+  check('its job.json: the plan (the pack\'s tiles and summary, the estimate\'s count), the estimate and its basis, the time it took, the VRAM seen, the licence',
+    lJob.finishing?.plan?.passes?.[0]?.tiles === 9 && /tile_frames/.test(lJob.finishing.plan.passes[0].pack?.summary ?? '') && lJob.finishing.plan.passes[0].tilesEstimated?.spatial === 9 && lJob.finishing.estimate.seconds > 0 && / in \d+(–\d+)? s/.test(lJob.finishing.estimate.basis) && typeof lJob.finishing.took.seconds === 'number'
     && 'minFreeGb' in lJob.finishing.vram && lJob.finishing.licence.startsWith(LTX_LICENCE_LINE), JSON.stringify(lJob.finishing ? { p: lJob.finishing.plan?.passes?.[0], e: lJob.finishing.estimate, t: lJob.finishing.took, v: lJob.finishing.vram, l: String(lJob.finishing.licence).slice(0, 40) } : Object.keys(lJob)));
 
-  // A preview tile: one 1024×576 tile, the original placed so the tile lines up.
+  // A preview tile: one of the pack's tiles (960×544 here), the original placed so the tile lines up.
   const { id: tId } = await engine.runCompTool({ tool: 'upscale', source: 'layer', options: { engine: 'ltx', size: 'fhd', preview: true }, cap: 8, prompt: 'subtle film grain' });
   await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === tId)?.status ?? ''));
   const tComp = host.comps.at(-1)!;
   const crop = (submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, number> }>);
   const ic = Object.values(crop).find((n) => n.class_type === 'ImageCrop')?.inputs;
   check('…a preview tile keeps the Refine card\'s decode, 1024/128/256 (it fits)', Object.values(crop).find((n) => n.class_type === 'VAEDecodeTiled')?.inputs.tile_size === 1024);
-  check('a preview tile: a 1024×576 comp, the original scaled to the canvas and moved so the tile lines up',
-    engine.state().cards.find((c) => c.id === tId)?.status === 'done' && tComp.width === 1024 && tComp.height === 576 && !!ic
-    && JSON.stringify(tComp.layers[1].position) === JSON.stringify([1888 / 2 - ic.x, 1088 / 2 - ic.y]), JSON.stringify([tComp.width, tComp.layers[1], ic, engine.state().cards.find((c) => c.id === tId)?.error]));
+  check('a preview tile: a comp of the pack\'s tile (960×544), the original scaled to the pack\'s canvas and moved so the tile lines up',
+    engine.state().cards.find((c) => c.id === tId)?.status === 'done' && tComp.width === 960 && tComp.height === 544 && !!ic && Array.isArray(ic.width)
+    && JSON.stringify(tComp.layers[1].position) === JSON.stringify([1920 / 2 - ic.x, 1088 / 2 - ic.y]), JSON.stringify([tComp.width, tComp.layers[1], ic, engine.state().cards.find((c) => c.id === tId)?.error]));
 
   // Archive restore + Refine 30 %, and a single-pass tool, from the work area.
   const { id: rId } = await engine.runCompTool({ tool: 'restore', source: 'workArea', options: { mode: 'restore-refine' }, cap: 8, prompt: '' });
   await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === rId)?.status ?? ''));
   const rg = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
   const loras = Object.values(rg).filter((n) => n.class_type === 'LTXICLoRALoaderModelOnly').map((n) => `${String(n.inputs.lora_name).split('/').pop()}@${n.inputs.strength_model}`);
-  check('Restore + Refine: Restore at 1.0 and Refine at 0.3 in the same pass, on 960×544 tiles, the default Restore look',
+  check('Restore + Refine: Restore at 1.0 and Refine at 0.3 in the same pass, on the pack\'s qHD tiles, the default Restore look',
     engine.state().cards.find((c) => c.id === rId)?.status === 'done' && loras.join() === 'ltx-2.5-22b-ic-lora-restore-1.0.safetensors@1,ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors@0.3'
-    && Object.values(rg).some((n) => n.class_type === 'LTXVTiledFusionSampler' && n.inputs.tile_width === 960 && n.inputs.tile_height === 544)
+    && Object.values(rg).some((n) => n.class_type === 'LTXVGetTilingSizes' && n.inputs.tile_size === 'qHD' && n.inputs.output_size === 'FullHD')
+    && Object.values(rg).some((n) => n.class_type === 'LTXVTiledFusionSampler' && Array.isArray(n.inputs.tile_width) && rg[(n.inputs.tile_width as [string, number])[0]].class_type === 'LTXVGetTilingSizes')
     && Object.values(rg).some((n) => n.class_type === 'CLIPTextEncode' && n.inputs.text === FINISH_PROMPTS.restorePositive), engine.state().cards.find((c) => c.id === rId)?.error ?? loras.join());
   check('…and the card says the negative does nothing at guidance 1.0, instead of a field that would do nothing', !toolById('restore')!.plan({ kind: 'layer', media: 'video', width: 640, height: 480, fps: 24, seconds: 2, requested: 2, name: 'x' }, {}, (id) => library.get(id)?.manifest).fields && toolById('restore')!.plan({ kind: 'layer', media: 'video', width: 640, height: 480, fps: 24, seconds: 2, requested: 2, name: 'x' }, {}, (id) => library.get(id)?.manifest).notes.some((n) => /does not evaluate a negative prompt/.test(n)));
   const { id: dId } = await engine.runCompTool({ tool: 'deblur', source: 'workArea', options: {}, cap: 8, prompt: 'a sailboat on a lake' });
@@ -1102,8 +1140,8 @@ console.log('ltx finishing');
     check('POST /api/finishing/graph wants the page\'s session token (it reads a file)', refused.status === 403);
     const r = await fetch(`${base}/api/finishing/graph`, { method: 'POST', headers: { 'x-flow-token': SESSION_TOKEN }, body: JSON.stringify({ file: clip }) });
     const d = await r.json() as { error?: string; graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>; loadNode: string; saveNode: string; previewNode: string; plan: { delivery: { w: number; h: number }; tiles: number; frames: { source: number; total: number } }; estimate: { line: string } };
-    check('…plans LTX Refine to Full HD from the file itself (ffprobe: 448×256, 29 frames → 1890×1080 on a 1888×1088 canvas, 29 → 41 frames)',
-      r.ok && d.plan.delivery.w === 1890 && d.plan.delivery.h === 1080 && d.plan.frames.source === 29 && d.plan.frames.total === 41
+    check('…plans LTX Refine to Full HD from the file itself (ffprobe: 448×256, 29 frames → 29 → 41 frames; the fake pack’s 1920×1088 canvas → 1904×1088, 9 tiles)',
+      r.ok && d.plan.delivery.w === 1904 && d.plan.delivery.h === 1088 && d.plan.tiles === 9 && d.plan.frames.source === 29 && d.plan.frames.total === 41
       && d.graph[d.loadNode]?.class_type === 'LoadVideo' && d.graph[d.saveNode]?.class_type === 'SaveImageAdvanced' && d.graph[d.previewNode]?.class_type === 'SaveVideo' && /RTX 5080/.test(d.estimate.line),
       d.error ?? JSON.stringify(d.plan));
     srv.close();

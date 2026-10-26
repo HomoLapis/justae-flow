@@ -15,19 +15,24 @@
  * subjects — and is checked; delivery is a 16-bit PNG (or EXR) master, the MP4 only a preview.
  *
  * Plans here are what a card says before it runs; the engine plans again with the exact frame count it reads from
- * the file, and checks the local ComfyUI's nodes and files (server/engine.ts, finishingTool).
+ * the file, and checks the local ComfyUI's nodes and files (server/engine.ts, finishingTool). The tiled cards' sizes —
+ * canvas, tiles, windows, and so the output size and the time — are the LTX pack's (LTXVGetTilingSizes), asked by the
+ * server on the local ComfyUI and passed in as `extra.tiling`; without them the card says they come at run time.
  */
 
 import {
   DEFAULT_OPTIONS, planFinish, type FinishOptions, type FinishPlan, type FinishPresetId,
 } from '../finishing/plan.ts';
+import { SIZES_AT_RUN_TIME } from '../finishing/sizes.ts';
 import { describeIssues, lintPrompt, LINT_EXPLAINED, DEFAULT_PROMPTS } from '../finishing/prompt.ts';
 import { planSingle, SINGLE, type SingleLora } from '../finishing/single.ts';
 import { describeFinishEstimate, estimateFinish, estimateSingle } from '../finishing/estimate.ts';
 import { LTX_LICENCE_LINE, LTX_LICENCE_URL } from '../finishing/licence.ts';
-import { fmt, needsVideo, opt, what, type SourceInfo, type ToolDef, type ToolOptions, type ToolPlan } from './common.ts';
+import { fmt, needsVideo, opt, what, type SourceInfo, type ToolDef, type ToolExtra, type ToolOptions, type ToolPlan } from './common.ts';
 
-const LICENCE = { line: LTX_LICENCE_LINE, url: LTX_LICENCE_URL };
+/** The licence line every LTX finishing card carries. */
+export const LTX_CARD_LICENCE = { line: LTX_LICENCE_LINE, url: LTX_LICENCE_URL };
+const LICENCE = LTX_CARD_LICENCE;
 
 /**
  * The cards (Restore, Clean Plate) say to put what must not appear in the negative prompt. These graphs run at guidance
@@ -80,12 +85,21 @@ function framesOf(src: SourceInfo): number {
   return Math.max(1, Math.round(src.seconds * (src.fps || 24)));
 }
 
-/** The words every tiled plan says, from the planner itself. */
+/** The words every tiled plan says: the pack's sizes when the server has them, else that they come at run time. */
 function tiledNotes(fp: FinishPlan): string[] {
   const notes: string[] = [];
-  notes.push(fp.passes.map((p) => `${p.name}: ${p.canvas.w}×${p.canvas.h}, ${p.grid.x}×${p.grid.y} = ${p.grid.count} tiles of ${p.tile.w}×${p.tile.h}${p.extraLora ? `, + ${p.extraLora.kind === 'refine' ? 'Refine' : p.extraLora.kind} ${Math.round(p.extraLora.strength * 100)} % in the same pass` : ''}, ${p.steps} steps`).join(' → ') + '.');
-  notes.push(`Frames ${fp.frames.source}${fp.frames.duplicate > 1 ? ` ×${fp.frames.duplicate} = ${fp.frames.content}` : ''} → ${fp.frames.total} (8n+1, ${fp.frames.pad} copies of the last frame, cut after)`
-    + `${fp.frames.windows > 1 ? `, in ${fp.frames.windows} temporal windows of ${fp.frames.tileFrames}` : ''}: ${fp.load.toLocaleString('en-US')} tile-steps.`);
+  const extra = (p: FinishPlan['passes'][number]): string => (p.extraLora ? `, + ${p.extraLora.kind === 'refine' ? 'Refine' : p.extraLora.kind} ${Math.round(p.extraLora.strength * 100)} % in the same pass` : '');
+  const frames = `Frames ${fp.frames.source}${fp.frames.duplicate > 1 ? ` ×${fp.frames.duplicate} = ${fp.frames.content}` : ''} → ${fp.frames.total} (8n+1, ${fp.frames.pad} copies of the last frame, cut after)`;
+  if (!fp.sized) {
+    notes.push(SIZES_AT_RUN_TIME);
+    notes.push(`${fp.passes.map((p) => `${p.name}: the pack's ${p.tiling.canvas === 'initial' ? `${p.tiling.initialCanvas} canvas` : `${p.tiling.outputSize} output`}, ${p.tiling.tileSize} tiles${extra(p)}, ${p.steps} steps`).join(' → ')}. ${frames}.`);
+    return notes;
+  }
+  notes.push(fp.passes.map((p) => `${p.name}: ${p.canvas!.w}×${p.canvas!.h}, ${p.grid ? `${p.grid.x}×${p.grid.y} = ${p.grid.x * p.grid.y}` : `≈ ${p.approx!.spatial}`} tiles of ${p.tile!.w}×${p.tile!.h}${extra(p)}, ${p.steps} steps`).join(' → ')
+    + ' — sizes and tiles from the LTX pack (LTXVGetTilingSizes).');
+  const chunks = fp.passes[0].sizes?.chunks;
+  notes.push(`${frames}${chunks && chunks > 1 ? `, in ${chunks} temporal windows of ${fp.passes[0].sizes!.tileFrames}` : ''}.`);
+  notes.push(...fp.notes);
   return notes;
 }
 
@@ -102,7 +116,7 @@ function lookCheck(text: string | undefined, mode: 'refine' | 'restore'): string
 
 /* ─── Upscale ▸ LTX Refine ──────────────────────────────────────────── */
 
-export function ltxRefinePlan(src: SourceInfo, o: ToolOptions, manifest: (id: string) => unknown, extra?: { prompt?: string }): ToolPlan {
+export function ltxRefinePlan(src: SourceInfo, o: ToolOptions, manifest: (id: string) => unknown, extra?: ToolExtra): ToolPlan {
   const spec = finishSpec('upscale', { ...o, engine: 'ltx' }) as Extract<FinishSpec, { kind: 'tiled' }>;
   const size = opt(o, 'size', Object.keys(LTX_SIZES) as LtxSize[], 'fhd');
   const fast = spec.options.duplicate;
@@ -116,22 +130,23 @@ export function ltxRefinePlan(src: SourceInfo, o: ToolOptions, manifest: (id: st
   const bad = needsVideo(src);
   if (bad) return { ...plan, ok: false, reason: bad };
   if (!manifest(spec.workflowId)) return { ...plan, ok: false, reason: `The workflow ${spec.workflowId} is missing from workflows/.` };
-  const fp = planFinish({ width: src.width, height: src.height, pixelAspect: 1, frames: framesOf(src), fps: src.fps || 24 }, spec.options);
+  const fp = planFinish({ width: src.width, height: src.height, pixelAspect: 1, frames: framesOf(src), fps: src.fps || 24 }, spec.options, extra?.tiling);
   const seconds = fp.frames.source / (src.fps || 24);
-  plan.output = { width: fp.delivery.w, height: fp.delivery.h, seconds, fps: src.fps };
+  if (fp.delivery) plan.output = { width: fp.delivery.w, height: fp.delivery.h, seconds, fps: src.fps };
   // The run history keeps each size, "fast scene" and tile apart (a preview tile says nothing about a full run).
   plan.jobs = [{ workflowId: `${spec.workflowId}:${plan.variant}`, seconds }];
+  const at = fp.delivery ? ` at ${fp.delivery.w}×${fp.delivery.h}` : ' at the size the LTX pack sets';
   plan.makes = preview
-    ? `A new comp at ${fp.delivery.w}×${fp.delivery.h}: one tile of the ${LTX_SIZES[size]} result, from the middle of the frame, the first ${fmt(seconds)} — to judge the look before the full run. Your ${what(src)} sits under it, matched, switched off.`
-    : `A new comp at ${fp.delivery.w}×${fp.delivery.h}: your ${what(src)} refined by LTX-2.5 (Refine Details IC-LoRA)${size === 'same' ? ' at its own size' : ` to ${LTX_SIZES[size]}`}, with the original under it, switched off.`;
+    ? `A new comp${at}: one tile of the ${LTX_SIZES[size]} result, from the middle of the frame, the first ${fmt(seconds)} — to judge the look before the full run. Your ${what(src)} sits under it, matched, switched off.`
+    : `A new comp${at}: your ${what(src)} refined by LTX-2.5 (Refine Details IC-LoRA)${size === 'same' ? ' at its own size' : ` to ${LTX_SIZES[size]}`}, with the original under it, switched off.`;
   if (size === '8k') plan.notes.push('8K always goes through 4K: Refine to 4K, lanczos ×2, then a light 2-step refine — never 8K in one pass (the Refine card: "8K in one pass invents detail").');
   plan.notes.push(...tiledNotes(fp));
   if (fast > 1) plan.notes.push(`Fast scene: every frame ×${fast} before the model, the copies removed after.`);
   plan.notes.push(deliveryNote(spec.options.format));
   const est = estimateFinish(fp);
-  plan.estimate = { seconds: est.seconds, line: describeFinishEstimate(est) };
+  if (est) plan.estimate = { seconds: est.seconds, line: describeFinishEstimate(est) };
   plan.warnings.push(...fp.warnings);
-  if (src.width >= fp.delivery.w && src.height >= fp.delivery.h && size !== 'same' && !preview) plan.warnings.push(`The ${what(src)} is already ${src.width}×${src.height}: "${LTX_SIZES[size]}" adds no pixels — "Same size" refines without upscaling.`);
+  if (fp.delivery && src.width >= fp.delivery.w && src.height >= fp.delivery.h && size !== 'same' && !preview) plan.warnings.push(`The ${what(src)} is already ${src.width}×${src.height}: "${LTX_SIZES[size]}" adds no pixels — "Same size" refines without upscaling.`);
   const lint = lookCheck(extra?.prompt, 'refine');
   if (lint) plan.warnings.push(lint);
   return plan;
@@ -162,18 +177,19 @@ const restore: ToolDef = {
     const bad = needsVideo(src);
     if (bad) return { ...plan, ok: false, reason: bad };
     if (!manifest(spec.workflowId)) return { ...plan, ok: false, reason: `The workflow ${spec.workflowId} is missing from workflows/.` };
-    const fp = planFinish({ width: src.width, height: src.height, pixelAspect: 1, frames: framesOf(src), fps: src.fps || 24 }, spec.options);
+    const fp = planFinish({ width: src.width, height: src.height, pixelAspect: 1, frames: framesOf(src), fps: src.fps || 24 }, spec.options, extra?.tiling);
     const seconds = fp.frames.source / (src.fps || 24);
-    plan.output = { width: fp.delivery.w, height: fp.delivery.h, seconds, fps: src.fps };
+    if (fp.delivery) plan.output = { width: fp.delivery.w, height: fp.delivery.h, seconds, fps: src.fps };
     plan.jobs = [{ workflowId: `${spec.workflowId}:${plan.variant}`, seconds }];
+    const at = fp.delivery ? ` at ${fp.delivery.w}×${fp.delivery.h}` : ' at the size the LTX pack sets';
     plan.makes = preview
-      ? `A new comp at ${fp.delivery.w}×${fp.delivery.h}: one tile of the Restore pass, from the middle of the frame, the first ${fmt(seconds)}.`
-      : `A new comp at ${fp.delivery.w}×${fp.delivery.h}: your ${what(src)} restored by LTX-2.5 (Restore IC-LoRA at 100 %)`
+      ? `A new comp${at}: one tile of the Restore pass, from the middle of the frame, the first ${fmt(seconds)}.`
+      : `A new comp${at}: your ${what(src)} restored by LTX-2.5 (Restore IC-LoRA at 100 %)`
         + `${mode === 'restore-refine' ? ' with Refine Details at 30 % in the same pass' : mode === 'archive' ? ', then lanczos ×2 and refined (Refine Details)' : ''}, the original under it, switched off.`;
     plan.notes.push(mode === 'archive'
       ? 'Archive order, as the Restore card says: Restore first, then Refine — refining first sharpens the damage and desaturates the colour.'
       : mode === 'restore-refine' ? 'Both IC-LoRAs in one pass (Refine at 0.3, the card\'s 0.2–0.3): faster; colour fidelity is best sequential (Restore, then Refine).'
-        : 'Restore alone: the card\'s stage 1, "a legitimate result on its own" — at 1440 wide for 4:3, 1920 for 16:9.');
+        : 'Restore alone: the card\'s stage 1, "a legitimate result on its own", on the LTX pack\'s Full HD canvas.');
     plan.notes.push('Restore colours monochrome and tinted sources from their content (its card); the Colorization IC-LoRA is a separate tool — its card does not document combining it with Restore.');
     plan.notes.push(...tiledNotes(fp));
     if (spec.options.duplicate > 1) plan.notes.push(`Fast scene: every frame ×${spec.options.duplicate} before the model, the copies removed after.`);
@@ -181,7 +197,7 @@ const restore: ToolDef = {
     plan.notes.push('Interlaced sources: deinterlace before restoring (the card) — not done here.');
     plan.notes.push(NEGATIVE_NOTE);
     const est = estimateFinish(fp);
-    plan.estimate = { seconds: est.seconds, line: describeFinishEstimate(est) };
+    if (est) plan.estimate = { seconds: est.seconds, line: describeFinishEstimate(est) };
     plan.warnings.push(...fp.warnings.filter((w) => !/already larger/.test(w)));
     const lint = lookCheck(extra?.prompt, 'restore');
     if (lint) plan.warnings.push(lint);

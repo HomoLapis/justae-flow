@@ -4,7 +4,8 @@
  *   POST /api/finishing/graph   {file, size?: 'fhd' | 'same', fast?: 1|2|3}
  *       → the Refine graph for that file, planned from the file itself (ffprobe: size, frame count, fps), checked
  *         against the local ComfyUI's catalogue, ready to submit once the file is uploaded into its LoadVideo:
- *         {graph, loadNode, saveNode, previewNode, plan: {delivery, tiles, frames, load}, estimate: {seconds, line}}
+ *         {graph, loadNode, saveNode, previewNode, plan: {delivery, tiles, frames, load, sizes}, estimate: {seconds, line}}
+ *       (sizes and tiles: the LTX pack's, from its LTXVGetTilingSizes on the local ComfyUI)
  *
  * The Comp tab's runs go through the engine (server/engine.ts, finishingTool); this is the same planner and graph
  * builder (core/finishing) for a job the Flow window runs itself. Refine only, on the local ComfyUI: the file is
@@ -15,7 +16,9 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { SLUG } from '../core/brand.ts';
-import { DEFAULT_OPTIONS, localVerdict, planFinish, type FinishPresetId } from '../core/finishing/plan.ts';
+import { DEFAULT_OPTIONS, localVerdict, planFinish, tilingRequests, type FinishOptions, type FinishPresetId } from '../core/finishing/plan.ts';
+import { ComfyClient } from '../core/comfy/client.ts';
+import { tilingLookup } from './tiling.ts';
 import { checkModels, hasQuantizedTransformer, type NodeCatalog } from '../core/finishing/models.ts';
 import { buildFinishGraph } from '../core/finishing/graph.ts';
 import { DEFAULT_PROMPTS } from '../core/finishing/prompt.ts';
@@ -70,7 +73,7 @@ export function finishingRoutes(s: Services): Array<[string, RegExp, Handler]> {
         const clip = await probeClip(file);
         if (!clip) return send(res, 400, { error: 'ffprobe could not read the clip (is ffmpeg on the PATH?).' });
         const preset: FinishPresetId = q.size === 'same' ? 'refine-same' : 'refine-fhd';
-        const fast = q.fast === 2 || q.fast === 3 ? q.fast : 1;
+        const fast: 1 | 2 | 3 = q.fast === 2 || q.fast === 3 ? q.fast : 1;
         const local = s.resources.local();
         // On a card of 16 GB or less, the official workflows' low-VRAM decode (as the Comp tab does: server/engine.ts, decodeFor).
         let vramGb: number | null = null;
@@ -78,9 +81,10 @@ export function finishingRoutes(s: Services): Array<[string, RegExp, Handler]> {
           const st = await (await fetch(`${local.url.replace(/\/+$/, '')}/api/system_stats`, { signal: AbortSignal.timeout(4000) })).json() as { devices?: Array<{ vram_total?: number }> };
           vramGb = typeof st.devices?.[0]?.vram_total === 'number' ? st.devices[0].vram_total / 2 ** 30 : null;
         } catch { /* unknown: the card's decode */ }
-        const plan = planFinish({ width: clip.width, height: clip.height, pixelAspect: 1, frames: clip.frames, fps: clip.fps }, {
-          ...DEFAULT_OPTIONS, preset, preview: false, duplicate: fast, format: 'png16', decode: vramGb !== null && vramGb <= 17 ? 'low-vram' : 'card',
-        });
+        const src = { width: clip.width, height: clip.height, pixelAspect: 1, frames: clip.frames, fps: clip.fps };
+        const options: FinishOptions = { ...DEFAULT_OPTIONS, preset, preview: false, duplicate: fast, format: 'png16', decode: vramGb !== null && vramGb <= 17 ? 'low-vram' : 'card' };
+        // The LTX pack's sizes for this clip (LTXVGetTilingSizes on the local ComfyUI, cached): the delivery and the estimate.
+        const plan = planFinish(src, options, await tilingLookup(new ComfyClient(local.url), tilingRequests(src, options), 20_000));
         const oi = (s.caps.objectInfo(local.id) ?? (await s.caps.get(local.id, true).then(() => s.caps.objectInfo(local.id)))) as unknown as NodeCatalog | null;
         if (!oi) return send(res, 400, { error: 'The local ComfyUI could not be read: LTX Refine runs there.' });
         const verdict = localVerdict(plan, hasQuantizedTransformer(oi));
@@ -98,10 +102,14 @@ export function finishingRoutes(s: Services): Array<[string, RegExp, Handler]> {
         const problems = validateGraph(workflow, oi, [`${loadNode}.file`]);
         if (problems.length) return send(res, 400, { error: `The local ComfyUI would refuse the graph: ${problems.slice(0, 3).join(' · ')}` });
         const est = estimateFinish(plan);
+        const g0 = plan.passes[0].grid;
         send(res, 200, {
           graph: workflow, loadNode, saveNode, previewNode,
-          plan: { delivery: plan.delivery, tiles: plan.passes[0].grid.count, frames: plan.frames, load: plan.load, canvas: plan.passes[0].canvas, decode: plan.options.decode },
-          estimate: { seconds: Math.round(est.seconds), line: describeFinishEstimate(est) },
+          plan: {
+            delivery: plan.delivery, tiles: g0 ? g0.x * g0.y : null, frames: plan.frames, load: plan.load, canvas: plan.passes[0].canvas,
+            decode: plan.options.decode, sizes: plan.passes[0].sizes?.summary ?? null,
+          },
+          estimate: est ? { seconds: Math.round(est.seconds), line: describeFinishEstimate(est) } : { seconds: null, line: 'time not estimated: the LTX pack sizes come at run time' },
           models: check.models,
         });
       } catch (e) {

@@ -1,7 +1,7 @@
 {
   "id": "ltx25-restore",
   "title": "LTX-2.5 · Archive restore",
-  "description": "Restore at 100 %, then Refine: the Restore IC-LoRA on 960×544 tiles, the Refine Details IC-LoRA after it.",
+  "description": "Restore at 100 %, then Refine: the Restore IC-LoRA, then the Refine Details IC-LoRA, on tiles sized by the LTX pack (LTXVGetTilingSizes).",
   "task": "finish-video",
   "hosts": [],
   "output": "video",
