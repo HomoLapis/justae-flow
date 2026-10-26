@@ -25,7 +25,7 @@
  */
 
 import {
-  BLEND_VAR, CFG, DECODE, GRID_CYCLE, OVERLAP_FRAC, SAMPLER, type FinishPlan,
+  BLEND_VAR, CFG, GRID_CYCLE, OVERLAP_FRAC, SAMPLER, decodeOf, type FinishPlan,
 } from './plan.ts';
 import type { FinishModels } from './models.ts';
 
@@ -94,6 +94,7 @@ export function buildFinishGraph(args: FinishGraphArgs): FinishGraph {
   };
   const out = (id: string, slot = 0): Ref => [id, slot];
   const { frames } = plan;
+  const DECODE = decodeOf(plan);
 
   /* Source frames */
   let src: Ref;

@@ -27,6 +27,7 @@ import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, SEAM_GU
 import { COMP_TOOLS, extendGuide, KEEP_COLOUR_DEFAULT, ltxExtendFrames, ltxGuidedFrames, toolById } from '../core/comp/tools.ts';
 import { compRoutes } from '../server/api-comp.ts';
 import { FEATURED, featuredRoutes, featuredView } from '../server/api-featured.ts';
+import { finishingRoutes } from '../server/api-finishing.ts';
 import type { Settings } from '../server/config.ts';
 import { Engine } from '../server/engine.ts';
 import { WorkflowLibrary } from '../server/library.ts';
@@ -197,7 +198,7 @@ const fake = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://x');
   const body = await new Promise<string>((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(b)); });
   const json = (o: unknown): void => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
-  if (url.pathname === '/api/system_stats') return json({ system: { comfyui_version: 'fake' }, devices: [{ name: 'cuda:0 Fake GPU : cudaMallocAsync', vram_free: 8 * 2 ** 30 }] });
+  if (url.pathname === '/api/system_stats') return json({ system: { comfyui_version: 'fake' }, devices: [{ name: 'cuda:0 Fake GPU : cudaMallocAsync', vram_free: 8 * 2 ** 30, vram_total: 16 * 2 ** 30 }] });
   if (url.pathname === '/api/object_info') return json(objectInfo);
   if (url.pathname === '/api/upload/image') { uploads++; return json({ name: 'uploaded.png', subfolder: '' }); }
   if (url.pathname === '/api/queue') return json({ queue_running: [], queue_pending: [] });
@@ -1012,10 +1013,10 @@ console.log('ltx finishing');
   const tf = byClass('LTXVTiledFusionSampler')[0]?.inputs;
   check('its graph: the clip uploaded into LoadVideo, Tiled Fusion with 1024×576 tiles, overlap 0.5, blend 0.05, cfg 1, 97-frame windows',
     byClass('LoadVideo')[0]?.inputs.file === 'uploaded.png' && tf?.tile_width === 1024 && tf.tile_height === 576 && tf.overlap_frac === 0.5 && tf.blend_var === 0.05 && tf.cfg === 1 && tf.tile_frames === 97);
-  check('…the 8 distilled sigmas, the Refine IC-LoRA at 1.0, VAEDecodeTiled 1024/128/256',
+  check('…the 8 distilled sigmas, the Refine IC-LoRA at 1.0; on a 16 GB card the official workflows\' low-VRAM decode, 512/64/128/32',
     byClass('ManualSigmas')[0]?.inputs.sigmas === '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0'
     && /refine-details/.test(String(byClass('LTXICLoRALoaderModelOnly')[0]?.inputs.lora_name)) && byClass('LTXICLoRALoaderModelOnly')[0]?.inputs.strength_model === 1
-    && byClass('VAEDecodeTiled')[0]?.inputs.tile_size === 1024 && byClass('VAEDecodeTiled')[0]?.inputs.overlap === 128 && byClass('VAEDecodeTiled')[0]?.inputs.temporal_size === 256);
+    && byClass('VAEDecodeTiled')[0]?.inputs.tile_size === 512 && byClass('VAEDecodeTiled')[0]?.inputs.overlap === 64 && byClass('VAEDecodeTiled')[0]?.inputs.temporal_size === 128);
   check('…the empty Look runs with the card\'s generic look', byClass('CLIPTextEncode').some((n) => n.inputs.text === FINISH_PROMPTS.positive));
   check('…16-bit PNG frames and an 8-bit MP4 with the clip\'s sound', byClass('SaveImageAdvanced')[0]?.inputs['format.bit_depth'] === '16-bit' && byClass('CreateVideo')[0]?.inputs.bit_depth === 8 && Array.isArray(byClass('CreateVideo')[0]?.inputs.audio));
   const lv = lc.versions[0];
@@ -1026,7 +1027,7 @@ console.log('ltx finishing');
   // The run's own record sits under "host" in job.json, as every Comp tab tool's does.
   const lJob = JSON.parse(readFileSync(join(engine.state().mediaDir, lv.file.replace(/\.\w+$/, '.job.json')), 'utf8')).host;
   check('its job.json: the plan (tiles, frames), the estimate and its basis, the time it took, the VRAM seen, the licence',
-    lJob.finishing?.plan?.passes?.[0]?.tiles === 9 && lJob.finishing.estimate.seconds > 0 && /steps in \d+ s/.test(lJob.finishing.estimate.basis) && typeof lJob.finishing.took.seconds === 'number'
+    lJob.finishing?.plan?.passes?.[0]?.tiles === 9 && lJob.finishing.estimate.seconds > 0 && / in \d+(–\d+)? s/.test(lJob.finishing.estimate.basis) && typeof lJob.finishing.took.seconds === 'number'
     && 'minFreeGb' in lJob.finishing.vram && lJob.finishing.licence.startsWith(LTX_LICENCE_LINE), JSON.stringify(lJob.finishing ? { p: lJob.finishing.plan?.passes?.[0], e: lJob.finishing.estimate, t: lJob.finishing.took, v: lJob.finishing.vram, l: String(lJob.finishing.licence).slice(0, 40) } : Object.keys(lJob)));
 
   // A preview tile: one 1024×576 tile, the original placed so the tile lines up.
@@ -1035,19 +1036,21 @@ console.log('ltx finishing');
   const tComp = host.comps.at(-1)!;
   const crop = (submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, number> }>);
   const ic = Object.values(crop).find((n) => n.class_type === 'ImageCrop')?.inputs;
+  check('…a preview tile keeps the Refine card\'s decode, 1024/128/256 (it fits)', Object.values(crop).find((n) => n.class_type === 'VAEDecodeTiled')?.inputs.tile_size === 1024);
   check('a preview tile: a 1024×576 comp, the original scaled to the canvas and moved so the tile lines up',
     engine.state().cards.find((c) => c.id === tId)?.status === 'done' && tComp.width === 1024 && tComp.height === 576 && !!ic
     && JSON.stringify(tComp.layers[1].position) === JSON.stringify([1888 / 2 - ic.x, 1088 / 2 - ic.y]), JSON.stringify([tComp.width, tComp.layers[1], ic, engine.state().cards.find((c) => c.id === tId)?.error]));
 
   // Archive restore + Refine 30 %, and a single-pass tool, from the work area.
-  const { id: rId } = await engine.runCompTool({ tool: 'restore', source: 'workArea', options: { mode: 'restore-refine', negative: 'logos, lettering' }, cap: 8, prompt: '' });
+  const { id: rId } = await engine.runCompTool({ tool: 'restore', source: 'workArea', options: { mode: 'restore-refine' }, cap: 8, prompt: '' });
   await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === rId)?.status ?? ''));
   const rg = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
   const loras = Object.values(rg).filter((n) => n.class_type === 'LTXICLoRALoaderModelOnly').map((n) => `${String(n.inputs.lora_name).split('/').pop()}@${n.inputs.strength_model}`);
-  check('Restore + Refine: Restore at 1.0 and Refine at 0.3 in the same pass, on 960×544 tiles, the negative as written',
+  check('Restore + Refine: Restore at 1.0 and Refine at 0.3 in the same pass, on 960×544 tiles, the default Restore look',
     engine.state().cards.find((c) => c.id === rId)?.status === 'done' && loras.join() === 'ltx-2.5-22b-ic-lora-restore-1.0.safetensors@1,ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors@0.3'
     && Object.values(rg).some((n) => n.class_type === 'LTXVTiledFusionSampler' && n.inputs.tile_width === 960 && n.inputs.tile_height === 544)
-    && Object.values(rg).some((n) => n.class_type === 'CLIPTextEncode' && n.inputs.text === 'logos, lettering'), engine.state().cards.find((c) => c.id === rId)?.error ?? loras.join());
+    && Object.values(rg).some((n) => n.class_type === 'CLIPTextEncode' && n.inputs.text === FINISH_PROMPTS.restorePositive), engine.state().cards.find((c) => c.id === rId)?.error ?? loras.join());
+  check('…and the card says the negative does nothing at guidance 1.0, instead of a field that would do nothing', !toolById('restore')!.plan({ kind: 'layer', media: 'video', width: 640, height: 480, fps: 24, seconds: 2, requested: 2, name: 'x' }, {}, (id) => library.get(id)?.manifest).fields && toolById('restore')!.plan({ kind: 'layer', media: 'video', width: 640, height: 480, fps: 24, seconds: 2, requested: 2, name: 'x' }, {}, (id) => library.get(id)?.manifest).notes.some((n) => /does not evaluate a negative prompt/.test(n)));
   const { id: dId } = await engine.runCompTool({ tool: 'deblur', source: 'workArea', options: {}, cap: 8, prompt: 'a sailboat on a lake' });
   await until(() => ['done', 'error'].includes(engine.state().cards.find((c) => c.id === dId)?.status ?? ''));
   const dg = submits.at(-1)!.prompt as unknown as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
@@ -1080,6 +1083,31 @@ console.log('ltx finishing');
   const depc = engine.state().cards.find((c) => c.id === depId)!;
   check('…and a run sent there is refused before anything is uploaded', depc.status === 'error' && /runs on your local ComfyUI/.test(depc.error ?? '') && submits.length === beforeDep, depc.error);
   services.resources.update({ apiKey: null, resources: [{ id: 'deployment', remove: true }] });
+
+  // The Flow window's chained step (Featured ▸ H3 ▸ Final ▸ + LTX Refine): the server plans the Refine from the file.
+  const { spawnSync: run } = await import('node:child_process');
+  if (run('ffmpeg', ['-version']).status === 0) {
+    const clip = join(engine.state().mediaDir, 'h3_draft_like.mp4');
+    run('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=448x256:rate=24', '-frames:v', '29', '-pix_fmt', 'yuv420p', clip]);
+    const routes = finishingRoutes(services);
+    const { createServer: mk } = await import('node:http');
+    const srv = mk(async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://x');
+      for (const [method, re, h] of routes) { const m = re.exec(url.pathname); if (m && req.method === method) return void (await h(req, res, m, url)); }
+      res.writeHead(404); res.end();
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+    const refused = await fetch(`${base}/api/finishing/graph`, { method: 'POST', body: JSON.stringify({ file: clip }) });
+    check('POST /api/finishing/graph wants the page\'s session token (it reads a file)', refused.status === 403);
+    const r = await fetch(`${base}/api/finishing/graph`, { method: 'POST', headers: { 'x-flow-token': SESSION_TOKEN }, body: JSON.stringify({ file: clip }) });
+    const d = await r.json() as { error?: string; graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>; loadNode: string; saveNode: string; previewNode: string; plan: { delivery: { w: number; h: number }; tiles: number; frames: { source: number; total: number } }; estimate: { line: string } };
+    check('…plans LTX Refine to Full HD from the file itself (ffprobe: 448×256, 29 frames → 1890×1080 on a 1888×1088 canvas, 29 → 41 frames)',
+      r.ok && d.plan.delivery.w === 1890 && d.plan.delivery.h === 1080 && d.plan.frames.source === 29 && d.plan.frames.total === 41
+      && d.graph[d.loadNode]?.class_type === 'LoadVideo' && d.graph[d.saveNode]?.class_type === 'SaveImageAdvanced' && d.graph[d.previewNode]?.class_type === 'SaveVideo' && /RTX 5080/.test(d.estimate.line),
+      d.error ?? JSON.stringify(d.plan));
+    srv.close();
+  }
 }
 
 console.log('comp routes');

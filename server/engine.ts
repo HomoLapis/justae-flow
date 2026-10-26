@@ -27,7 +27,7 @@ import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/o
 import { COMP_TOOLS, ltxExtendFrames, ltxGuidedFrames, resultName, toolById, type SourceInfo, type SourceKind, type ToolDef, type ToolOptions, type ToolPlan } from '../core/comp/tools.ts';
 import { finishSpec, SINGLE_TOOLS, type FinishSpec } from '../core/comp/finishing-tools.ts';
 import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
-import { localVerdict, planFinish, type FinishPlan } from '../core/finishing/plan.ts';
+import { localVerdict, planFinish, type FinishOptions, type FinishPlan } from '../core/finishing/plan.ts';
 import { checkFiles, hasQuantizedTransformer, LORAS, lorasOf, requiredNodes, type LoraId, type NodeCatalog } from '../core/finishing/models.ts';
 import { buildFinishGraph } from '../core/finishing/graph.ts';
 import { buildSingleGraph, planSingle, singleNodes, type SinglePlan } from '../core/finishing/single.ts';
@@ -1095,7 +1095,7 @@ export class Engine {
     const { info } = await this.compSource(req.source, cap, req.layerId);
     const options = { ...tool.defaults, ...(req.options ?? {}) };
     const plan = tool.plan(info, options, (id) => this.library.get(id)?.manifest, { prompt: req.prompt });
-    this.finishingChecks(tool, options, plan, info, req.resource);
+    await this.finishingChecks(tool, options, plan, info, req.resource);
     // Extend takes only the last frame: the render cap does not apply to it.
     if (req.source !== 'layer' && tool.renders !== false && info.requested > cap + 1e-3) {
       plan.warnings.unshift(`The ${req.source === 'workArea' ? 'work area' : 'comp'} lasts ${info.requested.toFixed(1)} s: the render stops at ${cap} s (Work-area render cap).`);
@@ -2252,7 +2252,7 @@ export class Engine {
   }
 
   /** A finishing card's plan, completed with what only the server knows: the local ComfyUI's files, where it would run. */
-  private finishingChecks(tool: ToolDef, options: ToolOptions, plan: ToolPlan, info: SourceInfo, resource?: string | null): void {
+  private async finishingChecks(tool: ToolDef, options: ToolOptions, plan: ToolPlan, info: SourceInfo, resource?: string | null): Promise<void> {
     const spec = finishSpec(tool.id, options);
     if (!spec || !plan.ok) return;
     const entry = this.library.get(spec.workflowId);
@@ -2285,7 +2285,36 @@ export class Engine {
       plan.reason = 'The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8): the bf16 one does not fit a 16 GB card.';
       return;
     }
+    if (fp && (await this.decodeFor(fp.options)) === 'low-vram') {
+      plan.notes.push('Decode on this card (16 GB): the official workflows\' low-VRAM tiles, 512 px / 64 / 128 frames / 32 — the Refine card\'s 1024 / 128 / 256 took 27 min to decode a Full HD clip of 121 frames here.');
+    }
     plan.notes.push(`On the local ComfyUI: ${files.models.transformer.replace(/\.safetensors$/, '')}, ${Object.values(files.models.loras).map((x) => String(x).split('/').pop()!.replace(/\.safetensors$/, '')).join(' + ')}.`);
+  }
+
+  private vramTotal: { at: number; gb: number | null } | null = null;
+
+  /** The local GPU's memory, GiB (its /system_stats), read at most once a minute; null when it does not say. */
+  private async localVramGb(): Promise<number | null> {
+    if (this.vramTotal && Date.now() - this.vramTotal.at < 60_000) return this.vramTotal.gb;
+    let gb: number | null = null;
+    try {
+      const r = await fetch(`${this.comfy.base}/api/system_stats`, { signal: AbortSignal.timeout(4000) });
+      const d = ((await r.json()) as { devices?: Array<{ vram_total?: number }> }).devices?.[0];
+      gb = typeof d?.vram_total === 'number' ? Math.round((d.vram_total / 2 ** 30) * 10) / 10 : null;
+    } catch { /* unknown */ }
+    this.vramTotal = { at: Date.now(), gb };
+    return gb;
+  }
+
+  /**
+   * The decode a tiled run uses on this machine: on a card of 16 GB or less, the official LTX-2.5 workflows' low-VRAM
+   * decode (512 / 64 / 128 / 32) for anything bigger than a preview tile — the Refine card's 1024 / 128 / 256 decode of a
+   * Full HD clip of 121 frames took 27 min here, against 11 min of sampling (measured 26 Oct, RTX 5080 16 GB).
+   */
+  private async decodeFor(options: FinishOptions): Promise<'card' | 'low-vram'> {
+    if (options.preview) return 'card';
+    const gb = await this.localVramGb();
+    return gb !== null && gb <= 17 ? 'low-vram' : 'card';
   }
 
   /** The lowest free VRAM the local ComfyUI reports while a job runs (its /system_stats, every 5 s). */
@@ -2333,7 +2362,7 @@ export class Engine {
     let needs: LoraId[];
     let nodes: string[];
     if (spec.kind === 'tiled') {
-      fp = planFinish({ width, height, pixelAspect: 1, frames, fps }, spec.options);
+      fp = planFinish({ width, height, pixelAspect: 1, frames, fps }, { ...spec.options, decode: await this.decodeFor(spec.options) });
       needs = lorasOf(fp);
       nodes = requiredNodes(fp, 'video', true);
     } else {
@@ -2364,7 +2393,8 @@ export class Engine {
         positive: spec.look === 'refine' && look ? look : DEFAULT_PROMPTS.positive,
         negative: DEFAULT_PROMPTS.negative,
         restorePositive: spec.look === 'restore' && look ? look : DEFAULT_PROMPTS.restorePositive,
-        restoreNegative: String(t.options.negative ?? '').trim() || DEFAULT_PROMPTS.restoreNegative,
+        // Kept as Flow 2 had it; at guidance 1.0 ComfyUI does not evaluate it (core/comp/finishing-tools.ts, NEGATIVE_NOTE).
+        restoreNegative: DEFAULT_PROMPTS.restoreNegative,
       };
       prompts = p;
       graph = buildFinishGraph({ plan: fp, models: files.models, input: { video: uploaded }, prompts: p, seed, outputPrefix: `${prefix}/frame`, preview: previewVideo });
@@ -2384,7 +2414,9 @@ export class Engine {
     let res: { outputs: OutputFile[]; jobId: string };
     let seenVram: { minFreeGb: number | null; totalGb: number | null; samples: number };
     try {
-      res = await this.execute(card, graph.workflow as unknown as WorkflowJson, undefined, this.meta(m, frames / fps));
+      // The run history knows each variant apart (core/comp/finishing-tools.ts: plan.jobs), for what it covered.
+      const covered = (fp ? fp.frames.source : sp!.frames.source) / fps;
+      res = await this.execute(card, graph.workflow as unknown as WorkflowJson, undefined, this.meta(m, covered, t.variant && t.variant !== 'ltx-alpha' ? `:${t.variant}` : ''));
     } finally {
       seenVram = vram.stop();
     }
@@ -2420,7 +2452,7 @@ export class Engine {
         plan: fp ? {
           preset: fp.options.preset, preview: !!crop, delivery: fp.delivery, frames: fp.frames, previewCrop: fp.previewCrop,
           passes: fp.passes.map((p) => ({ name: p.name, lora: p.lora, extraLora: p.extraLora, canvas: p.canvas, tile: p.tile, tiles: p.grid.count, grid: [p.grid.x, p.grid.y], steps: p.steps, fromImage: p.fromImage, load: p.load })),
-          load: fp.load, loadFormula: fp.loadFormula, fixes: fp.fixes, warnings: fp.warnings,
+          load: fp.load, loadFormula: fp.loadFormula, fixes: fp.fixes, warnings: fp.warnings, decode: fp.options.decode ?? 'card',
         } : { lora: sp!.lora, size: sp!.size, canvas: sp!.canvas, delivery: sp!.delivery, frames: sp!.frames, fixes: sp!.fixes, warnings: sp!.warnings },
         models: files.models, prompts, seed,
         estimate: { seconds: Math.round(estimate.seconds), basis: estimate.basis, tileSteps: estimate.tileSteps },

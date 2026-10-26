@@ -56,6 +56,19 @@ export const LIGHT_SIGMAS = {
 export type LightPass = keyof typeof LIGHT_SIGMAS;
 
 export const DECODE = { tileSize: 1024, overlap: 128, temporalSize: 256, temporalOverlap: 32 } as const;
+/**
+ * JustAE Flow: the decode of the official LTX-2.5 example workflows — 512 px tiles, overlap 64, 128 frames,
+ * temporal overlap 32 — whose README says their "default values are tuned for lower-VRAM machines". Used on a
+ * 16 GB card, where the card's 1024 / 128 / 256 decode of a long Full HD clip runs out of VRAM (measured, see
+ * core/finishing/estimate.ts).
+ */
+export const DECODE_LOW_VRAM = { tileSize: 512, overlap: 64, temporalSize: 128, temporalOverlap: 32 } as const;
+export type DecodeProfile = 'card' | 'low-vram';
+
+/** The decode a plan asks for (the Refine card's, unless the options ask for the low-VRAM one). */
+export function decodeOf(plan: { options: { decode?: DecodeProfile } }): { tileSize: number; overlap: number; temporalSize: number; temporalOverlap: number } {
+  return plan.options.decode === 'low-vram' ? DECODE_LOW_VRAM : DECODE;
+}
 
 export const TILE = {
   refine: { w: 1024, h: 576 },
@@ -138,6 +151,8 @@ export interface FinishOptions {
   format: OutputFormat;
   /** Archive only: applied with ffmpeg before upload. */
   deinterlace: Deinterlace;
+  /** JustAE Flow: the decode profile (absent: the Refine card's 1024 / 128 / 256). */
+  decode?: DecodeProfile;
 }
 
 export const DEFAULT_OPTIONS: FinishOptions = {

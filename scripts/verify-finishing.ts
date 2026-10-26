@@ -116,7 +116,7 @@ console.log('\n[5] local verdict (16 GB) and the estimate');
   const r4 = planFinish(HD, opts({ preset: 'refine-4k' }));
   ok('4K: allowed, with the "hours" warning', localVerdict(r4, true).ok && localVerdict(r4, true).warnings.some((w) => /hours/.test(w)));
   const e = estimateFinish(fhd);
-  ok('the estimate rests on measured runs and scales with the tile count', e.seconds > 0 && e.tileSteps === 144 && /steps in \d+ s/.test(e.basis), JSON.stringify(e));
+  ok('the estimate rests on measured runs and scales with the tile count', e.seconds > 0 && e.tileSteps === 144 && / in \d+(–\d+)? s/.test(e.basis), JSON.stringify(e));
   ok('4K costs more than Full HD (49 vs 9 tiles)', estimateFinish(r4).seconds > e.seconds);
 }
 
@@ -181,6 +181,21 @@ for (const p of FINISH_PRESETS) {
       ignore: loadIgnore,
     });
   }
+}
+{
+  // JustAE Flow: the official workflows' low-VRAM decode (512 / 64 / 128 / 32), used on 16 GB cards.
+  const plan = planFinish(SAIL, opts({ preset: 'refine-fhd', decode: 'low-vram' }));
+  const preview = { prefix: 'justae-flow/finish/test/preview', fps: 24, audio: true };
+  variants.push({
+    name: 'Refine Full HD · low-VRAM decode', nodes: requiredNodes(plan, 'video', true), loras: ['refine'],
+    build: (m) => buildFinishGraph({ plan, models: m, input: { video: 'flow_test.mp4' }, prompts: { ...DEFAULT_PROMPTS }, seed: 42, outputPrefix: 'justae-flow/finish/test/frame', preview }).workflow,
+    ignore: loadIgnore,
+  });
+  const g = buildFinishGraph({ plan, models: fakeModels, input: { video: 'x.mp4' }, prompts: { ...DEFAULT_PROMPTS }, seed: 1, outputPrefix: 'x', preview }).workflow;
+  const d = Object.values(g).find((n) => n.class_type === 'VAEDecodeTiled')!.inputs;
+  ok('the low-VRAM decode is the official workflows\' 512 / 64 / 128 / 32; the default stays the card\'s 1024 / 128 / 256 / 32',
+    d.tile_size === 512 && d.overlap === 64 && d.temporal_size === 128 && d.temporal_overlap === 32
+    && Object.values(buildFinishGraph({ plan: planFinish(SAIL, opts({ preset: 'refine-fhd' })), models: fakeModels, input: { video: 'x.mp4' }, prompts: { ...DEFAULT_PROMPTS }, seed: 1, outputPrefix: 'x' }).workflow).find((n) => n.class_type === 'VAEDecodeTiled')!.inputs.tile_size === 1024);
 }
 for (const lora of Object.keys(SINGLE) as SingleLora[]) {
   const plan = planSingle(lora, { width: 1280, height: 704, frames: 49, fps: 24 });

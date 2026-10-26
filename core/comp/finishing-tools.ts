@@ -29,6 +29,14 @@ import { fmt, needsVideo, opt, what, type SourceInfo, type ToolDef, type ToolOpt
 
 const LICENCE = { line: LTX_LICENCE_LINE, url: LTX_LICENCE_URL };
 
+/**
+ * The cards (Restore, Clean Plate) say to put what must not appear in the negative prompt. These graphs run at guidance
+ * 1.0, as the cards recommend, and at 1.0 ComfyUI does not evaluate the negative at all (its cfg-1 optimisation,
+ * comfy/samplers.py, which LTXVTiledFusionSampler's guider goes through): said on the cards, instead of a field that
+ * would do nothing. Measured 26 Oct: a Restore with "lettering" in its negative painted a number on the sail.
+ */
+const NEGATIVE_NOTE = 'No "must not appear" field: at guidance 1.0 (the card\'s setting) ComfyUI does not evaluate a negative prompt, so the card\'s advice to list prohibitions there has no effect here — describe the period and the light in the Look instead.';
+
 /** "Fast scene": every frame ×2 or ×3 before the model, the copies removed after (Flow 2 verified ×1–×4 in order). */
 const FAST = [1, 2, 3] as const;
 
@@ -111,7 +119,8 @@ export function ltxRefinePlan(src: SourceInfo, o: ToolOptions, manifest: (id: st
   const fp = planFinish({ width: src.width, height: src.height, pixelAspect: 1, frames: framesOf(src), fps: src.fps || 24 }, spec.options);
   const seconds = fp.frames.source / (src.fps || 24);
   plan.output = { width: fp.delivery.w, height: fp.delivery.h, seconds, fps: src.fps };
-  plan.jobs = [{ workflowId: spec.workflowId, seconds }];
+  // The run history keeps each size, "fast scene" and tile apart (a preview tile says nothing about a full run).
+  plan.jobs = [{ workflowId: `${spec.workflowId}:${plan.variant}`, seconds }];
   plan.makes = preview
     ? `A new comp at ${fp.delivery.w}×${fp.delivery.h}: one tile of the ${LTX_SIZES[size]} result, from the middle of the frame, the first ${fmt(seconds)} — to judge the look before the full run. Your ${what(src)} sits under it, matched, switched off.`
     : `A new comp at ${fp.delivery.w}×${fp.delivery.h}: your ${what(src)} refined by LTX-2.5 (Refine Details IC-LoRA)${size === 'same' ? ' at its own size' : ` to ${LTX_SIZES[size]}`}, with the original under it, switched off.`;
@@ -139,7 +148,7 @@ const restore: ToolDef = {
   family: 'ltx',
   loras: ['restore'],
   licence: LICENCE,
-  defaults: { mode: 'restore', fast: 1, master: 'png16', preview: false, negative: '' },
+  defaults: { mode: 'restore', fast: 1, master: 'png16', preview: false },
   plan(src, o, manifest, extra) {
     const spec = finishSpec('restore', o) as Extract<FinishSpec, { kind: 'tiled' }>;
     const mode = opt(o, 'mode', Object.keys(RESTORE_MODES) as RestoreMode[], 'restore');
@@ -148,7 +157,6 @@ const restore: ToolDef = {
       ok: true, workflowId: spec.workflowId, jobs: [], makes: '', notes: [], warnings: [],
       action: preview ? 'Preview one tile' : mode === 'archive' ? 'Restore, then refine' : 'Restore',
       prompt: { label: 'Look', placeholder: 'period, place, light, materials — not the subjects', optional: true, fallback: DEFAULT_PROMPTS.restorePositive, lint: 'restore' },
-      fields: [{ key: 'negative', label: 'Must not appear', placeholder: DEFAULT_PROMPTS.restoreNegative, advanced: true }],
       params: {}, variant: `${mode}${spec.options.duplicate > 1 ? `·f${spec.options.duplicate}` : ''}${preview ? '·tile' : ''}`,
     };
     const bad = needsVideo(src);
@@ -157,7 +165,7 @@ const restore: ToolDef = {
     const fp = planFinish({ width: src.width, height: src.height, pixelAspect: 1, frames: framesOf(src), fps: src.fps || 24 }, spec.options);
     const seconds = fp.frames.source / (src.fps || 24);
     plan.output = { width: fp.delivery.w, height: fp.delivery.h, seconds, fps: src.fps };
-    plan.jobs = [{ workflowId: spec.workflowId, seconds }];
+    plan.jobs = [{ workflowId: `${spec.workflowId}:${plan.variant}`, seconds }];
     plan.makes = preview
       ? `A new comp at ${fp.delivery.w}×${fp.delivery.h}: one tile of the Restore pass, from the middle of the frame, the first ${fmt(seconds)}.`
       : `A new comp at ${fp.delivery.w}×${fp.delivery.h}: your ${what(src)} restored by LTX-2.5 (Restore IC-LoRA at 100 %)`
@@ -171,6 +179,7 @@ const restore: ToolDef = {
     if (spec.options.duplicate > 1) plan.notes.push(`Fast scene: every frame ×${spec.options.duplicate} before the model, the copies removed after.`);
     plan.notes.push(deliveryNote(spec.options.format));
     plan.notes.push('Interlaced sources: deinterlace before restoring (the card) — not done here.');
+    plan.notes.push(NEGATIVE_NOTE);
     const est = estimateFinish(fp);
     plan.estimate = { seconds: est.seconds, line: describeFinishEstimate(est) };
     plan.warnings.push(...fp.warnings.filter((w) => !/already larger/.test(w)));
@@ -221,7 +230,7 @@ export const SINGLE_TOOLS: SingleToolSpec[] = [
     promise: 'People and vehicles removed, the empty background rebuilt.',
     prompt: { label: 'The empty place', placeholder: 'What remains when nobody is there: a lake shore with a wooden jetty and pines' },
     field: { key: 'remove', label: 'Also remove', placeholder: 'objects that must go too, comma-separated: bicycle, umbrella' },
-    scope: 'Works when the subject leaves background around it; a subject that fills the frame is out of scope (its card).',
+    scope: 'Works when the subject leaves background around it; a subject that fills the frame is out of scope (its card). "Also remove" goes into the sentence ("no bicycle anywhere in the frame") — the card also puts it in the negative, which ComfyUI does not evaluate at guidance 1.0.',
   },
   {
     id: 'daynight', workflowId: 'ltx25-daynight', lora: 'daynight', name: 'Day → Night', icon: '☾', action: 'Make it night',
@@ -248,7 +257,7 @@ function singleTool(t: SingleToolSpec): ToolDef {
       if (sp.reason) return { ...plan, ok: false, reason: sp.reason };
       const seconds = sp.frames.source / (src.fps || 24);
       plan.output = { width: sp.delivery.w, height: sp.delivery.h, seconds, fps: src.fps };
-      plan.jobs = [{ workflowId: t.workflowId, seconds }];
+      plan.jobs = [{ workflowId: `${t.workflowId}:${plan.variant}`, seconds }];
       plan.makes = `A new comp at ${sp.delivery.w}×${sp.delivery.h}: your ${what(src)} through LTX-2.5 with the ${t.name} IC-LoRA (strength 1.0), the original under it, switched off.`;
       plan.notes.push(`One pass at ${sp.canvas.w}×${sp.canvas.h}${sp.size === 'bucket' && card.bucket ? ` — near the card's ${card.bucket.w}×${card.bucket.h} training size` : ' — the source size'}, ${sp.frames.source} → ${sp.frames.total} frames, 8 distilled steps (the official single-stage workflow: euler_ancestral, guidance 1).`);
       plan.notes.push(`The prompt follows the sentence the card trained on; you write the ${t.prompt.label.toLowerCase()}.`);
