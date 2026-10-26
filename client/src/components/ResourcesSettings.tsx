@@ -92,7 +92,7 @@ export function ResourcesSettings(): JSX.Element {
               </label>
               <label className="flex items-center gap-1.5 text-[11px] text-ink-dim" title="What a cold job is billed beyond its own run: worker start-up, model loading and the 30 s idle window. Empty = the measured default.">
                 start-up
-                <NumberField value={d.coldStartSeconds ?? null} placeholder={String(d.coldStart?.seconds ?? 265)} disabled={(d.minWorkers ?? 0) > 0}
+                <NumberField value={d.coldStartSeconds ?? d.coldStart?.seconds ?? null} placeholder="265" disabled={(d.minWorkers ?? 0) > 0}
                   onSave={(v) => apply({ resources: [{ id: d.id, coldStartSeconds: v }] })} testId="cold-start-field" />
                 s
               </label>
@@ -110,7 +110,7 @@ export function ResourcesSettings(): JSX.Element {
               {' '}Use the GPU and minimum you deployed with (<span className="font-mono">comfy deploy status</span>); JustAE Flow never starts, scales or stops it.
             </p>
             {d.storage && (
-              <p className="truncate text-[10px] leading-snug text-ink-mute" data-testid="deployment-storage" title="Network storage for the staged models (comfy deploy refs compute: 42.2 cr per GB per month). The hourly billing report shows it every hour, with or without jobs (measured 25 Oct 2026); whether a stopped deployment still bills it is to be verified.">
+              <p className="text-[10px] leading-snug text-ink-mute" data-testid="deployment-storage" title="Network storage for the staged models (comfy deploy refs compute: 42.2 cr per GB per month). The hourly billing report shows it every hour, with or without jobs (measured 25 Oct 2026); whether a stopped deployment still bills it is to be verified.">
                 storage ≈ {d.storage.creditsPerHour.toFixed(2)} cr/h while the deployment exists
                 {d.storage.basis === 'staged' ? ` (${d.storage.gb} GB × 42.2 cr/GB/month)` : ` — measured for a ${d.storage.gb} GB build (42.2 cr/GB/month)`}
               </p>
@@ -252,7 +252,7 @@ function NumberField({ value, placeholder, disabled, onSave, testId }: {
   };
   return (
     <input
-      className="input h-7 min-h-0 w-14 py-0 text-[11px]"
+      className="input h-7 min-h-0 w-[4.5rem] py-0 text-[11px]"
       type="number" min={0} disabled={disabled} placeholder={placeholder} data-testid={testId}
       value={draft ?? (value ?? '')}
       onChange={(e) => setDraft(e.target.value)}

@@ -478,6 +478,17 @@ console.log('engine on resources');
   check('the version carries the execution time and the derived credits: a cold deployment, (12 s + 265 s start-up) × 736.39 cr/h ≈ 56.66',
     v3?.executionMs === 12_000 && Math.abs((v3?.derivedCredits ?? 0) - 56.66) < 0.01 && v3?.jobIds?.length === 1, `${v3?.derivedCredits}`);
   check('the input frame went up as a v2 asset', v2fake.seen.some((x) => x.path === '/api/v2/jobs' && x.method === 'POST'));
+  {
+    // What a result card shows: the run history's figures for the version's jobs — derived, then billed once the hourly report has them.
+    type Cost = { derivedCredits: number | null; billedCredits: number | null; billedAsOf: string | null; costBasis: string | null };
+    const costOf = (v: typeof v3): Cost => (engine as unknown as { costOf(v: typeof v3): Cost }).costOf(v);
+    const before = costOf(v3);
+    check('a result card shows the derived figure while the hourly report has not the hour', before.billedCredits === null && Math.abs((before.derivedCredits ?? 0) - 56.66) < 0.01 && /worker start-up/.test(before.costBasis ?? ''));
+    const rec = services.runs.byJob(v3.jobIds![0], 'deployment')!;
+    services.runs.patch([{ run: rec, set: { billedCredits: 50.5, billedAsOf: '2026-10-26T08:00:00.000Z' } }]);
+    const after = costOf(v3);
+    check('…and the billed one once it has (with the report\'s as_of)', after.billedCredits === 50.5 && after.billedAsOf === '2026-10-26T08:00:00.000Z');
+  }
   const job3 = JSON.parse(readFileSync(join(s.mediaDir, v3.file.replace(/\.\w+$/, '.job.json')), 'utf8'));
   check('its job.json: the resource, its GPU and rate, and the cost marked as derived, with its basis (worker start-up included)', job3.resource?.id === 'deployment' && job3.resource.gpu === 'RTX PRO 6000' && job3.resource.creditsPerHour === 736.39
     && /≈/.test(job3.resource.cost?.basis ?? '') && /worker start-up \(measured\) \+ 30 s idle/.test(job3.resource.cost?.basis ?? '') && job3.resource.cost?.jobIds?.length === 1, job3.resource.cost?.basis);

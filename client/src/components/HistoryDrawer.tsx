@@ -80,31 +80,6 @@ export function HistoryDrawer(): JSX.Element | null {
               Nothing here yet. Generations land here as they complete.
             </p>
           )}
-          {metered.length > 0 && (
-            <section className="space-y-1.5 pb-2" data-testid="history-metered">
-              <h3 className="section-label">On Comfy&rsquo;s GPUs</h3>
-              <p className="text-[10px] leading-snug text-ink-mute">
-                Runs on Comfy Cloud and your deployments, from every tab. &ldquo;≈&rdquo; is derived (GPU time × rate, with a
-                deployment&rsquo;s worker start-up when it was cold); &ldquo;billed&rdquo; is the hourly billing report&rsquo;s GPU amount,
-                shared among the runs of its hour, once the report has it.
-              </p>
-              {metered.map((r) => {
-                const cost = costWords(r, null);
-                return (
-                  <div key={`${r.resourceId}-${r.jobId ?? r.at}`} className="rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[11px]">
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 truncate text-ink">{r.workflowId}</span>
-                      <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-mute">{when(r.at)}</span>
-                    </div>
-                    <p className="font-mono text-[10px] text-ink-dim" title={cost?.title} data-testid="history-metered-cost">
-                      {labelOf(r.resourceId)}{r.executionMs !== null ? ` · ${(r.executionMs / 1000).toFixed(1)} s GPU` : ''}{r.overhead === 'cold' ? ' + start-up' : ''}
-                      {cost ? ` · ${cost.text}` : ''}
-                    </p>
-                  </div>
-                );
-              })}
-            </section>
-          )}
           {history.map((h) => (
             <article
               key={h.id}
@@ -163,6 +138,31 @@ export function HistoryDrawer(): JSX.Element | null {
               )}
             </article>
           ))}
+          {metered.length > 0 && (
+            <section className="space-y-1.5 pt-2" data-testid="history-metered">
+              <h3 className="section-label">On Comfy&rsquo;s GPUs</h3>
+              <p className="text-[10px] leading-snug text-ink-mute">
+                Runs on Comfy Cloud and your deployments, from every tab. &ldquo;≈&rdquo; is derived (GPU time × rate, with a
+                deployment&rsquo;s worker start-up when it was cold); &ldquo;billed&rdquo; is the hourly billing report&rsquo;s GPU amount,
+                shared among the runs of its hour, once the report has it.
+              </p>
+              {metered.map((r) => {
+                const cost = costWords(r, null);
+                return (
+                  <div key={`${r.resourceId}-${r.jobId ?? r.at}`} className="rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 truncate text-ink">{r.workflowId}</span>
+                      <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-mute">{when(r.at)}</span>
+                    </div>
+                    <p className="font-mono text-[10px] text-ink-dim" title={cost?.title} data-testid="history-metered-cost">
+                      {labelOf(r.resourceId)}{r.executionMs !== null ? ` · ${(r.executionMs / 1000).toFixed(1)} s GPU` : ''}{r.overhead === 'cold' ? ' + start-up' : ''}
+                      {cost ? ` · ${cost.text}` : ''}
+                    </p>
+                  </div>
+                );
+              })}
+            </section>
+          )}
         </div>
       </aside>
     </div>
