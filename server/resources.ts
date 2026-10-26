@@ -61,6 +61,11 @@ export interface Resource {
    * ComfyUI's node catalogue answers for the proxy (v2 has none) and its model precisions can be swapped in.
    */
   fronts?: string;
+  /**
+   * The local ComfyUI: its models folder, as the user typed it in Settings ▸ Resources (checked: it holds
+   * checkpoints/ or diffusion_models/). The only place JustAE Flow ever writes a model file (server/models.ts).
+   */
+  modelsDir?: string;
 }
 
 /** What each button runs: the rows of Settings ▸ Resources ▸ "Where each task runs" (PLAN v3 §2.1). */
@@ -439,6 +444,14 @@ export class ResourceRegistry {
     else if (typeof ch.coldStartSeconds === 'number' && Number.isFinite(ch.coldStartSeconds)) r.coldStartSeconds = Math.min(3600, Math.max(0, Math.round(ch.coldStartSeconds)));
     if (ch.stagedGb === null || ch.stagedGb === 0) delete r.stagedGb;
     else if (typeof ch.stagedGb === 'number' && Number.isFinite(ch.stagedGb) && ch.stagedGb > 0) r.stagedGb = Math.round(ch.stagedGb * 10) / 10;
+  }
+
+  /** The local ComfyUI's models folder (null clears it). The caller has checked it (server/models.ts checkModelsFolder). */
+  setModelsDir(dir: string | null): void {
+    const l = this.local();
+    if (dir) l.modelsDir = dir;
+    else delete l.modelsDir;
+    this.changed();
   }
 
   /** A new deployment entry's id. */

@@ -53,7 +53,17 @@ const DEFAULTS: Settings = {
   setupDone: false,
 };
 
+/**
+ * The user's config folder: %APPDATA%\JustAE Flow, ~/Library/Application Support/JustAE Flow, ~/.config/JustAE Flow.
+ * JUSTAE_FLOW_HOME puts it elsewhere — a second server on a clean folder (a first run, a test) never touches the
+ * user's own settings, keys or run history.
+ */
 export function configDir(): string {
+  const home = process.env.JUSTAE_FLOW_HOME?.trim();
+  if (home) {
+    mkdirSync(home, { recursive: true });
+    return home;
+  }
   const base = process.platform === 'win32'
     ? (process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'))
     : process.platform === 'darwin'

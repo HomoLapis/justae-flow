@@ -807,7 +807,12 @@ export class Engine {
   }
 
   /** The setup wizard's proof that the chain works: one small still, not placed anywhere. */
-  async testGenerate(): Promise<{ file: string; seconds: number }> {
+  /**
+   * A Z-Image still from the local ComfyUI, 512×512 — the Get started card's "Make a test image", and the storyboard
+   * page's setup check. With `place`, it goes into the active comp at the playhead for three seconds (or the comp's
+   * end), on top, named "Flow · test image"; the file is kept in the project's media folder under _test/.
+   */
+  async testGenerate(opts: { place?: boolean } = {}): Promise<{ file: string; seconds: number; placed?: { comp: string; layerId: number; at: number } }> {
     const t0 = Date.now();
     const entry = this.library.get('zimage-t2i');
     if (!entry) throw new Error('The bundled Z-Image workflow is missing from workflows/.');
@@ -815,8 +820,10 @@ export class Engine {
     if (!h.online) throw new Error(h.message ?? 'ComfyUI is not reachable.');
     const api = this.library.graph('zimage-t2i')!;
     const m = entry.manifest;
-    setRef(api, m.bindings.prompt, 'a paper boat on a calm lake at dawn, soft mist, photographic');
-    setRef(api, m.bindings.seed, Math.floor(Math.random() * 2 ** 31));
+    const prompt = 'a paper boat on a calm lake at dawn, soft mist, photographic';
+    const seed = Math.floor(Math.random() * 2 ** 31);
+    setRef(api, m.bindings.prompt, prompt);
+    setRef(api, m.bindings.seed, seed);
     setRef(api, m.bindings.width, 512);
     setRef(api, m.bindings.height, 512);
     this.checkModels(api, m);
@@ -832,8 +839,21 @@ export class Engine {
     const out = outputs.find((o) => /\.png$/i.test(o.filename));
     if (!out) throw new Error('The test finished without an image.');
     mkdirSync(join(this.mediaDir, '_test'), { recursive: true });
-    writeFileSync(join(this.mediaDir, '_test', 'test.png'), await this.comfy.download(out));
-    return { file: '_test/test.png', seconds: (Date.now() - t0) / 1000 };
+    const bytes = await this.comfy.download(out);
+    writeFileSync(join(this.mediaDir, '_test', 'test.png'), bytes);
+    if (!opts.place) return { file: '_test/test.png', seconds: (Date.now() - t0) / 1000 };
+    // Placed: a file of its own, so a later test never swaps the footage under this layer.
+    const comp = this.snap?.comp;
+    if (this.host.kind !== 'timeline' || !comp) throw new Error('The test image was made (in the project folder under _test/), but no comp is open in EffectCraft to place it in.');
+    const rel = `_test/test-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+    const abs = join(this.mediaDir, rel);
+    writeFileSync(abs, bytes);
+    const at = Math.max(0, Math.min(this.snap?.time ?? 0, Math.max(0, comp.duration - 0.5)));
+    const placed = await this.tl().place({
+      file: abs, time: at, endTime: Math.min(comp.duration, at + 3), index: 1,
+      name: `${TAG} · test image`, comment: `${SLUG} test image · ${m.title} · seed ${seed}\n${prompt}`,
+    });
+    return { file: rel, seconds: (Date.now() - t0) / 1000, placed: { comp: comp.name, layerId: placed.layerId, at } };
   }
 
   dismissNotice(): void {

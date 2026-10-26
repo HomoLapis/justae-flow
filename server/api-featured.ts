@@ -24,15 +24,37 @@ type Handler = (req: IncomingMessage, res: ServerResponse, m: RegExpExecArray, u
 /** A Final: the draft's workflow, then a chained step on its result (a second job on the same resource). */
 export interface FinalTier { id: 'seedvr2' | 'ltx'; label: string; then: string; scale: number; note: string }
 
+/** Where a Featured entry belongs on the Workflow tab: making something, or working on what is there. */
+export type FeaturedGroup = 'generate' | 'edit';
+
+export interface FeaturedDef {
+  id: string;
+  name: string;
+  /** One line: what it does for you. */
+  line: string;
+  group: FeaturedGroup;
+  /** The licence in one line, and its text's link when the manifest gives one. */
+  licence: { text: string; url?: string };
+  tiers?: { draft: { workflow: string; note: string }; finals: FinalTier[] };
+  licenceNote?: string;
+  /** Runs from a Comp tab card, not as the Marker / Storyboard tabs' workflow ("Use it" opens that card). */
+  comp?: { tool: string; engine?: string; label: string };
+}
+
+const LTX_LICENCE = { text: 'LTX-2.x Community License: commercial use under USD 10M annual revenue', url: 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x' };
+
 /**
- * The entries, in order. `tiers`: Draft runs its own workflow (MiniMax H3: the 4-step turbo LoRA of the official
- * template); Final runs the entry's workflow (the base model), then one of the chained steps on its result.
+ * The entries, in order, in two groups. `tiers`: Draft runs its own workflow (MiniMax H3: the 4-step turbo LoRA of the
+ * official template); Final runs the entry's workflow (the base model), then one of the chained steps on its result.
+ * The licence lines shorten the manifests' own (`license.weights`), which stay the full text.
  */
-export const FEATURED: Array<{ id: string; name: string; line: string; tiers?: { draft: { workflow: string; note: string }; finals: FinalTier[] }; licenceNote?: string }> = [
-  { id: 'ltx25-i2v', name: 'LTX-2.5 · image to video', line: 'A shot with sound from a frame: the marker\'s, or an image you attach.' },
-  { id: 'ltx25-t2v', name: 'LTX-2.5 · text to video', line: 'A shot with sound from the prompt alone, sized and timed by the slot.' },
+export const FEATURED: FeaturedDef[] = [
+  { id: 'zimage-t2i', group: 'generate', name: 'Z-Image-Turbo · text to image', line: 'A still in seconds: plates, keyframes, title backgrounds.', licence: { text: 'Apache-2.0' } },
+  { id: 'ltx25-i2v', group: 'generate', name: 'LTX-2.5 · image to video', line: "A shot with sound from a frame: the marker's, or an image you attach.", licence: LTX_LICENCE },
+  { id: 'ltx25-t2v', group: 'generate', name: 'LTX-2.5 · text to video', line: 'A shot with sound from the prompt alone, sized and timed by the slot.', licence: LTX_LICENCE },
   {
-    id: 'h3-flf', name: 'MiniMax H3 · first + last frame', line: 'From one frame you choose to another, with sound.',
+    id: 'h3-flf', group: 'generate', name: 'MiniMax H3 · first + last frame', line: 'From one frame you choose to another, with sound.',
+    licence: { text: 'MiniMax H3: commercial use of local outputs needs a MiniMax licence (sold by Comfy); EU: to be verified' },
     tiers: {
       draft: { workflow: 'h3-flf-draft', note: 'Draft = the 4-step turbo LoRA the official template names (Comfy-Org/MiniMax-H3), 4 steps: a quick look, never the final.' },
       finals: [
@@ -42,11 +64,14 @@ export const FEATURED: Array<{ id: string; name: string; line: string; tiers?: {
     },
     licenceNote: 'Commercial use of locally generated H3 outputs needs a MiniMax commercial licence (sold by Comfy); in the EU: to be verified on the licence text.',
   },
-  { id: 'wan22-flf', name: 'Wan 2.2 14B · first + last frame', line: 'Keyframe to keyframe under Apache-2.0.' },
-  { id: 'zimage-t2i', name: 'Z-Image-Turbo · text to image', line: 'A still in seconds: plates, keyframes, title backgrounds.' },
-  { id: 'qwen-edit', name: 'Qwen-Image-Edit 2511', line: 'Change an image as the prompt says.' },
-  { id: 'seedvr2-upscale', name: 'SeedVR2 · video upscale ×2', line: 'Restored detail at twice the size.' },
-  { id: 'sam3-matte', name: 'SAM 3 · subject matte', line: 'The subject the prompt names, tracked through the clip.' },
+  { id: 'wan22-flf', group: 'generate', name: 'Wan 2.2 14B · first + last frame', line: 'Keyframe to keyframe, under Apache-2.0.', licence: { text: 'Apache-2.0' } },
+  { id: 'qwen-edit', group: 'edit', name: 'Qwen-Image-Edit 2511', line: 'Change an image as the prompt says.', licence: { text: 'Apache-2.0' } },
+  { id: 'seedvr2-upscale', group: 'edit', name: 'SeedVR2 · video upscale ×2', line: 'Restored detail at twice the size.', licence: { text: 'Apache-2.0' } },
+  { id: 'sam3-matte', group: 'edit', name: 'SAM 3 · subject matte', line: 'The subject the prompt names, tracked through the clip.', licence: { text: 'SAM License (Meta): royalty-free, commercial use included' } },
+  {
+    id: 'ltx25-refine', group: 'edit', name: 'LTX Refine · more detail, up to 4K', line: 'Rebuilds fine detail on a clip (LTX-2.5 + Refine Details), on your local ComfyUI.',
+    licence: LTX_LICENCE, comp: { tool: 'upscale', engine: 'ltx', label: 'Comp tab ▸ Upscale ▸ LTX Refine' },
+  },
 ];
 
 export interface FeaturedRunsOn {
@@ -69,7 +94,10 @@ export interface FeaturedEntry {
   template: string;
   licence: string;
   licenceNote?: string;
-  tiers?: (typeof FEATURED)[number]['tiers'];
+  tiers?: FeaturedDef['tiers'];
+  group: FeaturedGroup;
+  licenceLine: FeaturedDef['licence'];
+  comp?: FeaturedDef['comp'];
   /** The draft tier's own workflow, as a library entry the Flow window can load ("bundled:<id>"). */
   draftName?: string;
   runsOn: FeaturedRunsOn[];
@@ -107,6 +135,7 @@ export function featuredView(s: Services, library: WorkflowLibrary): FeaturedEnt
     out.push({
       id: m.id, name: f.name, line: f.line, title: m.title, task: m.task, input: m.input, output: m.output,
       template: m.source.template, licence: m.license.weights, licenceNote: f.licenceNote, tiers: f.tiers, runsOn, missing,
+      group: f.group, licenceLine: f.licence, comp: f.comp,
       draftName: f.tiers ? library.get(f.tiers.draft.workflow)?.manifest.title : undefined,
       runnable: runsOn.some((r) => r.status === 'ok' || r.status === 'proven'),
     });

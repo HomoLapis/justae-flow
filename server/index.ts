@@ -22,6 +22,7 @@ import { activeResource, resourceRoutes } from './api-resources.ts';
 import { compRoutes } from './api-comp.ts';
 import { featuredRoutes } from './api-featured.ts';
 import { finishingRoutes } from './api-finishing.ts';
+import { setupRoutes } from './api-setup.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
@@ -176,7 +177,13 @@ const routes: Array<[string, RegExp, Handler]> = [
       probe.close();
     }
   }],
-  ['POST', /^\/api\/test\/generate$/, async (_q, res) => send(res, 200, await engine.testGenerate())],
+  // The storyboard page's setup check (a still, kept under _test/), and the Get started card's (placed in the comp).
+  ['POST', /^\/api\/test\/generate$/, async (req, res) => {
+    const { place } = await json<{ place?: boolean }>(req);
+    const r = await engine.testGenerate({ place: place === true });
+    if (place) services.onboarding.noteTestImage();
+    send(res, 200, r);
+  }],
   ['POST', /^\/api\/cards\/bulk$/, async (req, res) => {
     const { ids, patch } = await json<{ ids: string[]; patch: Record<string, unknown> }>(req);
     await engine.updateCards(ids, patch);
@@ -235,6 +242,7 @@ const routes: Array<[string, RegExp, Handler]> = [
   ...compRoutes(engine),
   ...featuredRoutes(services, library),
   ...finishingRoutes(services),
+  ...setupRoutes(services, library, root),
 ];
 
 const server = createServer(async (req, res) => {

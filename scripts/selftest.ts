@@ -38,6 +38,11 @@ import { DEFAULT_OPTIONS as FINISH_DEFAULTS, planFinish, tilingRequests } from '
 import { parseTilingSummary, tilingKey, windowsToCover, type TilingRequest } from '../core/finishing/sizes.ts';
 import { DEFAULT_PROMPTS as FINISH_PROMPTS, lintPrompt } from '../core/finishing/prompt.ts';
 import { TASKS } from '../server/resources.ts';
+import { catalogueFiles, readiness } from '../server/readiness.ts';
+import { checkModelsFolder, modelPath } from '../server/models.ts';
+import { anchorOf, readmeSection, setupRoutes } from '../server/api-setup.ts';
+import { formatBytes, parseHfUrl } from '../core/workflows/hf.ts';
+import { packsOf } from '../core/workflows/packs.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let passed = 0;
@@ -1216,7 +1221,9 @@ console.log('featured workflows');
   await services.caps.get('local', true);
   const entries = featuredView(services, library);
   const h3 = entries.find((e) => e.id === 'h3-flf');
-  check('Featured lists the eight entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 8 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
+  check('Featured lists the nine entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 9 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
+  check('…LTX Refine is a Comp tab card (its "Use it" opens Upscale ▸ LTX Refine), not a workflow for the shot tabs',
+    entries.find((e) => e.id === 'ltx25-refine')?.comp?.tool === 'upscale' && entries.find((e) => e.id === 'ltx25-refine')?.comp?.engine === 'ltx' && entries.filter((e) => e.comp).length === 1);
   check('…from the probes: Local ✓ where the local ComfyUI has every node and model', entries.find((e) => e.id === 'ltx25-i2v')?.runsOn.find((r) => r.resource === 'local')?.status === 'ok' && entries.every((e) => e.runnable === e.runsOn.some((r) => r.status === 'ok' || r.status === 'proven')));
   check('MiniMax H3 first + last frame: Draft / Final, Final = + SeedVR2 ×2 or + LTX Refine, and its licence note',
     h3?.tiers?.finals.map((x) => `${x.id}:${x.then}`).join() === 'seedvr2:seedvr2-upscale,ltx:ltx25-refine' && h3.tiers.finals[0].scale === 2
@@ -1246,6 +1253,216 @@ console.log('featured workflows');
     g.ok && Object.values(graph).some((n) => n.inputs.unet_name === 'ltx-2.5-22b-distilled-transformer-nvfp4.safetensors') && remaps.some((r) => /nvfp4/.test(r)));
   check('…and only for Featured entries', (await fetch(`${base}/api/featured/sam3-reframe/graph`)).status === 404);
   srv.close();
+}
+
+console.log('get started: readiness, the card\'s rules, the model downloads');
+{
+  // A Hugging Face stand-in: the model API (sizes, sha256, gating) and file downloads with Range, behind a redirect.
+  const { createHash: sha } = await import('node:crypto');
+  const { createServer: mkHf } = await import('node:http');
+  const bytesOf = (n: number, seed: number): Buffer => { const b = Buffer.alloc(n); for (let i = 0; i < n; i++) b[i] = (i * 31 + seed) & 0xff; return b; };
+  const vae = bytesOf(300_000, 7);
+  const high = bytesOf(120_000, 3);
+  const hashOf = (b: Buffer): string => sha('sha256').update(b).digest('hex');
+  const files: Record<string, Record<string, { bytes: Buffer; sha: string }>> = {
+    'Comfy-Org/Wan_2.2_ComfyUI_Repackaged': {
+      'split_files/vae/wan_2.1_vae.safetensors': { bytes: vae, sha: hashOf(vae) },
+      // Hugging Face states another digest than the bytes it serves: the download must be refused and removed.
+      'split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors': { bytes: high, sha: hashOf(bytesOf(120_000, 4)) },
+      'split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors': { bytes: high, sha: hashOf(high) },
+    },
+  };
+  const ranges: string[] = [];
+  const hf = mkHf((req, res) => {
+    const u = new URL(req.url ?? '/', 'http://x');
+    const api = /^\/api\/models\/([^/]+\/[^/]+)$/.exec(u.pathname);
+    if (api) {
+      const repo = api[1];
+      const gated = repo.startsWith('Lightricks/') ? 'auto' : false;
+      const sib = Object.entries(files[repo] ?? {}).map(([p, f]) => ({ rfilename: p, size: f.bytes.length, lfs: { sha256: f.sha, size: f.bytes.length } }));
+      if (repo === 'Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details') sib.push({ rfilename: 'ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors', size: 5000, lfs: { sha256: 'a'.repeat(64), size: 5000 } });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return void res.end(JSON.stringify({ id: repo, gated, siblings: sib }));
+    }
+    const dl = /^\/([^/]+\/[^/]+)\/resolve\/main\/(.+)$/.exec(u.pathname);
+    if (dl) {
+      if (dl[1].startsWith('Lightricks/')) { res.writeHead(401); return void res.end('gated'); }
+      // As huggingface.co does: the file URL redirects to where the bytes are.
+      res.writeHead(302, { Location: `/cdn/${dl[1]}/${dl[2]}` });
+      return void res.end();
+    }
+    const cdn = /^\/cdn\/([^/]+\/[^/]+)\/(.+)$/.exec(u.pathname);
+    const f = cdn ? files[cdn[1]]?.[decodeURIComponent(cdn[2])] : undefined;
+    if (!f) { res.writeHead(404); return void res.end(); }
+    const r = /bytes=(\d+)-/.exec(String(req.headers.range ?? ''));
+    if (r) {
+      ranges.push(String(req.headers.range));
+      const start = Number(r[1]);
+      res.writeHead(206, { 'Content-Range': `bytes ${start}-${f.bytes.length - 1}/${f.bytes.length}`, 'Content-Length': f.bytes.length - start });
+      return void res.end(f.bytes.subarray(start));
+    }
+    res.writeHead(200, { 'Content-Length': f.bytes.length });
+    res.end(f.bytes);
+  });
+  await new Promise<void>((r) => hf.listen(0, '127.0.0.1', () => r()));
+  const hfUrl = `http://127.0.0.1:${(hf.address() as { port: number }).port}`;
+
+  const rdir = mkdtempSync(join(tmpdir(), 'jaf-ready-'));
+  const rsvc = makeServices(rdir, () => settings, library, v2fake.url, hfUrl);
+  rsvc.resources.update({ apiKey: FAKE_KEY, resources: [{ id: 'deployment', label: 'Heavy', url: 'https://example.invalid', enabled: true }] });
+  const all = (status: 'ok' | 'unknown') => Object.fromEntries(library.list().map((m) => [m.id, { status, missingNodes: [] as string[], missingModels: [] as string[], remaps: [] as string[] }]));
+  const wanMissing = ['wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors', 'wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors'];
+  const capsOf = (localOnline: boolean): Record<string, unknown> => ({
+    local: {
+      resourceId: 'local', kind: 'local', online: localOnline, nodes: { known: true, basis: 'object_info' }, models: { known: true, basis: 'object_info' },
+      workflows: {
+        ...all('ok'),
+        'wan22-flf': { status: 'missing', missingNodes: [], missingModels: wanMissing, remaps: [] },
+        'ltx25-refine': { status: 'missing', missingNodes: ['LTXVTiledFusionSampler'], missingModels: [], remaps: [] },
+        'zimage-t2i': { status: 'ok', missingNodes: [], missingModels: [], remaps: ['z_image_turbo_bf16.safetensors → z_image_turbo_fp8.safetensors'] },
+      },
+    },
+    cloud: { resourceId: 'cloud', kind: 'cloud', online: true, nodes: { known: true, basis: 'x' }, models: { known: true, basis: 'x' }, workflows: { ...all('ok'), 'wan22-flf': { status: 'missing', missingNodes: [], missingModels: wanMissing, remaps: [] } } },
+    deployment: { resourceId: 'deployment', kind: 'deployment', online: true, nodes: { known: false, basis: 'v2' }, models: { known: false, basis: 'v2' }, workflows: { ...all('unknown'), 'seedvr2-upscale': { status: 'proven', missingNodes: [], missingModels: [], remaps: [], provenAt: '2026-10-25T10:00:00Z' } } },
+  });
+  let fakeCaps = capsOf(true);
+  const capsStub = {
+    cached: (id: string) => fakeCaps[id] ?? null,
+    has: (r: { id: string }, wid: string) => {
+      const w = (fakeCaps[r.id] as { workflows: Record<string, { status: string }> } | undefined)?.workflows[wid];
+      return !w ? 'unknown' : w.status === 'ok' || w.status === 'proven' ? 'ok' : w.status === 'missing' ? 'missing' : 'unknown';
+    },
+    // The local catalogue: the LTX pack is there in part (its sampler is not), VideoHelperSuite whole.
+    objectInfo: (id: string) => (id === 'local' ? { VHS_MergeImages: {}, LTXICLoRALoaderModelOnly: {}, LTXAddVideoICLoRAGuide: {}, LTXVGetTilingSizes: {} } : null),
+  };
+  const deps = { services: { ...rsvc, caps: capsStub } as unknown as typeof rsvc, library, meta: rsvc.models.meta, folders: rsvc.models.folders, onboarding: rsvc.onboarding };
+  await rsvc.models.meta.ensure(library.list().flatMap((m) => m.models.map((x) => x.url)));
+  const onLocal = readiness(deps, 'local');
+  const byId = (r: typeof onLocal, id: string) => r.entries.find((e) => e.id === id)!;
+  check('readiness: the nine Featured entries in two groups, in order',
+    onLocal.entries.map((e) => `${e.group}:${e.id}`).join() === FEATURED.map((f) => `${f.group}:${f.id}`).join() && onLocal.entries.length === 9
+    && FEATURED.filter((f) => f.group === 'generate').map((f) => f.id).join() === 'zimage-t2i,ltx25-i2v,ltx25-t2v,h3-flf,wan22-flf'
+    && FEATURED.filter((f) => f.group === 'edit').map((f) => f.id).join() === 'qwen-edit,seedvr2-upscale,sam3-matte,ltx25-refine');
+  const wan = byId(onLocal, 'wan22-flf');
+  check('readiness on Local: ready · missing-models (with the files, sizes from the Hugging Face API, total) · missing-nodes (the pack by name)',
+    byId(onLocal, 'zimage-t2i').status === 'ready' && wan.status === 'missing-models' && wan.missing.count === 2 && wan.missing.bytes === 240_000
+    && wan.chip === 'Missing 2 models · 240 kB' && byId(onLocal, 'ltx25-refine').status === 'missing-nodes'
+    && byId(onLocal, 'ltx25-refine').chip === 'Needs the ComfyUI-LTXVideo pack'
+    && byId(onLocal, 'ltx25-refine').packs.some((p) => p.id === 'ComfyUI-LTXVideo' && p.installed === false && p.repo === 'https://github.com/Lightricks/ComfyUI-LTXVideo')
+    && byId(onLocal, 'ltx25-refine').packs.some((p) => p.id === 'comfyui-videohelpersuite' && p.installed === true),
+    JSON.stringify([wan.status, wan.missing, wan.chip, byId(onLocal, 'ltx25-refine').chip]));
+  check('…another precision of a file counts as there ("yours: …"); a gated repo is said', byId(onLocal, 'zimage-t2i').files.some((f) => f.state === 'variant' && f.using === 'z_image_turbo_fp8.safetensors')
+    && byId(onLocal, 'ltx25-refine').files.some((f) => f.gated === true && f.pageUrl === 'https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details'));
+  check('…the counts and the missing files across entries (each file once)', onLocal.counts.ready === 7 && onLocal.counts.missingModels === 1 && onLocal.counts.missingNodes === 1
+    && onLocal.missing.files === 2 && onLocal.missing.bytes === 240_000, JSON.stringify([onLocal.counts, onLocal.missing]));
+  const onDep = readiness(deps, 'deployment');
+  check('readiness on a deployment: unknown until a run of it finished there (then ready), LTX finishing not on this resource',
+    byId(onDep, 'zimage-t2i').status === 'unknown' && byId(onDep, 'zimage-t2i').chip === 'Unknown here' && byId(onDep, 'seedvr2-upscale').status === 'ready'
+    && byId(onDep, 'ltx25-refine').status === 'not-on-this-resource' && byId(onDep, 'ltx25-refine').chip === 'Not on this resource'
+    && byId(onDep, 'wan22-flf').local.status === 'missing-models');
+  const onCloud = readiness(deps, 'cloud');
+  check('readiness on Comfy Cloud: what it lacks is "not on this resource" (nothing to download there)', byId(onCloud, 'wan22-flf').status === 'not-on-this-resource' && byId(onCloud, 'zimage-t2i').status === 'ready');
+  rsvc.resources.noteRefusal('cloud', 'API key authentication is not available for free tier accounts');
+  check('…and every entry is, while Cloud refuses jobs (with its words)', readiness(deps, 'cloud').entries.every((e) => e.status === 'not-on-this-resource' && /free tier/.test(e.note ?? '')));
+  rsvc.resources.clearRefusal('cloud');
+  const onDefault = readiness(deps, 'default');
+  check('readiness on Default: each entry on the resource its task row and Auto give', onDefault.resource.id === 'default' && byId(onDefault, 'zimage-t2i').on?.id === 'local');
+  check('the suggestion: Z-Image + LTX-2.5 image to video, only what is missing', onLocal.suggestion.ids.join() === 'zimage-t2i,ltx25-i2v' && onLocal.suggestion.files === 0);
+
+  // Get started: when it shows.
+  check('Get started shows on the first run (no flag in the config folder)', onLocal.onboarding.show && onLocal.onboarding.firstRun && onLocal.onboarding.reasons.join() === 'first-run');
+  rsvc.onboarding.setMode('hidden');
+  check('…hidden by the user, it stays hidden', !readiness(deps, 'local').onboarding.show && !readiness(deps, 'local').onboarding.firstRun);
+  rsvc.onboarding.setMode('auto');
+  check('…on auto, after the first run, with most workflows ready: not shown', !readiness(deps, 'local').onboarding.show);
+  check('…fewer than half ready where the Generate button sends them: shown', readiness(deps, 'deployment').onboarding.reasons.includes('few-ready') && readiness(deps, 'deployment').onboarding.show);
+  fakeCaps = { ...capsOf(false), cloud: { ...(capsOf(false).cloud as object), online: false }, deployment: { ...(capsOf(false).deployment as object), online: false } };
+  const none = readiness(deps, 'local');
+  check('…no resource can take a job: shown, and said (the header pill offers it)', none.onboarding.show && none.onboarding.nothingUsable && none.usable.length === 0 && byId(none, 'zimage-t2i').status === 'unknown');
+  rsvc.onboarding.setMode('open');
+  fakeCaps = capsOf(true);
+  check('…opened from Settings: shown until hidden', readiness(deps, 'local').onboarding.show && readiness(deps, 'local').onboarding.mode === 'open');
+
+  // The models folder and the downloads.
+  const models = mkdtempSync(join(tmpdir(), 'jaf-models-'));
+  const { mkdirSync: mk, statSync: st, writeFileSync: wf, readFileSync: rf } = await import('node:fs');
+  check('a models folder needs checkpoints/ or diffusion_models/', !checkModelsFolder(models).ok);
+  mk(join(models, 'models', 'diffusion_models'), { recursive: true });
+  const viaParent = checkModelsFolder(models);
+  check('…a ComfyUI folder is taken as its models/ (and said)', viaParent.ok && viaParent.path === join(models, 'models') && !!viaParent.note);
+  const folder = join(models, 'models');
+  rsvc.resources.setModelsDir(folder);
+  let threw = '';
+  try { modelPath(folder, '../evil', 'x.safetensors'); } catch (e) { threw = String(e); }
+  check('a file can only land inside the folder', /Refusing/.test(threw));
+  threw = '';
+  try { catalogueFiles(library, [{ directory: 'vae', name: 'not-a-bundled-file.safetensors' }]); } catch (e) { threw = String(e); }
+  check('…and only a file a bundled manifest names', /not a file of a bundled workflow/.test(threw));
+  threw = '';
+  try { catalogueFiles(library, [{ directory: 'vae', name: 'wan_2.1_vae.safetensors', url: 'https://huggingface.co/someone/else/resolve/main/wan_2.1_vae.safetensors' }]); } catch (e) { threw = String(e); }
+  check('…from the URL that manifest gives', /not a file of a bundled workflow/.test(threw));
+  const wanVae = library.get('wan22-flf')!.manifest.models.find((x) => x.name === 'wan_2.1_vae.safetensors')!;
+  mk(join(folder, 'vae'), { recursive: true });
+  wf(join(folder, 'vae', 'wan_2.1_vae.safetensors.part'), vae.subarray(0, 100_000));
+  const dl = rsvc.models.downloads;
+  dl.start(folder, catalogueFiles(library, [
+    { directory: 'vae', name: 'wan_2.1_vae.safetensors', url: wanVae.url },
+    { directory: 'diffusion_models', name: 'wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors' },
+    { directory: 'loras', name: 'ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors' },
+  ]));
+  await dl.done();
+  const s1 = dl.state()!;
+  const it = (k: string) => s1.items.find((i) => i.key === k)!;
+  const a = it('vae/wan_2.1_vae.safetensors');
+  check('download: a partial file resumes with a Range request, through the redirect, and the sha256 matches',
+    a.status === 'done' && a.resumedFrom === 100_000 && a.shaChecked === true && ranges.includes('bytes=100000-')
+    && hashOf(rf(join(folder, 'vae', 'wan_2.1_vae.safetensors'))) === hashOf(vae) && !existsSync(join(folder, 'vae', 'wan_2.1_vae.safetensors.part')), JSON.stringify(a));
+  const b = it('diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors');
+  check('download: a sha256 that does not match Hugging Face\'s is refused, and the file removed',
+    b.status === 'error' && /sha256 does not match/.test(b.message ?? '') && !existsSync(join(folder, 'diffusion_models', 'wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors'))
+    && !existsSync(join(folder, 'diffusion_models', 'wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors.part')), JSON.stringify(b));
+  const c = it('loras/ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors');
+  check('download: a gated file (401) says to accept its terms on its page, and where a token goes', c.status === 'error' && c.gated === true
+    && /gated: accept the terms on Hugging Face \(https:\/\/huggingface\.co\/Lightricks\/LTX-2\.5-22b-IC-LoRA-Refine-Details\)/.test(c.message ?? '') && /Hugging Face token/.test(c.message ?? ''));
+  check('…after the queue, the local ComfyUI is read again', !!s1.reprobe && s1.reprobe.online === true && Array.isArray(s1.reprobe.stillMissing));
+  rsvc.models.meta.noteSpeed(50e6, 2000);
+  check('the last measured speed (a download of 1 MB or more) is kept for the "≈ N min" of the list',
+    rsvc.models.meta.speed()?.bytesPerSec === 25e6 && readiness(deps, 'local').speed?.bytesPerSec === 25e6);
+  dl.start(folder, catalogueFiles(library, [{ directory: 'vae', name: 'wan_2.1_vae.safetensors', url: wanVae.url }]));
+  await dl.done();
+  check('…a file already in the folder is skipped, not fetched again', dl.state()!.items[0].status === 'skipped' && st(join(folder, 'vae', 'wan_2.1_vae.safetensors')).size === vae.length);
+  // ComfyUI offline: the folder answers for what is there.
+  fakeCaps = capsOf(false);
+  rsvc.models.folders.forget();
+  const off = readiness(deps, 'local');
+  check('ComfyUI not reachable: the models folder says which files are there', byId(off, 'wan22-flf').files.find((f) => f.name === 'wan_2.1_vae.safetensors')?.state === 'present'
+    && byId(off, 'wan22-flf').files.find((f) => f.name === 'wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors')?.state === 'missing'
+    && byId(off, 'wan22-flf').files.every((f) => f.basis === 'folder'));
+  fakeCaps = capsOf(true);
+
+  // The routes: the session token for writes; the README's setup section.
+  const routes = setupRoutes(rsvc, library, root);
+  const { createServer: mkS } = await import('node:http');
+  const srv = mkS(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    for (const [method, re, h] of routes) { const m = re.exec(url.pathname); if (m && req.method === method) return void (await h(req, res, m, url)); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  const noTok = await fetch(`${base}/api/models/download`, { method: 'POST', body: JSON.stringify({ files: [] }) });
+  const badFolder = await fetch(`${base}/api/models/folder`, { method: 'PUT', headers: { 'X-Flow-Token': SESSION_TOKEN }, body: JSON.stringify({ path: rdir }) });
+  check('POST /api/models/download wants the session token; a folder without checkpoints/ or diffusion_models/ is refused', noTok.status === 403 && badFolder.status === 400
+    && /no checkpoints\/ or diffusion_models\//.test(((await badFolder.json()) as { error: string }).error));
+  const rd = await fetch(`${base}/api/readme?section=no-gpu-the-comfy-developer-platform`);
+  const rdj = await rd.json() as { title: string; markdown: string };
+  check('GET /api/readme: the README\'s Comfy Developer Platform section (what the app links to)', rd.ok && /Comfy Developer Platform/.test(rdj.title) && /platform\.comfy\.org/.test(rdj.markdown) && /#your-own-deployment/.test(rdj.markdown));
+  check('…the anchors are GitHub\'s', anchorOf('No GPU: the Comfy Developer Platform') === 'no-gpu-the-comfy-developer-platform' && readmeSection('# A\n## B c\nx\n## D\n', 'b-c')?.markdown === 'x');
+  srv.close();
+  hf.close();
+  check('parseHfUrl: a blob page URL is fetched through its resolve form', parseHfUrl('https://huggingface.co/Lightricks/LTX-2.5/blob/main/vae/x.safetensors')?.downloadUrl === 'https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/x.safetensors'
+    && parseHfUrl('https://huggingface.co/a/b/resolve/main/t/u.safetensors?download=true')?.path === 't/u.safetensors' && formatBytes(28_589_485_664) === '28.6 GB');
+  check('the pack of a node class, from the table read off object_info', packsOf(['LTXVTiledFusionSampler', 'VHS_MergeImages', 'KSampler']).map((p) => p.id).join() === 'ComfyUI-LTXVideo,comfyui-videohelpersuite');
 }
 
 const sidecar = JSON.parse(readFileSync(join(projectDir, 'p.justae-flow.json'), 'utf8')) as { cards: unknown[] };

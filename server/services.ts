@@ -10,6 +10,8 @@ import type { Settings } from './config.ts';
 import { CapabilityProbe } from './capabilities.ts';
 import { Credits, RECONCILE_EVERY_MS } from './credits.ts';
 import type { WorkflowLibrary } from './library.ts';
+import { Downloads, FolderIndex, ModelMeta } from './models.ts';
+import { Onboarding } from './readiness.ts';
 import { ResourceRegistry } from './resources.ts';
 import { RunLog } from './runs.ts';
 import { V2Jobs } from './v2run.ts';
@@ -20,6 +22,10 @@ export interface Services {
   caps: CapabilityProbe;
   v2: V2Jobs;
   credits: Credits;
+  /** Model files: their sizes (Hugging Face), the local models folder's index, the download queue. */
+  models: { meta: ModelMeta; folders: FolderIndex; downloads: Downloads };
+  /** The Get started card's flag. */
+  onboarding: Onboarding;
 }
 
 /**
@@ -50,8 +56,11 @@ export function rederiveDeploymentRuns(runs: RunLog, resources: ResourceRegistry
   return changes.length;
 }
 
-/** `cloudBase` stands in for https://cloud.comfy.org in the selftest, so it never leaves loopback (and nothing runs on a timer). */
-export function makeServices(dir: string, settings: () => Pick<Settings, 'comfyUrl' | 'comfyToken' | 'comfyGpu'>, library: WorkflowLibrary, cloudBase?: string): Services {
+/**
+ * `cloudBase` stands in for https://cloud.comfy.org in the selftest, so it never leaves loopback (and nothing runs on a
+ * timer); `hfBase` for https://huggingface.co (sizes and downloads).
+ */
+export function makeServices(dir: string, settings: () => Pick<Settings, 'comfyUrl' | 'comfyToken' | 'comfyGpu'>, library: WorkflowLibrary, cloudBase?: string, hfBase?: string): Services {
   const resources = new ResourceRegistry(dir, settings().comfyUrl);
   const runs = new RunLog(dir);
   rederiveDeploymentRuns(runs, resources);
@@ -66,5 +75,17 @@ export function makeServices(dir: string, settings: () => Pick<Settings, 'comfyU
     setTimeout(() => void credits.reconcile().catch(() => undefined), 5_000).unref?.();
     setInterval(() => void credits.reconcile().catch(() => undefined), RECONCILE_EVERY_MS).unref?.();
   }
-  return { resources, runs, caps, v2, credits };
+  const meta = new ModelMeta(dir, hfBase);
+  const folders = new FolderIndex();
+  // After a download: ComfyUI is read again (it lists new files on the next /object_info), and what it still lacks is said.
+  const downloads = new Downloads(meta, dir, async (st) => {
+    folders.forget();
+    const local = resources.local();
+    const c = await caps.get(local.id, true);
+    const done = new Set(st.items.filter((i) => i.status === 'done').map((i) => i.name));
+    const still = new Set<string>();
+    for (const w of Object.values(c.workflows)) for (const n of w.missingModels) if (done.has(n)) still.add(n);
+    return { at: new Date().toISOString(), stillMissing: [...still], online: c.online };
+  });
+  return { resources, runs, caps, v2, credits, models: { meta, folders, downloads }, onboarding: new Onboarding(dir) };
 }
