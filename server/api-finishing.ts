@@ -71,8 +71,16 @@ export function finishingRoutes(s: Services): Array<[string, RegExp, Handler]> {
         if (!clip) return send(res, 400, { error: 'ffprobe could not read the clip (is ffmpeg on the PATH?).' });
         const preset: FinishPresetId = q.size === 'same' ? 'refine-same' : 'refine-fhd';
         const fast = q.fast === 2 || q.fast === 3 ? q.fast : 1;
-        const plan = planFinish({ width: clip.width, height: clip.height, pixelAspect: 1, frames: clip.frames, fps: clip.fps }, { ...DEFAULT_OPTIONS, preset, preview: false, duplicate: fast, format: 'png16' });
         const local = s.resources.local();
+        // On a card of 16 GB or less, the official workflows' low-VRAM decode (as the Comp tab does: server/engine.ts, decodeFor).
+        let vramGb: number | null = null;
+        try {
+          const st = await (await fetch(`${local.url.replace(/\/+$/, '')}/api/system_stats`, { signal: AbortSignal.timeout(4000) })).json() as { devices?: Array<{ vram_total?: number }> };
+          vramGb = typeof st.devices?.[0]?.vram_total === 'number' ? st.devices[0].vram_total / 2 ** 30 : null;
+        } catch { /* unknown: the card's decode */ }
+        const plan = planFinish({ width: clip.width, height: clip.height, pixelAspect: 1, frames: clip.frames, fps: clip.fps }, {
+          ...DEFAULT_OPTIONS, preset, preview: false, duplicate: fast, format: 'png16', decode: vramGb !== null && vramGb <= 17 ? 'low-vram' : 'card',
+        });
         const oi = (s.caps.objectInfo(local.id) ?? (await s.caps.get(local.id, true).then(() => s.caps.objectInfo(local.id)))) as unknown as NodeCatalog | null;
         if (!oi) return send(res, 400, { error: 'The local ComfyUI could not be read: LTX Refine runs there.' });
         const verdict = localVerdict(plan, hasQuantizedTransformer(oi));
@@ -92,7 +100,7 @@ export function finishingRoutes(s: Services): Array<[string, RegExp, Handler]> {
         const est = estimateFinish(plan);
         send(res, 200, {
           graph: workflow, loadNode, saveNode, previewNode,
-          plan: { delivery: plan.delivery, tiles: plan.passes[0].grid.count, frames: plan.frames, load: plan.load, canvas: plan.passes[0].canvas },
+          plan: { delivery: plan.delivery, tiles: plan.passes[0].grid.count, frames: plan.frames, load: plan.load, canvas: plan.passes[0].canvas, decode: plan.options.decode },
           estimate: { seconds: Math.round(est.seconds), line: describeFinishEstimate(est) },
           models: check.models,
         });
