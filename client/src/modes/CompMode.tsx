@@ -826,6 +826,7 @@ function Advanced({ tool, draft, set, setOpt, plan }: {
           {tool === 'matte' && (o.engine === 'ltx' ? ' · the official LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled chain with the Alpha Gen IC-LoRA' : ' · official template utility_video_segment_sam3 (tracking)')}
           {tool === 'restore' && ' · the chain of the official LTX-2.5_V2V_TiledFusion_Upscale workflow with the Restore IC-LoRA (its card), Refine Details after or inside it'}
           {['deblur', 'decompress', 'colorize', 'cleanplate', 'daynight'].includes(tool) && ' · the chain of the official LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled workflow, the IC-LoRA and sentence of its card'}
+          {tool === 'sdr2hdr' && ' · the node chain of the official LTX-2.5_ICLoRA_SDR_to_HDR_Distilled workflow, with its scene embedding'}
           {tool === 'extend' && (plan?.workflowId === 'ltx25-extend'
             ? ' · from the official template video_ltx2_5_flf2v: the last frames as a video guide (LTXVAddGuide at frame 0, LTXVCropGuides)'
             : ' · official template video_ltx2_5_i2v, from the last frame')}
