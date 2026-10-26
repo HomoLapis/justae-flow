@@ -40,16 +40,57 @@ workflows/*.api.json
   0 with strength 1, the last-frame guide is removed, and the guide is resized
   by stretching (lanczos) instead of a centre crop; in the Qwen3-VL text graph,
   the single image becomes a few frames of a clip (LoadVideo,
-  GetVideoComponents) and the answer is capped at 320 tokens.
+  GetVideoComponents) and the answer is capped at 320 tokens; the H3 draft graph
+  (h3-flf-draft) keeps the template's turbo-LoRA branch, switched on, with the
+  4-step LoRA its note names and 4 steps.
+
+workflows/ltx25-refine, -restore, -deblur, -decompression, -colorize,
+-cleanplate, -alpha, -daynight (*.json, *.api.json)
+  Written by scripts/build-finishing.ts from core/finishing: a representative
+  run of each LTX finishing tool (at run time the engine builds each graph from
+  the plan of the clip in hand). The chains follow the official example
+  workflows of ComfyUI-LTXVideo 1.1.0 (Lightricks), example_workflows/2.5:
+  LTX-2.5_V2V_TiledFusion_Upscale.json and
+  LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json; no file of those workflows is
+  included.
+
+core/finishing/ (plan, graph, models, prompt, validate)
+  From JustAE Flow 2 (client/src/finishing, branch feature/ltx-finishing), by
+  the author of this project. plan.ts re-implements in TypeScript the tile-grid
+  arithmetic of ComfyUI-LTXVideo's tiled_fusion_plan.py (plan_grid,
+  temporal_plan) and tiled_fusion_sizes.py (spatial_tile_grid), so that the
+  tile counts shown before a run are the ones the sampler walks.
+  ComfyUI-LTXVideo is distributed under the "LTX-2 Community License Agreement"
+  (License date: January 5, 2026; its LICENSE file), not an open-source licence:
+  whether this re-implementation of a few lines of arithmetic is a "Derivative
+  of LTX-2" under that agreement (which then asks to be distributed under its
+  own terms) is DA VERIFICARE by the author before publishing.
 
 Model weights are NOT included. Each workflow manifest (workflows/<id>.json)
 names the files it needs, where the official template downloads them from,
 and the licence of the weights:
   LTX-2.5            LTX-2.x Community License (11 Aug 2026): commercial use
                      permitted for entities under USD 10M annual revenue
-                     (affiliates counted together), outputs belong to the user,
-                     published machine-generated content must be disclosed as
-                     such — https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x
+                     (affiliates under common control counted together; clients
+                     receiving outputs are not the licensee), outputs belong to
+                     the user, machine-generated content must be disclosed when
+                     published — https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x
+  LTX-2.5 IC-LoRAs of Lightricks' "LTX-2.5 Creative Lab" (LTX finishing; gated
+  on Hugging Face: "Agree and Access"); each repo names the LTX-2.x Community
+  License above (license_name ltx-2.x-community-license, Hugging Face API, read
+  25 Oct 2026):
+    ltx-2.5-22b-ic-lora-refine-details-1.0     Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details
+    ltx-2.5-22b-ic-lora-restore-1.0            Lightricks/LTX-2.5-22b-IC-LoRA-Restore
+                                               (trained on LTX-2.3, tested on 2.5 by Lightricks)
+    ltx-2.5-22b-ic-lora-deblur-0.9             Lightricks/LTX-2.5-22b-IC-LoRA-Deblur
+    ltx-2.5-22b-ic-lora-decompression-0.9      Lightricks/LTX-2.5-22b-IC-LoRA-Decompression
+    ltx-2.5-22b-ic-lora-colorization-0.9       Lightricks/LTX-2.5-22b-IC-LoRA-Colorization
+    ltx-2.5-22b-ic-lora-clean-plate-1.0        Lightricks/LTX-2.5-22b-IC-LoRA-Clean-Plate
+    ltx-2.5-22b-ic-lora-alpha-gen-0.9          Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen
+    ltx-2.5-22b-ic-lora-day-to-night-0.9       Lightricks/LTX-2.5-22b-IC-LoRA-Day-To-Night
+    ltx-2.5-22b-ic-lora-sdr-to-hdr-1.0 (+ -scene-emb)  listed, not run: DA VERIFICARE
+  The Pixel-Spatial-Upscaler IC-LoRA is not used (its card: a creative
+  upscaler, not for footage where fidelity to the source matters).
   Qwen3-VL-4B-Instruct (qwen3vl_4b_fp8_scaled, "Describe the clip")
                      Apache-2.0 (Qwen; repackaged by Comfy-Org/Qwen3-VL)
   Z-Image-Turbo      Apache-2.0 (Tongyi-MAI)
@@ -64,7 +105,9 @@ and the licence of the weights:
   Wan2.2 I2V 14B (high/low noise)                  Apache-2.0 (Wan-AI)
   MiniMax H3 open weights   commercial use of locally generated outputs needs
                      a MiniMax commercial licence (sold by Comfy); in the EU:
-                     DA VERIFICARE on the licence text
+                     DA VERIFICARE on the licence text. The 4-step turbo LoRA
+                     of the Draft (Comfy-Org/MiniMax-H3, loras/) is named by
+                     the official template; its own licence: DA VERIFICARE
   FILM (frame interpolation)   Apache-2.0 (google-research/frame-interpolation);
                      the file is Comfy-Org's repackaging, whose model card says
                      "other": DA VERIFICARE
@@ -75,6 +118,12 @@ Read each licence before using the outputs commercially.
 
 Custom node packs the workflows above use (installed in your ComfyUI, not here):
   ComfyUI-Frame-Interpolation (Fannovel16)   MIT  — RIFE VFI
+  ComfyUI-LTXVideo 1.1.0 (Lightricks)        LTX-2 Community License Agreement
+                                             (5 Jan 2026) — LTXVTiledFusionSampler,
+                                             LTXAddVideoICLoRAGuide,
+                                             LTXICLoRALoaderModelOnly (LTX finishing)
+  ComfyUI-VideoHelperSuite (Kosinkadink)     GPL-3.0 (its LICENSE) — VHS_MergeImages,
+                                             VHS_SelectEveryNthImage (LTX finishing)
 (GIMM-VFI, S-Lab License 1.0, non-commercial, is no longer a bundled engine.)
 
 client/ (the Flow window) and extensions/effectcraft/flow-host.jsx

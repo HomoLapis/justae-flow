@@ -39,12 +39,13 @@ ComfyUI, your own Comfy API deployment, Comfy Cloud or `comfy-api-proxy` — one
 | Generate Video | text → clip on Higgsfield's servers, dropped into the timeline | LTX-2.5 text/image → video with sound, MiniMax H3 and Wan 2.2 first + last frame, or any video workflow of your ComfyUI — per marker pair or placeholder, in series, at its slot | **done** |
 | Generate Image | text → still into the timeline | Z-Image-Turbo (or any image workflow) on a placeholder; Qwen-Image-Edit inside a PhotoCraft selection | **done** |
 | Reframe | *crops* to 9:16, 16:9, 4:3, 3:4, 21:9, 1:1 with subject tracking | **generates** the space the new format needs (Wan 2.1 VACE outpainting) in 9:16, 4:5, 1:1, 16:9, 21:9, 4:3; the crop with SAM 3 tracking is there too (*Advanced ▸ Crop with tracking*); 3:4 is not offered | **different** |
-| Remove Background | alpha key from any clip | SAM 3 tracked matte set as a luma track matte (the clip untouched), ProRes 4444 master with alpha; BiRefNet for stills | **done** (hard edges on hair: see limits) |
+| Remove Background | alpha key from any clip | SAM 3 tracked matte set as a luma track matte (the clip untouched), ProRes 4444 master with alpha; **LTX Alpha** (Lightricks' Alpha Gen IC-LoRA) for soft edges — hair, smoke, glass; BiRefNet for stills | **done** (SAM 3: hard edges on hair, see limits) |
 | Draw to edit | sketch on the frame → inpainting | Wan VACE inpainting from a drawn mask (the official template `video_wan_vace_inpainting` is identified, not built) | **planned** |
-| Upscale | "up to 4K or 8K" | SeedVR2 ×2, ×4 in two passes, original colours kept; verified here up to 2160×3840 on a 16 GB GPU; 8K not claimed | **done** (to 4K) |
-| Edit Video | prompt-based editing | Restyle (LTX-2.5 video-to-video or VACE with a reference) is not built | **planned** |
+| Upscale | "up to 4K or 8K" | SeedVR2 ×2, ×4 in two passes, original colours kept; or **LTX Refine** (LTX-2.5 + Lightricks' Refine Details IC-LoRA, tiled) to Full HD, 4K, or 8K always through 4K; verified here: SeedVR2 to 2160×3840, LTX Refine to Full HD on a 16 GB GPU — LTX 4K/8K planned and validated, not run (hours on 16 GB) | **done** (to 4K; LTX to Full HD) |
+| Edit Video | prompt-based editing | Restyle (LTX-2.5 video-to-video or VACE with a reference) is not built; the LTX finishing cards edit in fixed ways — Day → Night, Clean plate, Colorize, Deblur, De-compression, Archive restore | **partly** |
 
-Only here: **Extend** a shot by 2–5 s carrying on the motion of its last frames, **Slow motion / fps** (RIFE, FILM),
+Only here: **LTX finishing** (Lightricks' IC-LoRAs: Archive restore, Deblur, De-compression, Colorize, Clean plate,
+Day → Night, with 16-bit masters), **Extend** a shot by 2–5 s carrying on the motion of its last frames, **Slow motion / fps** (RIFE, FILM),
 a **Social pack** (several formats, their upscales and masters in one queue), **Describe the clip** (a local
 vision-language model writes the prompt from your frames), a **storyboard** built from the timeline's markers and
 placeholders with versions and status colours, and an estimate of time and credits under every Generate button.
@@ -133,8 +134,8 @@ EffectCraft selects other layers (it selects every result it places); a differen
 | Tool | What it runs | What it makes |
 |---|---|---|
 | **Reframe** — 9:16 · 4:5 · 1:1 · 16:9 · 21:9 · 4:3, *Draft* / *Final* | Wan 2.1 VACE outpainting (`vace-reframe-draft` 1.3B / `vace-reframe` 14B) | a new comp at the delivery size: the generated video fills it, your render or clip on top, untouched, with a soft edge. *Advanced ▸ Crop with tracking* runs the SAM 3 auto crop instead |
-| **Upscale** — ×2, ×4, *Keep original colours* | SeedVR2 3B (`seedvr2-upscale`); ×4 is two ×2 passes | a new comp at the target size (stated before the run), your original under it, switched off. 8-bit H.264 (EffectCraft 0.11.1 decodes no other H.264). *Keep original colours* (default) sets SeedVR2's own colour correction to `wavelet` |
-| **Cut-out** | SAM 3 tracking (`sam3-matte`), the subject named in a word | from a layer: a matte above it, set as its luma track matte; from the comp: a new comp with the render and its matte. **Export with alpha** writes a ProRes 4444 `.mov` with ffmpeg |
+| **Upscale** — *Engine*: SeedVR2 (×2, ×4, *Keep original colours*) or **LTX Refine** (Full HD, 4K, 8K, Same size — see *LTX finishing*) | SeedVR2 3B (`seedvr2-upscale`); ×4 is two ×2 passes. LTX Refine: LTX-2.5 + Refine Details, Tiled Fusion (`ltx25-refine`) | a new comp at the target size (stated before the run), your original under it, switched off. 8-bit H.264 (EffectCraft 0.11.1 decodes no other H.264). *Keep original colours* (default) sets SeedVR2's own colour correction to `wavelet` |
+| **Cut-out** — *Engine*: SAM 3 or **LTX Alpha** | SAM 3 tracking (`sam3-matte`), the subject named in a word; LTX Alpha: LTX-2.5 + Alpha Gen, no prompt, soft edges (`ltx25-alpha`) | from a layer: a matte above it, set as its luma track matte; from the comp: a new comp with the render and its matte. **Export with alpha** writes a ProRes 4444 `.mov` with ffmpeg |
 | **Extend** — +2, 4 or 5 s, "What happens next" | LTX-2.5 with a **video guide** (`ltx25-extend`, from the official template `video_ltx2_5_flf2v`): the source's last 17 frames (0.7 s at 24 fps; 9 when the source is shorter) go in through the core `LTXVAddGuide` at frame 0 of the new clip, and `LTXVCropGuides` takes them off the latent before decoding. From a still (or fewer than 9 frames): LTX-2.5 image-to-video from the last frame (`ltx25-i2v`) | a new layer at the source's out point, above it, at the source's size and frame rate, with its own sound; the card says "continues the last 0.7 s of motion". The model makes guide + 8k new frames (17 + 48 = 65 for 2 s at 24 fps); the guide frames come back first and are trimmed off. A comp too short to hold it is lengthened. Nothing is rendered: the render cap does not apply |
 | **Slow motion / fps** — ×2 slow, ×4 slow, *fps → 2 × fps* | `utility_video_frame_interpolation`: RIFE (`interp-rife`, default, MIT) or FILM (`interp-film`, the template as it ships, Apache-2.0) | a new comp: slow motion at the source's rate, (n − 1) × k + 1 frames, the sound left out; or twice the rate for the same length, the sound kept. Your original in it, switched off |
 | **Social pack** — any of the six formats, *Draft / Final*, *+ Upscale ×2*, *Masters* | the Reframe of each format in the queue; then, if asked, SeedVR2 ×2 of each result and a master of each last comp | one comp per format (and its ×2 comp); a master per format next to the project (EffectCraft renders ProRes 422 HQ, ffmpeg writes ProRes 4444 or a PNG 16-bit sequence). *Results* shows the pack together |
@@ -163,7 +164,8 @@ the opaque original.
 Each card shows the comp's own frame at the playhead next to what it will make, says what the run will make before it
 runs, and has the resource chooser and the estimate of the other tabs: each tool routes by its row of *Settings ▸
 Resources* (Reframe → *Generative reframe* / *Reframe draft*, Upscale → *Upscale*, Cut-out → *Cut-out / matte*,
-Extend → *Generate video*, Slow motion → *Slow motion / fps*), and a pick on the card holds for that tool. Technical
+Extend → *Generate video*, Slow motion → *Slow motion / fps*, the LTX finishing tools and engines → *LTX finishing*, Local),
+and a pick on the card holds for that tool. Technical
 choices (seed, crop mode, colour correction) are under *Advanced*, with the workflow and the template it comes from.
 
 **Results** lists the comp's runs: running ones with their phase, a bar and *Cancel*; finished ones with their time,
@@ -178,6 +180,122 @@ run makes goes into `<project>.justae-flow/<run id>/` next to the `.ecproj` — 
 it, the exact graph submitted (`submitted_<time>.api.json`) and the `job.json` (tool, source, sizes, resource, times,
 seed, model swaps; for Extend the guide frames and the frames that came back).
 
+## LTX finishing
+
+LTX-2.5 with the IC-LoRAs of Lightricks' **LTX-2.5 Creative Lab** (Hugging Face), in the Comp tab: a second engine on
+*Upscale* and on *Cut-out*, and an **LTX finishing** family of cards after the other tools. Each tool is offered only
+where its model card documents how the LoRA is driven (input, prompt, strength, extra files, output), read on 25 Oct
+2026; a card whose LoRA is not on your local ComfyUI is greyed, with the file and its (gated) Hugging Face page.
+
+| Card | IC-LoRA (strength) | How it runs | What it makes |
+|---|---|---|---|
+| **Upscale ▸ LTX Refine** — *Full HD · 4K · 8K · Same size*, *Fast scene*, *Master* | Refine Details 1.0 | Tiled Fusion (`LTXVTiledFusionSampler`): one latent canvas, overlapping 1024×576 tiles fused every step, as the official `LTX-2.5_V2V_TiledFusion_Upscale` workflow | a new comp at the delivery size, the original under it switched off; the master next to the project |
+| **Archive restore** — *Restore · + Refine 30 % · Restore → Refine ×2* | Restore 1.0 (+ Refine Details 0.3 in the same pass) | Tiled Fusion on 960×544 tiles at 1440 wide (4:3) or 1920 (16:9); *Restore → Refine ×2* then lanczos ×2 and Refine | the same; Restore also colours monochrome and tinted sources from their content (its card) |
+| **Deblur** | Deblur 0.9 file, strength 1.0 | one pass, the official `LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled` chain (CFGGuider 1, euler_ancestral, 8 distilled sigmas, `LTXVCropGuides`), at the source size up to 1920×1088 | the same; defocus only (not motion blur) |
+| **De-compression** | Decompression 0.9, 1.0 | the same chain, near the card's 960×544 size by default | compression artefacts removed |
+| **Colorize** | Colorization 0.9, 1.0 | the same chain, near 960×544; *Scene* + *Colours* fill the card's `COLORIZE` sentence | natural colour for black-and-white footage |
+| **Clean plate** | Clean Plate 1.0, 1.0 | the same chain at the source size; *The empty place* + *Also remove* fill the card's sentence and negative | the background without people and vehicles |
+| **Day → Night** | Day-To-Night 0.9, 1.0 | the same chain near the card's 768×448 size | the same shot at night |
+| **Cut-out ▸ LTX Alpha** | Alpha Gen 0.9, 1.0, empty prompt | the same chain at the source size (≤ 1920×1088, ≤ 145 frames) | a soft luma matte (white = foreground), set as the layer's luma track matte like SAM 3's; *Export with alpha* works the same |
+| SDR → HDR | — | **to be verified** (greyed): its card runs a dedicated pipeline (ACEScct input, a fixed scene embedding, seam keyframes, float32 decode, EXR ACEScg + HLG); here its scene embedding sits in `models/loras/LTX2.5/` while its loader reads only `models/embeddings`, and EffectCraft's EXR import is not verified | — |
+
+Run on this machine with their own IC-LoRA: Refine (preview tile and Full HD), Restore, LTX Alpha (2 s at 1280×704 in
+1:16: a clean white matte of the boat and its sail — and of its reflection in the water) and De-compression (once, on a
+test pattern). Deblur, Colorize, Clean plate and Day → Night: their graphs are checked against the local ComfyUI and the
+single-pass chain they share has run, but not with their own LoRA.
+
+**The five rules, built into the cards** (the author's, PLAN v3 §4.2b):
+
+1. **8K goes through 4K.** *8K* is always Refine to 4K, lanczos ×2, then a light 2-step refine of the 8K canvas from the
+   encoded image — never 8K in one pass (the Refine card: "8K in one pass invents detail"). The card says so.
+2. **Archive: Restore first, then Refine.** *Restore → Refine ×2* orders the passes itself; *+ Refine 30 %* puts both
+   LoRAs in one pass (the Restore card allows 0.2–0.3: faster, colour best sequential).
+3. **Fast scene** ×2 / ×3: every frame repeated before the model and the copies removed after (JustAE Flow 2 verified
+   the frame order ×1–×4; here ×2 and ×3 again, PSNR of each returned frame against its own source).
+4. **The prompt is a "Look"** — sharpness, grain, light — **not the subjects**: every tile of a tiled pass receives the
+   whole prompt, and a subject named in it can be painted into tiles that do not contain it. The field is optional
+   (empty = the card's own generic look); a simple check warns when it names a subject: people, animals, vehicles and
+   objects by name, and any word after "a", "the", "two"… that is not a rendering term. It can miss a subject or flag a
+   harmless word, and says so. (The single-pass cards are not tiled: their cards *ask* for the scene, in a sentence
+   they were trained on, which the card fills in.)
+5. **Delivery: a 16-bit master.** PNG 16-bit by default, or EXR 16-bit float; the comp shows an 8-bit H.264 MP4 of the
+   same frames (EffectCraft 0.11.1 decodes 8-bit H.264 only) — a preview, never the delivery.
+
+**Sizes and frames**, from the planner (`core/finishing/plan.ts`, JustAE Flow 2's port of ComfyUI-LTXVideo's own
+`tiled_fusion_plan.py` / `tiled_fusion_sizes.py`, so the tile count shown is the one the sampler walks):
+
+| | |
+|---|---|
+| Canvas | multiples of 32; delivered at the source's aspect (lanczos): 3840×2176 → 3840×2160 |
+| Delivery boxes | Full HD fits 1920×1080, 4K 3840×2160, 8K 7680×4320 (portrait turned); a 1280×704 clip → 1920×1056 · 3840×2112 · 7680×4224 |
+| Tiles | Refine 1024×576, Restore 960×544 (portrait swapped); overlap 0.5, blend 0.05, grid cycle 1 |
+| Tiles per step, from 1920×1080 | Full HD 3×3 = 9 · 4K 7×7 = 49 · 8K 14×15 = 210 |
+| Frames | 8n+1, at least 8 copies of the last frame added and cut after (the last frames of an LTX generation lose detail) |
+| Time | 97-frame windows (streaming), 8 distilled steps, cfg 1, euler; decode `VAEDecodeTiled` 1024 / 128 / 256 / 32 (the Refine card), or 512 / 64 / 128 / 32 (the official workflows' low-VRAM default) on 16 GB |
+| Single-pass sizes | Deblur and Clean plate: the source, up to 1920×1088; De-compression and Colorize: shorter side 544; Day → Night: shorter side 448; Alpha: the source exactly |
+
+Every card says, before it runs, the tiles, frames, windows and tile-steps, and **how long it should take on this
+machine**, from the tile count and runs measured here (an RTX 5080 16 GB, the number says so).
+
+**Measured on the RTX 5080 16 GB** (ComfyUI 0.38.0, NVFP4 transformer, Gemma-4 int8, DiffVAE bf16; 25–26 Oct 2026):
+
+| Run (Comp tab, Local) | Source → output | Plan | Execution | Shown before |
+|---|---|---|---|---|
+| LTX Refine, preview tile | 1280×704 clip, first 41 frames → one 1024×576 tile | 1 tile, 41 → 49 frames, 8 steps | 2:05 (cold) | ≈ 2 min |
+| **LTX Refine → Full HD** | 1280×704, 121 frames → 1920×1056, 121 PNG 16-bit (578 MB) + MP4 | 9 tiles, 121 → 129 frames, 2 windows of 97, 144 tile-steps | **14:33** — sampling 11:12, decode 0:46, save 1:51 | ≈ 17 min |
+| the same, with the Refine card's decode (1024 / 128 / 256) | same | same | 41:09 — the decode alone 27:11, GPU memory full | ≈ 23 min |
+| Archive restore (Restore) | 872×480, H.264 CRF 44, 49 frames → 1920×1056 | 9 tiles of 960×544, 49 → 57 frames, 72 tile-steps | 4:56 | ≈ 8 min |
+| De-compression (verify-finishing-run, a test pattern) | 1920×1080, 41 frames → 968×544 | one pass at 960×544, 41 → 49 frames | 1:44 (cold) | — |
+| *for comparison:* SeedVR2 ×2 | 1280×704, 121 frames → 2560×1408 | — | 14:44 | — |
+| Cut-out ▸ LTX Alpha | 1280×704, 49 frames → a luma matte | one pass at the source size, 49 → 57 frames | 1:16 | ≈ 2 min |
+| MiniMax H3 *Draft* (4-step turbo), then *+ LTX Refine* (`scripts/verify-h3-chain.ts`: the Featured graphs and `/api/finishing/graph`) | two generated stills → 1344×768, 124 frames → 1890×1080, 124 PNG 16-bit + MP4 | Draft 4 steps; Refine 9 tiles, 124 → 137 frames, 2 windows of 97, 144 tile-steps | Draft 3:57 · Refine 14:48 | Refine ≈ 15 min |
+
+On a card of 16 GB or less the tiled runs decode with the official workflows' low-VRAM tiles (512 / 64 / 128 / 32, "tuned
+for lower-VRAM machines" in their README) instead of the Refine card's 1024 / 128 / 256, which filled the RTX 5080's
+memory and took 27 min to decode the Full HD clip above; the two decodes of the same run (same seed) are 35 dB apart,
+with no seams. A preview tile keeps the card's decode. Lightricks state a 32 GB minimum for LTX-2.5; with the NVFP4
+transformer these runs fit 16 GB. Above Full HD the card warns that it takes hours (4K of a 5 s 720p clip: ≈ 1 h 13 min
+by the estimate); 4K and 8K are planned and their graphs validated against the local ComfyUI, not run here.
+
+**A/B on the same 5 s generated clip** (`P5_ab_seedvr2_vs_refine.png` in the test folder; fine detail = std of the luma
+Laplacian at 1920×1056, colour = mean ΔE76 against the source after a σ 3 blur): SeedVR2 ×2 adds far more detail at this
+size (20.4 vs the source's 8.2; sail seams, rigging, leaves — partly invented), LTX Refine to Full HD a little (10.1) and
+stays soft; both keep the colours (ΔE 1.3 and 1.6; LTX slightly brighter and ~4 % less saturated, as its card says).
+LTX Refine is meant to reach 4K from a ~1080p source (its card: "4K output is the sweet spot"), where each tile sees the
+content at the scale it was trained on — not run here. Archive restore on a 480p, CRF 44 copy rebuilt clean detail but
+re-imagined the light and colour of a colour source (dawn mist → daylight, a yellow hull, a number on the sail): it is
+for archive footage, as its card says.
+
+**Where it runs.** On your local ComfyUI only (the row *Settings ▸ Resources ▸ LTX finishing*, Local by default): a
+resource JustAE Flow knows no LTX-2.5 model on — your deployment was built with core nodes, Wan VACE and SeedVR2 — is
+refused before anything is sent, with that reason.
+
+**What you need on the ComfyUI:** ComfyUI-LTXVideo 1.1.0 (`LTXVTiledFusionSampler`, `LTXAddVideoICLoRAGuide`,
+`LTXICLoRALoaderModelOnly`), VideoHelperSuite; the LTX-2.5 distilled transformer (NVFP4 or int8 on 16 GB), the Gemma-4
+12B text encoder for LTX-2.5, the LTX-2.5 video VAE (`Lightricks/LTX-2.5`); and each IC-LoRA from its repo
+(`Lightricks/LTX-2.5-22b-IC-LoRA-<Name>`) — gated: open the page, press "Agree and Access", put the file in
+`models/loras` (sub-folders are fine). `npm run verify:finishing http://127.0.0.1:8188` lists what is there and checks
+every graph against the server, read-only.
+
+**Files.** In `<project>.justae-flow/<run id>/`: the MP4 preview (`<name>_v001.mp4`), the master
+(`<name>_v001_png16/<name>_v001_00000.png`… or `_exr16/`), the graph submitted, and the `job.json` with the plan (passes,
+canvases, tiles, frames, tile-steps), the files and prompts used, the seed, the estimate and its basis, the time it
+took, and the lowest free VRAM seen while it ran. *Reveal PNG 16-bit* in Results opens the folder.
+
+**EXR** is written by `SaveImageAdvanced` as 16-bit float, scene-linear (the sRGB frames linearised, Rec.709
+primaries); whether EffectCraft imports it is not verified — the comp keeps the MP4 preview either way.
+
+**MiniMax H3 ▸ Final ▸ + LTX Refine** (Featured): the base-model H3 clip, then LTX Refine to Full HD on it as a second
+job on the local ComfyUI — the pipeline Matt Hallett shows in "LTX Refine & Restore with Native Resolution" (generate
+low, refine to 4K; here Full HD, 4K from the Comp tab). The PNG 16-bit master is written beside the draft. *Draft* is
+the 4-step turbo LoRA the official template names (`minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16`, from
+Comfy-Org/MiniMax-H3; the local file has the same sha256), 4 steps — never Final.
+
+**Licence** (every LTX finishing card carries it): LTX-2.x Community License (11 Aug 2026): commercial use permitted
+for entities under USD 10M annual revenue (affiliates under common control counted together; clients receiving
+outputs are not the licensee), outputs belong to the user, machine-generated content must be disclosed when published
+— [LICENSE-2_x](https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x). Each IC-LoRA repo names the same licence.
+
 ## Featured workflows
 
 Above the Workflow tab's library: LTX-2.5 image → video and text → video, MiniMax H3 first + last frame, Wan 2.2 first
@@ -186,9 +304,11 @@ Cloud ✗ · Proxy ✓ · *your deployment* ✓/?" from the probes (a deployment
 there) — and, when the local ComfyUI lacks something, each missing file with the URL its template downloads it from;
 one that runs nowhere stays listed, greyed. *Use it* makes it the workflow of the Marker and Storyboard tabs (with your
 ComfyUI's precisions swapped in, e.g. LTX int8 → nvfp4). The LTX-2.5 cards carry the LTX-2.x licence line and its
-link. MiniMax H3 has *Draft / Final*: *Draft* is the base model, 20 steps (no turbo LoRA: see the limits); *Final* runs
-the draft, then SeedVR2 ×2 on its result as a second job on the same resource (original colours kept); its card carries
-the licence note (MiniMax commercial licence for locally generated outputs; in the EU: to be verified).
+link. MiniMax H3 has *Draft / Final*: *Draft* is its own workflow, the 4-step turbo LoRA the official template names
+(`h3-flf-draft`, 4 steps — a quick look, never the final); *Final* is the base model, 20 steps, then a second job on its
+result: **+ SeedVR2 ×2** (on the same resource, original colours kept) or **+ LTX Refine** (to Full HD on the local
+ComfyUI, with a PNG 16-bit master beside the draft — see *LTX finishing*); its card carries the licence note (MiniMax
+commercial licence for locally generated outputs; in the EU: to be verified).
 
 ## Workflows
 
@@ -396,8 +516,16 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
   seen only through those frames. The frames the model gives back for the guide are not pixel-identical to yours (they
   are trimmed off); at the cut, the level of the new frames can differ slightly from the source's (measured on 25 Oct:
   about 2 levels of 255, as with the single-frame path). Measured at 24 fps; other rates use the same rule (17 + 8k).
-- MiniMax H3 *Draft* is the base model, 20 steps: a turbo LoRA is used for a draft only if it is the file the official
-  template names, and the one this was checked against was not (the decision is the author's).
+- MiniMax H3 *Draft* is the 4-step turbo LoRA the official template names (`h3-flf-draft`), 4 steps — measured
+  here on 26 Oct: 1344×768, 5 s (124 frames) in 3:57 from two generated stills; it is never used for *Final*.
+- LTX finishing runs on the local ComfyUI only, and on 16 GB above Full HD it takes hours (the card estimates how
+  many): 4K and 8K are planned and their graphs validated against the local ComfyUI, not run here. The single-pass
+  IC-LoRAs (Deblur, De-compression, Colorize, Clean plate, Day → Night, LTX Alpha) render the whole clip as one extent:
+  at the source size and past ~121 frames they are heavier than a Refine tile; De-compression and LTX Alpha were run
+  here, the other four were not run with their own LoRA.
+- LTX finishing does not deinterlace (the Restore card asks for it on interlaced sources) and does not use Restore's
+  reference-image or prefix-frame options; pixel-aspect is taken as square.
+- The EXR master is scene-linear; whether EffectCraft imports EXR is not verified (the comp keeps the MP4 preview).
 - Upscale past 4K is not verified on a 16 GB GPU (the card says so); a Social pack's *+ Upscale ×2* makes 4K comps
   (2160×3840 for 9:16), at the edge of what was verified.
 - Storyboards written under the project's former name (`*.shiftfield.json`) are still read, where they are.
@@ -407,7 +535,9 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
 "other"); how a deployment's network storage is billed in detail; the upload limit of a deployment; time and VRAM of a
 full VACE 14B *Final* and of a full MiniMax H3 run on a 16 GB GPU; Wan 2.2 first + last frame end to end (its 14B
 weights are not on the test machine); whether open weights run on Comfy Cloud count for the challenge's *Open Weights
-Only*; the LTX-2.5 LoRAs of Lightricks' Creative Lab (gated on Hugging Face: their terms and licences).
+Only*; SDR → HDR (its scene embedding has to be where `LTXVLoadConditioning` reads, `models/embeddings`); whether
+`core/finishing/plan.ts`, which re-implements ComfyUI-LTXVideo's tile-grid arithmetic, is a "Derivative of LTX-2" under
+ComfyUI-LTXVideo's LTX-2 Community License Agreement (see NOTICE).
 
 ## Licence
 
@@ -415,9 +545,10 @@ JustAE Flow is free software under the **GNU General Public License v3.0** ([LIC
 and model licences are listed in [NOTICE](NOTICE); model weights are not included — each manifest names the files and
 where the official template downloads them. Read each licence before using outputs commercially. In short:
 
-- **LTX-2.5** (the core video model): LTX-2.x Community License (11 Aug 2026): commercial use permitted for entities
-  under USD 10M annual revenue (affiliates counted together), outputs belong to the user, published machine-generated
-  content must be disclosed as such — [LICENSE-2_x](https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x).
+- **LTX-2.5** (the core video model) and its **IC-LoRAs** (LTX finishing): LTX-2.x Community License (11 Aug 2026):
+  commercial use permitted for entities under USD 10M annual revenue (affiliates under common control counted together;
+  clients receiving outputs are not the licensee), outputs belong to the user, machine-generated content must be
+  disclosed when published — [LICENSE-2_x](https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x).
 - **SAM 3** (cut-out, auto crop): SAM License (Meta) — royalty-free, commercial use included, with trade-control and
   lawful-use terms; it is an open-weights licence of its own, not an OSI licence.
 - **MiniMax H3** (Featured only): commercial use of locally generated outputs needs a MiniMax commercial licence.
