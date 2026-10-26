@@ -97,9 +97,11 @@ export async function listServerWorkflows(provider: VideoProvider): Promise<Work
 export async function listBundledWorkflows(): Promise<WorkflowSummary[]> {
   const r = await fetch('/api/featured', { headers: serverHeaders() });
   if (!r.ok) return [];
-  const { entries } = await r.json() as { entries: Array<{ id: string; name: string; tiers?: { draft: { workflow: string } }; draftName?: string }> };
+  const { entries } = await r.json() as { entries: Array<{ id: string; name: string; tiers?: { draft: { workflow: string } }; draftName?: string; comp?: unknown }> };
   const out: WorkflowSummary[] = [];
   for (const e of entries) {
+    // A Comp tab card (LTX Refine) is not a workflow of the Marker and Storyboard tabs.
+    if (e.comp) continue;
     out.push({ id: summaryId('bundled', e.id), name: `★ ${e.name}`, origin: 'bundled' as const, ref: e.id });
     // A Draft with a workflow of its own (MiniMax H3: the turbo 4-step LoRA) is listed beside it.
     if (e.tiers?.draft) out.push({ id: summaryId('bundled', e.tiers.draft.workflow), name: `★ ${e.name} · Draft`, origin: 'bundled' as const, ref: e.tiers.draft.workflow });

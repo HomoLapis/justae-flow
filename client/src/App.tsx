@@ -7,6 +7,9 @@ import { ShotMode } from './modes/ShotMode';
 import { CompMode } from './modes/CompMode';
 import { SettingsDrawer } from './components/SettingsDrawer';
 import { HistoryDrawer } from './components/HistoryDrawer';
+import { ModelPicker } from './components/ModelPicker';
+import { ReadmeSection } from './components/ReadmeSection';
+import { useReadiness } from './lib/readiness';
 import { ae } from './bridge/extendscript';
 import { isInCEP } from './bridge/csInterface';
 
@@ -26,6 +29,14 @@ export function App(): JSX.Element {
   const openHistory = useApp((s) => s.setHistoryOpen);
   const historyCount = useApp((s) => s.history.length);
   const activeName = useApp((s) => s.active?.name ?? null);
+  const resourcesData = useResources((s) => s.data);
+  const readme = useReadiness((s) => s.readme);
+  const setReadme = useReadiness((s) => s.setReadme);
+
+  // What is ready follows the resources (their probes every 30 s, a new pick on the Generate button).
+  useEffect(() => {
+    if (resourcesData) void useReadiness.getState().load();
+  }, [resourcesData]);
 
   // Resources live on the server: read them, move the page's old backend settings there once,
   // and keep the probe states (every 30 s) and the balance (every minute, cached 5 min server-side) fresh.
@@ -133,6 +144,8 @@ export function App(): JSX.Element {
 
       <SettingsDrawer />
       <HistoryDrawer />
+      <ModelPicker />
+      {readme && <ReadmeSection anchor={readme} onClose={() => setReadme(null)} />}
     </div>
   );
 }

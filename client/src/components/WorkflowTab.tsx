@@ -17,6 +17,12 @@
  * workflow appears in the list; select it and its inputs become the fields in
  * the Marker and Storyboard tabs. If the author set up App Mode, those are
  * exactly the fields they chose to expose.
+ *
+ * Top to bottom, for someone who opens it the first time (Phase 7): Get started
+ * (where to run, what is ready, a test image) when it is needed; "Running on"
+ * and the Featured workflows in two groups, one status each; the selected
+ * workflow; then one row for your own ComfyUI workflows (search, import, the
+ * draft / final presets inside) and one for the editor.
  */
 
 import { useState } from 'react';
@@ -33,6 +39,9 @@ import { loadIntoWindow, openEditorWindow } from '../workflows/editorWindow';
 import { CaptureCard } from './CaptureCard';
 import { WorkflowSearch } from './WorkflowSearch';
 import { FeaturedSection } from './FeaturedSection';
+import { GetStarted } from './GetStarted';
+import { RunningOn } from './RunningOn';
+import { useReadiness } from '../lib/readiness';
 
 export function WorkflowTab(): JSX.Element {
   const library = useApp((s) => s.library);
@@ -49,6 +58,9 @@ export function WorkflowTab(): JSX.Element {
   const { provider, providerError, refresh, select } = useLibrary();
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const [editorInfo, setEditorInfo] = useState(false);
+  const openPicker = useReadiness((s) => s.setOpen);
 
   const editorUrl = provider?.editorUrl?.() ?? null;
   /** Whether saving in the editor can find its way back to us on its own. */
@@ -191,115 +203,141 @@ export function WorkflowTab(): JSX.Element {
     } finally { setBusy(false); }
   };
 
+  const ownCount = library.filter((w) => w.origin !== 'bundled').length;
+
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto px-3.5 pb-8 pt-3.5">
-      {/* ── Featured: bundled workflows, with where each runs ── */}
+      {/* ── Get started: where to run, what is ready, a test image ── */}
+      <GetStarted />
+
+      {/* ── Running on + Featured, grouped by purpose ── */}
+      <div className="flex items-center justify-between gap-2">
+        <RunningOn />
+        <button className="shrink-0 text-[11px] text-brand hover:underline" onClick={() => openPicker(true)} data-testid="open-models">
+          Get the models…
+        </button>
+      </div>
       <FeaturedSection onUse={async (id) => { setNotice(null); if (!library.some((w) => w.id === id)) await refresh(); await select(id); }} />
 
-      {/* ── The library ────────────────────────────────────── */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="section-label">Workflows</span>
-          <div className="flex items-center gap-1">
-            <button className="chip" onClick={() => void refresh()} disabled={loading}>
-              {loading ? 'Reading…' : 'Refresh'}
-            </button>
-            <button className="chip" onClick={importFile} disabled={busy}>Import file…</button>
-          </div>
-        </div>
+      {/* ── The selected workflow ─────────────────────────── */}
+      {(active || notice) && (
+        <section className="space-y-2" data-testid="selected-workflow">
+          {active && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="section-label">Selected</span>
+              <span className="min-w-0 truncate text-[11px] text-ink">{active.name}</span>
+            </div>
+          )}
+          {active && <ActiveSummary />}
+          <CaptureCard
+            provider={provider}
+            active={active}
+            onAdopted={() => (active ? select(active.id) : undefined)}
+          />
+          {notice && <p className="text-[11px] leading-snug text-ink-dim">{notice}</p>}
+          {active && (
+            <div className="flex flex-wrap gap-1.5">
+              <button className="chip" onClick={() => setTab('marker')}>Use it →</button>
+              <button className="chip" onClick={() => void openEditor()} disabled={busy || !editorUrl}>
+                Edit in ComfyUI
+              </button>
+              <button className="chip" onClick={() => void copyToProject()} disabled={busy}>
+                Copy next to project
+              </button>
+              {/* A Featured workflow ships with JustAE Flow: there is no file of the user's to delete. */}
+              {active.origin !== 'bundled' && <button className="chip" onClick={() => void remove()} disabled={busy}>Delete</button>}
+            </div>
+          )}
+        </section>
+      )}
 
-        <WorkflowSearch
-          library={library}
-          activeId={activeId}
-          activeName={active ? active.name : null}
-          serverLabel={provider?.label ?? 'server'}
-          busy={busy}
-          onPick={(id) => { setNotice(null); void select(id); }}
-        />
-
-        {library.length === 0 && !loading && (
-          <p className="text-[11px] leading-snug text-ink-mute">
-            {providerError
-              ? providerError
-              : provider
-                ? 'No workflows on this server yet. Open the editor below and save one, or import a .json.'
-                : 'Pick a provider in Settings first.'}
-          </p>
-        )}
-
-        {active && <ActiveSummary />}
-        <CaptureCard
-          provider={provider}
-          active={active}
-          onAdopted={() => (active ? select(active.id) : undefined)}
-        />
-        {error && <p className="whitespace-pre-line text-[11px] leading-snug text-err">{error}</p>}
-        {notice && <p className="text-[11px] leading-snug text-ink-dim">{notice}</p>}
-
-        {active && (
-          <div className="flex flex-wrap gap-1.5">
-            <button className="chip" onClick={() => setTab('marker')}>Use it →</button>
-            <button className="chip" onClick={() => void openEditor()} disabled={busy || !editorUrl}>
-              Edit in ComfyUI
-            </button>
-            <button className="chip" onClick={() => void copyToProject()} disabled={busy}>
-              Copy next to project
-            </button>
-            {/* A Featured workflow ships with JustAE Flow: there is no file of the user's to delete. */}
-            {active.origin !== 'bundled' && <button className="chip" onClick={() => void remove()} disabled={busy}>Delete</button>}
+      {/* ── Your own workflows: one row, opened on demand ── */}
+      <section className="rounded-lg border border-line bg-bg-raised" data-testid="own-workflows">
+        <button type="button" className="flex w-full items-center gap-2 px-2.5 py-2 text-left" onClick={() => setOwnOpen(!ownOpen)}>
+          <span className={'text-[10px] text-ink-mute transition-transform ' + (ownOpen ? 'rotate-90' : '')}>▶</span>
+          <span className="min-w-0 flex-1 text-xs text-ink">Your ComfyUI workflows ({ownCount})</span>
+          <span className={'shrink-0 text-[10px] ' + (error ? 'text-warn' : 'text-ink-mute')} title={error ?? ''}>
+            {error ? 'could not be read' : provider?.label ?? ''}
+          </span>
+        </button>
+        {ownOpen && (
+          <div className="space-y-2 border-t border-line px-2.5 py-2">
+            {error && <p className="whitespace-pre-line text-[11px] leading-snug text-err">{error}</p>}
+            <div className="flex items-center justify-end gap-1">
+              <button className="chip" onClick={() => void refresh()} disabled={loading}>
+                {loading ? 'Reading…' : 'Refresh'}
+              </button>
+              <button className="chip" onClick={importFile} disabled={busy}>Import file…</button>
+            </div>
+            <WorkflowSearch
+              library={library}
+              activeId={activeId}
+              activeName={active ? active.name : null}
+              serverLabel={provider?.label ?? 'server'}
+              busy={busy}
+              onPick={(id) => { setNotice(null); void select(id); }}
+            />
+            {library.length === 0 && !loading && (
+              <p className="text-[11px] leading-snug text-ink-mute">
+                {providerError
+                  ? providerError
+                  : provider
+                    ? 'No workflows on this server yet. Open the editor below and save one, or import a .json.'
+                    : 'Pick a provider in Settings first.'}
+              </p>
+            )}
+            {/* Draft / final presets for a workflow of your own: the stages of a production, and whether their nodes are installed. */}
+            <PipelineLibrary provider={provider} onPick={(id) => { setNotice(null); void select(id); }} />
           </div>
         )}
       </section>
 
-      {/* ── The professional pipeline (catalog + draft/final + delivery) ── */}
-      <PipelineLibrary provider={provider} onPick={(id) => { setNotice(null); void select(id); }} />
-
-      {/* ── The editor ─────────────────────────────────────── */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="section-label">ComfyUI editor</span>
+      {/* ── The editor: one row ───────────────────────────── */}
+      <section className="rounded-lg border border-line bg-bg-raised" data-testid="editor-row">
+        <div className="flex items-center gap-2 px-2.5 py-2">
+          <button type="button" className={'text-[10px] text-ink-mute transition-transform ' + (editorInfo ? 'rotate-90' : '')}
+            onClick={() => setEditorInfo(!editorInfo)} aria-label="About the editor">▶</button>
+          <span className="min-w-0 flex-1 text-xs text-ink">Open the ComfyUI editor</span>
           {editorUrl ? (
-            <button className="chip" onClick={() => void openEditor()} disabled={busy}>
+            <button className="chip h-6 px-2 py-0 text-[11px]" onClick={() => void openEditor()} disabled={busy}>
               {active ? 'Open this workflow' : 'Open editor'}
             </button>
           ) : (
-            <button className="chip" onClick={() => openSettings(true)}>Resources…</button>
+            <button className="chip h-6 px-2 py-0 text-[11px]" onClick={() => openSettings(true)}>Resources…</button>
           )}
         </div>
-
-        {editorUrl ? (
-          <div className="card space-y-1.5 p-2.5">
-            <p className="text-[11px] leading-snug text-ink-dim">
-              {roundTrips
-                ? 'Build and edit in the real ComfyUI, in a window the panel opens for you — with the '
-                  + "selected workflow already on the canvas. Ctrl+S there writes to the server's own "
-                  + 'workflow folder, and this panel picks the change up: the same file on both sides.'
-                : 'Build and edit in the real ComfyUI, in your browser. This provider keeps its '
-                  + 'workflows behind a sign-in rather than in a folder the panel can read, so bring '
-                  + 'one back with "Import file…" above.'}
-            </p>
-            <code className="block truncate rounded bg-bg px-2 py-1 font-mono text-[10px] text-ink-mute">
-              {editorUrl}
-            </code>
-            {editorOpened && roundTrips && (
-              <p className="text-[10px] leading-snug text-ink-mute">
-                Watching the workflow folder — a save made in the editor appears above within about
-                fifteen seconds. Refresh forces it.
+        {(editorInfo || (editorOpened && roundTrips)) && (
+          <div className="space-y-1.5 border-t border-line px-2.5 py-2">
+            {editorUrl ? (
+              <>
+                <p className="text-[11px] leading-snug text-ink-dim">
+                  {roundTrips
+                    ? 'Build and edit in the real ComfyUI, in a window the panel opens for you — with the '
+                      + "selected workflow already on the canvas. Ctrl+S there writes to the server's own "
+                      + 'workflow folder, and this panel picks the change up: the same file on both sides.'
+                    : 'Build and edit in the real ComfyUI, in your browser. This provider keeps its '
+                      + 'workflows behind a sign-in rather than in a folder the panel can read, so bring '
+                      + 'one back with "Import file…" under Your ComfyUI workflows.'}
+                </p>
+                <code className="block truncate rounded bg-bg px-2 py-1 font-mono text-[10px] text-ink-mute">
+                  {editorUrl}
+                </code>
+                {editorOpened && roundTrips && (
+                  <p className="text-[10px] leading-snug text-ink-mute">
+                    Watching the workflow folder — a save made in the editor appears in the list within about
+                    fifteen seconds. Refresh forces it.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-[11px] leading-snug text-ink-mute">
+                The editor is your local ComfyUI&rsquo;s: switch it on in Settings ▸ Resources. Comfy Cloud,
+                a deployment and the proxy (Comfy API v2) have no editor of their own — a workflow built
+                in a ComfyUI and exported in API format runs on them, brought in with &ldquo;Import file…&rdquo;.
               </p>
             )}
           </div>
-        ) : (
-          <p className="text-[11px] leading-snug text-ink-mute">
-            The editor is your local ComfyUI&rsquo;s: switch it on in Settings ▸ Resources. Comfy Cloud,
-            a deployment and the proxy (Comfy API v2) have no editor of their own — a workflow built
-            in a ComfyUI and exported in API format runs on them, brought in with &ldquo;Import file…&rdquo; above.
-          </p>
         )}
-
-        <p className="text-[10px] leading-snug text-ink-mute">
-          The editor runs in its own window, driven from here: picking a workflow above and
-          pressing Edit puts that one on its canvas, and Ctrl+S there saves back to the same file.
-        </p>
       </section>
     </div>
   );

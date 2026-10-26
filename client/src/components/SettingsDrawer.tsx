@@ -4,7 +4,9 @@
  */
 
 import { useApp } from '../state/store';
+import { useReadiness } from '../lib/readiness';
 import { ResourcesSettings } from './ResourcesSettings';
+import { DraftDelivery } from './PipelineLibrary';
 
 export function SettingsDrawer(): JSX.Element | null {
   const open = useApp((s) => s.settingsOpen);
@@ -23,6 +25,7 @@ export function SettingsDrawer(): JSX.Element | null {
       </header>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-3.5 py-4">
+        <GetStartedRow onShow={() => setOpen(false)} />
         <ResourcesSettings />
 
         {/* ── Timeline behaviour ───────────────────────────── */}
@@ -51,6 +54,8 @@ export function SettingsDrawer(): JSX.Element | null {
             <code className="text-ink">[AE_SECONDS]</code>, <code className="text-ink">[AE_FRAMES]</code>,{' '}
             <code className="text-ink">[AE_FPS]</code>. A tag always wins over the panel&rsquo;s own reading.
           </p>
+
+          <DraftDelivery />
 
           <Toggle
             checked={settings.defaults.autoImport}
@@ -136,6 +141,26 @@ export function SettingsDrawer(): JSX.Element | null {
         </p>
       </div>
     </div>
+  );
+}
+
+/** Settings ▸ Get started: the card back on the Workflow tab, and the model list. */
+function GetStartedRow({ onShow }: { onShow: () => void }): JSX.Element {
+  const setOnboarding = useReadiness((s) => s.setOnboarding);
+  const openPicker = useReadiness((s) => s.setOpen);
+  const setTab = useApp((s) => s.setTab);
+  const mode = useReadiness((s) => s.data?.onboarding.mode);
+  return (
+    <section className="space-y-2" data-testid="settings-get-started">
+      <h3 className="section-label">Get started</h3>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button className="chip" onClick={() => { void setOnboarding('open'); setTab('workflow'); onShow(); }} data-testid="show-get-started">
+          Show the Get started card
+        </button>
+        <button className="chip" onClick={() => { onShow(); openPicker(true); }}>Get the models…</button>
+        {mode === 'open' && <span className="text-[10px] text-ink-mute">shown on the Workflow tab until you hide it</span>}
+      </div>
+    </section>
   );
 }
 

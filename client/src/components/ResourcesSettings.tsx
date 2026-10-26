@@ -8,8 +8,10 @@
  * builds, starts, scales or stops anything on the platform.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { serverJson } from '../bridge/server';
+import { putHfToken, useReadiness } from '../lib/readiness';
+import { FolderLine } from './ModelPicker';
 import {
   clock, creditsTooltip, formatCredits, useResources,
   type Capabilities, type ResourcePatch, type ResourceView,
@@ -50,6 +52,8 @@ export function ResourcesSettings(): JSX.Element {
           <p className="text-[10px] leading-snug text-ink-mute">
             Your GPU, no credits. The Workflow tab lists this ComfyUI&rsquo;s workflow folder and opens its editor.
           </p>
+          <FolderLine onSaved={() => void useReadiness.getState().load()} />
+          <HfTokenField />
         </ResourceCard>
       </section>
 
@@ -62,7 +66,8 @@ export function ResourcesSettings(): JSX.Element {
         />
         <p className="text-[10px] leading-snug text-ink-mute">
           One key for Comfy Cloud and your deployments (v2 as a bearer token, v1 as X-API-Key). It is kept in
-          the file above, on this machine only, and never sent to this page again.
+          the file above, on this machine only, and never sent to this page again. How to set up the Comfy Developer
+          Platform (no GPU here): <button className="text-brand hover:underline" onClick={() => useReadiness.getState().setReadme('no-gpu-the-comfy-developer-platform')}>Setup in the README</button>.
         </p>
 
         <ResourceCard r={cloud} caps={data.capabilities[cloud.id]} onCheck={load} toggle={(on) => apply({ resources: [{ id: cloud.id, enabled: on }] })}>
@@ -238,6 +243,29 @@ function CloudBalance(): JSX.Element {
   );
 }
 
+/**
+ * An optional Hugging Face token, for gated files (the Lightricks LTX-2.5 repos) once their terms are accepted on
+ * their pages: kept by the server in hf-token.txt in your user folder, sent to huggingface.co only, never shown again.
+ */
+function HfTokenField(): JSX.Element {
+  const [view, setView] = useState<{ set: boolean; file: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void serverJson<{ set: boolean; file: string }>('/api/models/hf-token').then(setView).catch(() => undefined);
+  }, []);
+  const save = async (v: string | null): Promise<void> => {
+    setError(null);
+    try { setView(await putHfToken(v)); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+  return (
+    <div className="space-y-1" data-testid="hf-token">
+      <KeyField set={!!view?.set} tail={null} file={view?.file ?? ''} label="Hugging Face token (optional)"
+        placeholder="Only for gated files, after accepting their terms on Hugging Face" onSave={save} />
+      {error && <p className="text-[10px] text-err">{error}</p>}
+    </div>
+  );
+}
+
 /** A number saved on blur or Enter (not on every keystroke); empty saves null (the default). */
 function NumberField({ value, placeholder, disabled, onSave, testId }: {
   value: number | null; placeholder: string; disabled?: boolean; onSave: (v: number | null) => Promise<void>; testId?: string;
@@ -291,7 +319,7 @@ function KeyField({ set, tail, file, label, placeholder, onSave }: {
           value={draft}
           placeholder={set ? `set${tail ? ` · ends …${tail}` : ''} — type a new one to replace it` : placeholder}
           onChange={(e) => setDraft(e.target.value.trim())}
-          data-testid={label === 'API key' ? 'api-key-field' : 'proxy-token-field'}
+          data-testid={label === 'API key' ? 'api-key-field' : /Hugging Face/.test(label) ? 'hf-token-field' : 'proxy-token-field'}
         />
         <button className="btn-ghost h-8 px-2.5 text-[11px]" disabled={!draft} onClick={() => { void onSave(draft); setDraft(''); }}>Save</button>
         {set && <button className="btn-quiet h-8 px-2 text-[11px]" onClick={() => void onSave(null)}>Remove</button>}

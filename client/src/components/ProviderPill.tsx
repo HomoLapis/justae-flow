@@ -1,6 +1,7 @@
 import { useApp } from '../state/store';
 import { clock, creditsTooltip, formatCredits, useResources } from '../lib/resources';
 import { useActiveRoute } from '../lib/useRoute';
+import { useReadiness } from '../lib/readiness';
 
 /**
  * Header pill: the resource the next Generate goes to, with a dot you can
@@ -11,11 +12,26 @@ import { useActiveRoute } from '../lib/useRoute';
  */
 export function ProviderPill(): JSX.Element {
   const openSettings = useApp((s) => s.setSettingsOpen);
+  const setTab = useApp((s) => s.setTab);
   const route = useActiveRoute();
   const data = useResources((s) => s.data);
   const credits = useResources((s) => s.credits);
+  const nothingUsable = useReadiness((s) => s.data?.onboarding.nothingUsable ?? false);
+  const setOnboarding = useReadiness((s) => s.setOnboarding);
   const caps = route ? data?.capabilities[route.resource] : null;
   const online = caps ? caps.online : null;
+
+  // Nothing can take a job: the pill is the way into Get started.
+  if (nothingUsable) {
+    return (
+      <button type="button" className="pill max-w-[260px] border border-warn/50 transition-colors hover:bg-bg-hover"
+        onClick={() => { setTab('workflow'); void setOnboarding('open'); }}
+        title="No resource can take a job yet: Get started says where to run" data-testid="resource-pill">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-warn" />
+        <span className="truncate text-ink">Get started</span>
+      </button>
+    );
+  }
 
   const dot = online === true ? 'bg-ok' : online === false ? 'bg-err' : 'bg-ink-mute animate-pulse';
   const label = route?.label ?? 'Resources';
@@ -52,8 +68,12 @@ export function ProviderBanner(): JSX.Element | null {
   const route = useActiveRoute();
   const data = useResources((s) => s.data);
   const openSettings = useApp((s) => s.setSettingsOpen);
+  const tab = useApp((s) => s.tab);
+  const getStarted = useReadiness((s) => !!s.data?.onboarding.show);
   const caps = route ? data?.capabilities[route.resource] : null;
   if (!route || !caps || caps.online) return null;
+  // On the Workflow tab, Get started already says what to do about it.
+  if (tab === 'workflow' && getStarted) return null;
 
   return (
     <div className="flex items-start gap-2 border-b border-err/40 bg-err/10 px-3 py-2 text-xs">
