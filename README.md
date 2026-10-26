@@ -70,23 +70,68 @@ the desktop). EffectCraft opens its control channel only when started with `--co
 it that way; an EffectCraft already open without it cannot be joined — the launcher says so and leaves it alone
 (save, close it, launch again). `npm start` runs the server alone on http://127.0.0.1:5199.
 
-1. **The panel.** In EffectCraft: *Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access
-   Network*; then *File ▸ Scripts ▸ Install ScriptUI Panel…* → `extensions/effectcraft/JustAE Flow.jsx`; then
-   *Window ▸ JustAE Flow*. It shows whether the server and EffectCraft's channel are up, opens the Flow window, adds
-   marker pairs and placeholders, runs the layer tools, and says where they run.
-2. **Your ComfyUI.** *Settings ▸ ComfyUI address* (default `http://127.0.0.1:8188`). `npm run verify:workflows`
-   lists what it can run and the download URL of every missing model file.
-3. **The one key** (optional — without it everything stays local). From
-   [platform.comfy.org ▸ API Keys](https://platform.comfy.org/profile/api-keys), pasted once in *Settings ▸
-   Resources*. The server keeps it in `comfy-api-key.txt` in your user folder (`%APPDATA%\JustAE Flow`,
-   `~/Library/Application Support/JustAE Flow`, `~/.config/JustAE Flow`); the window only ever gets back whether
-   one is set and its last four characters. It serves Comfy Cloud and your deployments.
-4. **Resources.** *Settings ▸ Resources* lists Local, Comfy Cloud, your deployments and `comfy-api-proxy`, and a
-   table of which one each task uses (see [Resources and credits](#resources-and-credits)).
-5. **A deployment for the heavy tasks** (optional; see [Your own deployment](#your-own-deployment)).
+**The panel.** In EffectCraft: *Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access
+Network*; then *File ▸ Scripts ▸ Install ScriptUI Panel…* → `extensions/effectcraft/JustAE Flow.jsx`; then
+*Window ▸ JustAE Flow*. It shows whether the server and EffectCraft's channel are up, opens the Flow window, adds
+marker pairs and placeholders, runs the layer tools, and says where they run.
 
-Settings live in your user folder, never in the project or the repository; `.env.example` lists the variables that
-override them. The PhotoCraft storyboard (http://127.0.0.1:5199/storyboard/) has its own setup guide.
+### Get started, in the Flow window
+
+The first time, the **Workflow** tab opens on a **Get started** card with three steps, each checked live:
+
+1. **Where to run.** It looks for your ComfyUI at `http://127.0.0.1:8188` and says what it found (version, GPU). No
+   ComfyUI yet: install **ComfyUI Desktop** from [comfy.org/download](https://comfy.org/download) and press *Check
+   again*; a ComfyUI elsewhere: put its address in *Settings ▸ Resources*. No GPU: see
+   [No GPU: the Comfy Developer Platform](#no-gpu-the-comfy-developer-platform).
+2. **What's ready.** "8 of 9 ready on Local ComfyUI · 1 needs models (28.6 GB)": each Featured workflow is checked
+   against your ComfyUI's own list of nodes and model files. **Get the missing models** opens the list below.
+3. **Try it.** **Make a test image** makes a 512×512 Z-Image-Turbo still on your ComfyUI and places it in the open comp
+   at the playhead, as "Flow · test image" (the file is kept in the project's `_test` folder). Without Z-Image the
+   button says how much it needs ("Get Z-Image first (20.7 GB)").
+
+The card comes back on its own when no resource can take a job, or when fewer than half of the Featured workflows are
+ready where the Generate button sends them. *Hide — reopen from Settings* puts it away; *Settings ▸ Get started* and,
+when nothing can run, the header pill bring it back.
+
+**Get the models.** You choose what goes on your ComfyUI: the Featured workflows, grouped as on the Workflow tab, each
+with a box to tick (nothing is ticked for you; *Start with Z-Image + LTX-2.5 image to video* ticks the suggested pair)
+and the files it lacks — name, folder, size, source, licence. A file two workflows share is downloaded and counted once;
+the total gives files, gigabytes and the time at your last measured download speed. **Download selected** fetches
+only what you ticked, **into the models folder you set** (*Settings ▸ Resources ▸ Local ComfyUI ▸ Models folder*:
+ComfyUI's `models` folder, which holds `checkpoints/` and `diffusion_models/`; for Comfy Desktop on Windows the docs
+name its shared model library `%LOCALAPPDATA%\Comfy-Desktop\ComfyUI-Shared` — paste it and JustAE Flow uses a
+`models` folder inside it if there is one (its exact layout: to be verified); for a ComfyUI in WSL, `\\wsl.localhost\<distro>\home\<user>\ComfyUI\models`). JustAE Flow
+writes nowhere else. Each file goes to `<folder>\<directory>\<name>.part`, resumes after an interruption (a Range
+request), is checked against the size and the sha256 that Hugging Face gives for it (a mismatch is deleted) and is
+renamed when it checks out; then your ComfyUI is read again, and the cards update. If ComfyUI does not list a new file,
+restart it or press Refresh in its UI. Every file can also be fetched alone, or copied as a comfy-cli command
+(`comfy --workspace "<ComfyUI>" model download --url <url> --relative-path models/<directory> --filename <name>`).
+Gated files (the Lightricks LTX-2.5 repos) need their terms accepted on their Hugging Face page first; a Hugging Face
+token, if needed, goes in *Settings ▸ Resources* (kept in `hf-token.txt` in your user folder, sent to huggingface.co
+only). Custom nodes are never installed by JustAE Flow: the pack is named (LTX Refine needs **ComfyUI-LTXVideo** and
+**ComfyUI-VideoHelperSuite**) to install with ComfyUI Manager.
+
+Settings live in your user folder (`%APPDATA%\JustAE Flow`, `~/Library/Application Support/JustAE Flow`,
+`~/.config/JustAE Flow`; `JUSTAE_FLOW_HOME` puts them elsewhere), never in the project or the repository;
+`.env.example` lists the variables that override them. The PhotoCraft storyboard (http://127.0.0.1:5199/storyboard/)
+has its own setup guide. From a terminal, `npm run verify:workflows` lists what your ComfyUI can run and the download
+URL of every missing file.
+
+### No GPU: the Comfy Developer Platform
+
+The bundled workflows run as they are on Comfy's platform, with one API key — the Flow window has no setup of its own
+for it, only these steps:
+
+1. **The key.** Create one at [platform.comfy.org ▸ API Keys](https://platform.comfy.org/profile/api-keys) and paste it
+   once in *Settings ▸ Resources ▸ Comfy account*. The server keeps it in `comfy-api-key.txt` in your user folder; the
+   window only ever gets back whether one is set and its last four characters.
+2. **Comfy Cloud** (`https://cloud.comfy.org`) then runs jobs on an RTX PRO 6000 for credits — an active Comfy Cloud
+   plan is required for jobs by API (a free-tier key reads the service but every job is refused with 403). *Check* in
+   its card reads which bundled workflows it has.
+3. **Or your own deployment** of the workflows you need, on the GPU you pick: see
+   [Your own deployment](#your-own-deployment); add its address in *Settings ▸ Resources ▸ Add a deployment*.
+4. **Running on** at the top of the Workflow tab (the same pick as the Generate button) then sends jobs there, and the
+   cards say what is known to run there. Costs: [Resources and credits](#resources-and-credits).
 
 ### The Flow window, docked
 
@@ -97,6 +142,10 @@ undock it; **Open JustAE Flow** in the panel docks it again and never opens a se
 as a window of its own.
 
 ## Models to download
+
+The easy way is in the Flow window: **Workflow ▸ Get the models…** (or *Get them* on a card) lists what each Featured
+workflow lacks on your ComfyUI, with sizes, and downloads what you tick into the models folder you set — see
+[Get started, in the Flow window](#get-started-in-the-flow-window). The table below is the reference.
 
 All bundled workflows are **official ComfyUI templates** with **open weights**, converted to the API format by
 `scripts/build-workflows.ts` (no hand-edited graphs; every node checked in the server's `object_info`). No partner
@@ -136,6 +185,9 @@ interpolation engine until 25 Oct 2026; its S-Lab License 1.0 is non-commercial,
 
 Each `workflows/<id>.json` manifest names the node fields the host fills in, the model files with their download URLs,
 and the licence. If your ComfyUI has another precision of the same weights, JustAE Flow uses it and says so on the card.
+The in-app list downloads only these files, from these URLs (a `blob/` page URL is fetched through its `resolve/`
+form, the same file); their sizes, sha256 and gating come from the Hugging Face API (`/api/models/<repo>?blobs=true`,
+public, read once a week). Downloads go only into the folder you set in *Settings ▸ Resources*, never anywhere else.
 
 ```bash
 npm run verify:workflows -- http://127.0.0.1:8188   # what your server can run, and the URLs of what is missing
@@ -252,7 +304,7 @@ The Flow window's tabs, then the Comp tab's tools and the LTX finishing cards.
 
 | Tab | What you do in EffectCraft | What Flow does |
 |---|---|---|
-| **Workflow** | — | lists the workflows of your ComfyUI (searchable), reads each graph and builds a form from it; the comp fills size, length and frame rate. *Featured* (above the library) lists the bundled workflows with where each runs. *Edit in ComfyUI* opens the editor on that workflow; Ctrl+S there saves back to the same file. The *Pipeline* lists the stages of a production and whether their nodes are installed |
+| **Workflow** | — | *Get started* when it is needed; *Running on* (the Generate button's resource) and the *Featured* workflows in two groups, *Generate* and *Edit & finish*, one status each; then one row for *Your ComfyUI workflows* (searchable; each graph is read and becomes a form, the comp fills size, length and frame rate; *Import file…*, *Refresh*, and the draft / final presets of a production's stages inside) and one for the editor (*Edit in ComfyUI* opens it on the selected workflow; Ctrl+S there saves back to the same file). The draft canvas and the delivery profile are in *Settings ▸ On the timeline* |
 | **Marker** | add comp markers in **pairs** around each gap to fill | one shot per pair, in time order; the clip comes out exactly as long as the gap. Or one clip at the playhead |
 | **Storyboard** | block the cut out with **adjustment layers** (eye on) | one shot per placeholder: its in and out points are the slot, its label colour comes back on the generated clip, its eye is switched off once the clip is placed |
 | **Comp** | open the comp; set a work area or pick a layer if you want | tools on the comp as a whole — see [The Comp tab](#the-comp-tab) |
@@ -275,17 +327,21 @@ subject), Upscale ×2 (SeedVR2, laid exactly over the source, which is switched 
 
 ### Featured workflows
 
-Above the Workflow tab's library: LTX-2.5 image → video and text → video, MiniMax H3 first + last frame, Wan 2.2 first
-+ last frame, Z-Image-Turbo, Qwen-Image-Edit 2511, SeedVR2 ×2 and SAM 3, each with where it runs — "runs on: Local ✓ ·
-Cloud ✗ · Proxy ✓ · *your deployment* ✓/?" from the probes (a deployment: ✓ once a run of that workflow finished
-there) — and, when the local ComfyUI lacks something, each missing file with the URL its template downloads it from;
-one that runs nowhere stays listed, greyed. *Use it* makes it the workflow of the Marker and Storyboard tabs (with your
-ComfyUI's precisions swapped in, e.g. LTX int8 → nvfp4). The LTX-2.5 cards carry the LTX-2.x licence line and its
-link. MiniMax H3 has *Draft / Final*: *Draft* is its own workflow, the 4-step turbo LoRA the official template names
-(`h3-flf-draft`, 4 steps — a quick look, never the final); *Final* is the base model, 20 steps, then a second job on its
-result: **+ SeedVR2 ×2** (on the same resource, original colours kept) or **+ LTX Refine** (to Full HD on the local
-ComfyUI, with a PNG 16-bit master beside the draft — see *LTX finishing*); its card carries the licence note (MiniMax
-commercial licence for locally generated outputs; in the EU: to be verified).
+At the top of the Workflow tab, under *Running on*, in two groups: **Generate** — Z-Image-Turbo (text → image), LTX-2.5
+image → video and text → video, MiniMax H3 first + last frame, Wan 2.2 first + last frame — and **Edit & finish** —
+Qwen-Image-Edit 2511, SeedVR2 ×2, SAM 3 subject matte, LTX Refine. Each card is one line: the name, what it does, one
+status for the resource *Running on* names — **Ready** (every node and model is there, by its probe; on a deployment,
+once a run of it finished there), **Missing 2 models · 28.6 GB** (your ComfyUI lacks files: *Get them*), **Needs the
+ComfyUI-LTXVideo pack** (custom nodes to install with ComfyUI Manager), **Not on this resource** (Comfy Cloud lacks it,
+the resource refuses jobs, or LTX finishing away from your ComfyUI), **Unknown here** (a deployment that never ran it:
+v2 has no node list) — and *Use it*, which makes it the workflow of the Marker and Storyboard tabs (with your ComfyUI's
+precisions swapped in, e.g. LTX int8 → nvfp4); LTX Refine's opens *Comp ▸ Upscale ▸ LTX Refine*. Behind ▸: the status
+on every resource, the files with their sizes and sources, the node packs, and the licence in one line with its link.
+MiniMax H3 has *Draft / Final* on its line: *Draft* is its own workflow, the 4-step turbo LoRA the official template
+names (`h3-flf-draft`, 4 steps — a quick look, never the final); *Final* is the base model, 20 steps, then a second job
+on its result: **+ SeedVR2 ×2** (on the same resource, original colours kept) or **+ LTX Refine** (to Full HD on the
+local ComfyUI, with a PNG 16-bit master beside the draft — see *LTX finishing*); its licence line: commercial use of
+locally generated outputs needs a MiniMax commercial licence; in the EU: to be verified.
 
 ### The Comp tab
 
@@ -514,7 +570,10 @@ scripts/     launch, build-workflows, verify-workflows, verify-effectcraft, self
 JustAE Flow listens on 127.0.0.1 only. It talks to things of your choosing: your EffectCraft or PhotoCraft (loopback)
 and the resources you set up — your ComfyUI, and, once you add the key, Comfy Cloud (jobs, node catalogue, model
 folders, billing report) and the deployment addresses you paste. Describe the clip talks only to a ComfyUI on this
-machine. No telemetry, no account of its own, no other network access.
+machine. The Workflow tab reads the public Hugging Face API for the sizes, sha256 and gating of the bundled
+workflows' model files (`/api/models/<repo>?blobs=true`, no account, kept a week), and downloads a model file only when
+you press *Download* — from the URL its manifest gives, into the folder you set, with your Hugging Face token if you
+gave one. No telemetry, no account of its own, no other network access.
 
 ## Development
 
@@ -566,7 +625,11 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
   (2160×3840 for 9:16), at the edge of what was verified.
 - Storyboards written under the project's former name (`*.shiftfield.json`) are still read, where they are.
 
-**To be verified:** whether the European Union is covered by MiniMax H3's licence for local outputs; the provenance of
+**To be verified:** the layout of Comfy Desktop's shared model library (`%LOCALAPPDATA%\Comfy-Desktop\ComfyUI-Shared`:
+whether its model folders sit in a `models` folder) and whether a running ComfyUI lists a file downloaded into its
+models folder without a restart (not tested: the tests downloaded into a temporary folder ComfyUI does not read; the
+Flow window reads `object_info` again and, when the file is not listed, says to restart ComfyUI or press Refresh in
+its UI); whether the European Union is covered by MiniMax H3's licence for local outputs; the provenance of
 `rife47.pth` (the node pack downloads it from mirrors) and the licence of Comfy-Org's FILM repackaging (its card says
 "other"); how a deployment's network storage is billed in detail; the upload limit of a deployment; time and VRAM of a
 full VACE 14B *Final* and of a full MiniMax H3 run on a 16 GB GPU; Wan 2.2 first + last frame end to end (its 14B
