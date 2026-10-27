@@ -3,8 +3,10 @@
  *
  * The Featured workflows, grouped as on the Workflow tab, each with a box to tick, its status on your local ComfyUI
  * and, under it, the model files it needs: name · folder · size · source · licence. A file two workflows share is
- * listed under both and counted once. Nothing is ticked to begin with; the suggested pair (a still and a shot) is
- * one click. The total says files, gigabytes and the time at the last measured speed; "Download selected" fetches
+ * listed under both and counted once. Nothing is ticked to begin with; the suggested start (Z-Image, not gated) is
+ * one click, and the next step (LTX-2.5 image to video, gated: its terms first) another. A gated repo is marked
+ * on its row before anything is ticked. Optional files (the bf16 pair of LTX finishing, for GPUs with 32 GB or
+ * more) are listed apart, never counted, never in "Download selected". The total says files, gigabytes and the time at the last measured speed; "Download selected" fetches
  * only what was ticked, into the models folder you set — and nowhere else. Every file can also be fetched alone, or
  * copied as a comfy-cli command.
  *
@@ -16,8 +18,8 @@
 import { useState } from 'react';
 import { copyText } from '../lib/clipboard';
 import {
-  comfyCommand, etaText, filesToGet, formatBytes, putModelsFolder, useReadiness,
-  type DownloadItem, type ReadinessEntry,
+  comfyCommand, etaText, filesToGet, formatBytes, putModelsFolder, suggestionText, useReadiness,
+  type DownloadItem, type ReadinessEntry, type ReadinessFile,
 } from '../lib/readiness';
 import { StatusChip } from './FeaturedSection';
 
@@ -64,15 +66,33 @@ export function ModelPicker(): JSX.Element | null {
     <Shell onClose={close}>
       <FolderLine onSaved={() => void load()} />
 
-      {sug.files > 0 && (
-        <button type="button" className="flex w-full items-center gap-2 rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-2 text-left hover:bg-brand/10"
-          onClick={() => setPicked([...new Set([...picked, ...sug.ids])])} data-testid="pick-suggested">
-          <span className="text-brand">＋</span>
-          <span className="min-w-0 flex-1 text-[11px] text-ink">
-            {sug.label} · {sug.ids.length} workflows · {formatBytes(sug.bytes)}{sug.unknownSizes ? '+' : ''}
-          </span>
-          <span className="shrink-0 text-[10px] text-ink-mute">tick these</span>
-        </button>
+      {(sug.files > 0 || sug.then.files > 0) && (
+        <div className="space-y-1 rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-2" data-testid="suggestion">
+          {sug.files > 0 && (
+            <button type="button" className="flex w-full items-center gap-2 text-left hover:opacity-80"
+              onClick={() => setPicked([...new Set([...picked, ...sug.ids])])} data-testid="pick-suggested">
+              <span className="text-brand">＋</span>
+              <span className="min-w-0 flex-1 text-[11px] text-ink">{suggestionText(sug)}</span>
+              <span className="shrink-0 text-[10px] text-ink-mute">tick it</span>
+            </button>
+          )}
+          {sug.then.files > 0 && (
+            <div className="flex items-center gap-2" data-testid="suggestion-then">
+              <span className="text-ink-mute">＋</span>
+              <span className="min-w-0 flex-1 text-[11px] leading-snug text-ink-dim">
+                {sug.files > 0 ? sug.then.label : sug.then.label.replace(/^then /, 'Next: ')}
+                {' · '}{formatBytes(sug.then.bytes)}{sug.then.unknownSizes ? '+' : ''}
+                {sug.then.pages.length > 0 && <> — {sug.then.pages.map((u, i) => (
+                  <span key={u}>{i > 0 && ', '}<a className="underline hover:text-ink" href={u} target="_blank" rel="noreferrer">{u.replace('https://huggingface.co/', '')}</a></span>
+                ))}</>}
+              </span>
+              <button type="button" className="shrink-0 text-[10px] text-ink-mute hover:text-ink"
+                onClick={() => setPicked([...new Set([...picked, ...sug.then.ids])])} data-testid="pick-suggested-then">
+                tick it
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {(['generate', 'edit'] as const).map((g) => (
@@ -192,21 +212,58 @@ function PickRow({ e, ticked, onToggle, folderOk, modelsDir, running, copied, on
   onDownload: (f: { directory: string; name: string; url: string }) => void; onCopy: (key: string, text: string) => void;
 }): JSX.Element {
   const [showAll, setShowAll] = useState(false);
-  const missing = e.files.filter((f) => f.state === 'missing' && !f.onDisk);
+  // Optional files (an alternative for larger GPUs) are listed apart: never missing, never ticked.
+  const req = e.files.filter((f) => !f.optional);
+  const opt = e.files.filter((f) => f.optional);
+  const missing = req.filter((f) => f.state === 'missing' && !f.onDisk);
   const nothing = missing.length === 0;
   const gatedMissing = [...new Set(missing.filter((f) => f.gated).map((f) => f.pageUrl))];
   // The gated repos are said where something is to download from them, and always on LTX finishing (its IC-LoRAs).
-  const gatedAny = e.comp || gatedMissing.length ? [...new Set(e.files.filter((f) => f.gated).map((f) => f.pageUrl))] : [];
-  const have = e.files.filter((f) => f.state === 'present' || f.state === 'variant' || f.onDisk);
-  const shown = showAll ? e.files : e.files.filter((f) => !have.includes(f));
+  const gatedAny = e.comp || gatedMissing.length ? [...new Set(req.filter((f) => f.gated).map((f) => f.pageUrl))] : [];
+  const have = req.filter((f) => f.state === 'present' || f.state === 'variant' || f.onDisk);
+  const shown = showAll ? req : req.filter((f) => !have.includes(f));
   const haveBytes = have.reduce((a, f) => a + (f.size ?? 0), 0);
+  const row = (f: ReadinessFile): JSX.Element => {
+    const need = f.state === 'missing' && !f.onDisk;
+    const cmd = comfyCommand(f, modelsDir);
+    return (
+      <li key={f.key} className={'flex items-baseline gap-1.5 text-[10px] leading-snug ' + (need && !f.optional ? 'text-ink-dim' : 'text-ink-mute')} data-file={f.key}>
+        <span className={'w-3 shrink-0 ' + (need ? (f.optional ? '' : 'text-warn') : f.state === 'unknown' ? '' : 'text-ok')}>{need ? (f.optional ? '·' : '↓') : f.state === 'unknown' ? '?' : '✓'}</span>
+        <span className="min-w-0 flex-1">
+          <span className={'font-mono ' + (need && !f.optional ? 'text-ink' : '')}>{f.name}</span>
+          {' · '}{f.directory} · {formatBytes(f.size)} · <a className="underline hover:text-ink" href={f.pageUrl} target="_blank" rel="noreferrer">{f.repo}</a>
+          {f.gated && need ? <> <GatedChip url={f.pageUrl} /></> : f.gated ? ' · gated' : ''}
+          {f.draftOnly ? ' · Draft only' : ''}
+          {f.state === 'variant' && f.using ? <> · yours: <span className="font-mono">{f.using}</span></> : null}
+          {f.state === 'present' ? ' · on your ComfyUI' : null}
+          {f.onDisk ? ' · in your folder; ComfyUI does not list it yet — restart it or press Refresh in its UI' : null}
+          {f.partial ? ` · ${formatBytes(f.partial)} already downloaded, resumes` : null}
+        </span>
+        {need && (
+          <span className="flex shrink-0 gap-1">
+            <button className="chip h-5 px-1.5 py-0 text-[10px]" disabled={!folderOk || running} onClick={() => onDownload({ directory: f.directory, name: f.name, url: f.url })}
+              title={folderOk ? `Download ${f.name} into ${modelsDir}\\${f.directory}` : 'Set your models folder first'} data-testid={`dl-${f.key}`}>
+              Download
+            </button>
+            <button className="chip h-5 px-1.5 py-0 text-[10px]" title={cmd} onClick={() => onCopy(f.key, cmd)}>
+              {copied === f.key ? 'Copied' : 'Copy command'}
+            </button>
+          </span>
+        )}
+      </li>
+    );
+  };
   return (
     <li className={'rounded-lg border px-2.5 py-2 ' + (ticked ? 'border-brand/60 bg-brand/5' : 'border-line bg-bg-raised')} data-pick={e.id}>
-      <label className={'flex items-center gap-2 ' + (nothing ? 'cursor-default' : 'cursor-pointer')}>
-        <input type="checkbox" checked={ticked && !nothing} disabled={nothing} onChange={onToggle} data-testid={`pick-${e.id}`} />
-        <span className="min-w-0 flex-1 truncate text-xs text-ink">{e.name}</span>
+      <div className="flex items-center gap-2">
+        <label className={'flex min-w-0 flex-1 items-center gap-2 ' + (nothing ? 'cursor-default' : 'cursor-pointer')}>
+          <input type="checkbox" checked={ticked && !nothing} disabled={nothing} onChange={onToggle} data-testid={`pick-${e.id}`} />
+          <span className="min-w-0 flex-1 truncate text-xs text-ink">{e.name}</span>
+        </label>
+        {/* Before anything is ticked: a gated repo among what it lacks, with the page where its terms are accepted. */}
+        {gatedMissing.length > 0 && <GatedChip url={gatedMissing[0]} more={gatedMissing.slice(1)} testId={`gated-${e.id}`} />}
         <StatusChip status={e.local.status} text={e.local.chip} title={e.local.note} />
-      </label>
+      </div>
       <ul className="mt-1 space-y-0.5 pl-6">
         {have.length > 0 && !showAll && (
           <li className="text-[10px] leading-snug text-ink-mute">
@@ -217,37 +274,16 @@ function PickRow({ e, ticked, onToggle, folderOk, modelsDir, running, copied, on
             </button>
           </li>
         )}
-        {shown.map((f) => {
-          const need = f.state === 'missing' && !f.onDisk;
-          const cmd = comfyCommand(f, modelsDir);
-          return (
-            <li key={f.key} className={'flex items-baseline gap-1.5 text-[10px] leading-snug ' + (need ? 'text-ink-dim' : 'text-ink-mute')} data-file={f.key}>
-              <span className={'w-3 shrink-0 ' + (need ? 'text-warn' : f.state === 'unknown' ? '' : 'text-ok')}>{need ? '↓' : f.state === 'unknown' ? '?' : '✓'}</span>
-              <span className="min-w-0 flex-1">
-                <span className={'font-mono ' + (need ? 'text-ink' : '')}>{f.name}</span>
-                {' · '}{f.directory} · {formatBytes(f.size)} · <a className="underline hover:text-ink" href={f.pageUrl} target="_blank" rel="noreferrer">{f.repo}</a>
-                {f.gated ? ' · gated' : ''}
-                {f.draftOnly ? ' · Draft only' : ''}
-                {f.state === 'variant' && f.using ? <> · yours: <span className="font-mono">{f.using}</span></> : null}
-                {f.state === 'present' ? ' · on your ComfyUI' : null}
-                {f.onDisk ? ' · in your folder; ComfyUI does not list it yet — restart it or press Refresh in its UI' : null}
-                {f.partial ? ` · ${formatBytes(f.partial)} already downloaded, resumes` : null}
-              </span>
-              {need && (
-                <span className="flex shrink-0 gap-1">
-                  <button className="chip h-5 px-1.5 py-0 text-[10px]" disabled={!folderOk || running} onClick={() => onDownload({ directory: f.directory, name: f.name, url: f.url })}
-                    title={folderOk ? `Download ${f.name} into ${modelsDir}\\${f.directory}` : 'Set your models folder first'} data-testid={`dl-${f.key}`}>
-                    Download
-                  </button>
-                  <button className="chip h-5 px-1.5 py-0 text-[10px]" title={cmd} onClick={() => onCopy(f.key, cmd)}>
-                    {copied === f.key ? 'Copied' : 'Copy command'}
-                  </button>
-                </span>
-              )}
-            </li>
-          );
-        })}
+        {shown.map(row)}
       </ul>
+      {opt.length > 0 && (
+        <div className="mt-1 pl-6" data-testid={`optional-${e.id}`}>
+          <p className="text-[10px] leading-snug text-ink-mute">
+            Optional, {opt[0].optional}: not needed to run it (the files above are), not counted, not in Download selected.
+          </p>
+          <ul className="space-y-0.5">{opt.map(row)}</ul>
+        </div>
+      )}
       {e.packs.length > 0 && (
         <p className="mt-1 pl-6 text-[10px] leading-snug text-ink-mute" data-testid={`packs-${e.id}`}>
           Custom nodes: {e.packs.map((p, i) => (
@@ -268,6 +304,18 @@ function PickRow({ e, ticked, onToggle, folderOk, modelsDir, running, copied, on
         Licence: {e.licence.text}{e.licence.url && <> — <a className="underline hover:text-ink" href={e.licence.url} target="_blank" rel="noreferrer">text</a></>}
       </p>
     </li>
+  );
+}
+
+/** "gated · accept terms", a link to the page where a gated repo's terms are accepted. */
+function GatedChip({ url, more = [], testId }: { url: string; more?: string[]; testId?: string }): JSX.Element {
+  const repos = [url, ...more].map((u) => u.replace('https://huggingface.co/', ''));
+  return (
+    <a className="inline-flex shrink-0 items-center whitespace-nowrap rounded-md border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] font-medium text-warn hover:underline"
+      href={url} target="_blank" rel="noreferrer" data-testid={testId}
+      title={`Gated on Hugging Face: accept the terms on ${repos.join(', ')} (signed in) before downloading`}>
+      gated · accept terms
+    </a>
   );
 }
 

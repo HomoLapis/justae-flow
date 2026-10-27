@@ -202,12 +202,12 @@ function Details({ e, tierNote, onGet }: { e: ReadinessEntry; tierNote?: string;
         </div>
         <ul className="space-y-0.5 font-mono">
           {e.files.map((f) => (
-            <li key={f.key} className="flex items-baseline gap-1.5" title={f.url}>
-              <span className={'w-3 shrink-0 ' + (f.state === 'missing' && !f.onDisk ? 'text-warn' : f.state === 'unknown' ? 'text-ink-mute' : 'text-ok')}>
-                {f.state === 'missing' && !f.onDisk ? '✗' : f.state === 'unknown' ? '?' : '✓'}
+            <li key={f.key} className="flex items-baseline gap-1.5" title={f.optional ? `Optional, ${f.optional}: not needed to run it` : f.url} data-optional={f.optional ? 'yes' : undefined}>
+              <span className={'w-3 shrink-0 ' + (f.state === 'missing' && !f.onDisk ? (f.optional ? 'text-ink-mute' : 'text-warn') : f.state === 'unknown' ? 'text-ink-mute' : 'text-ok')}>
+                {f.state === 'missing' && !f.onDisk ? (f.optional ? '·' : '✗') : f.state === 'unknown' ? '?' : '✓'}
               </span>
-              <span className="min-w-0 flex-1 truncate text-ink-dim">
-                {f.directory}/{f.name}{f.draftOnly ? ' (Draft)' : ''}
+              <span className={'min-w-0 flex-1 truncate ' + (f.optional ? 'text-ink-mute' : 'text-ink-dim')}>
+                {f.directory}/{f.name}{f.draftOnly ? ' (Draft)' : ''}{f.optional ? ` (optional, ${f.optional})` : ''}
                 {f.state === 'variant' && f.using ? <span className="text-ink-mute"> → yours: {f.using}</span> : null}
                 {f.onDisk ? <span className="text-warn"> — in your folder, not listed by ComfyUI yet: restart it or press Refresh in its UI</span> : null}
               </span>

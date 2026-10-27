@@ -439,12 +439,13 @@ export function describeLoad(plan: FinishPlan): string {
  * JustAE Flow (core/finishing/estimate.ts). Full HD is the size this machine is tested at; 4K and 8K are allowed, with
  * the estimate and the reason said, never blocked: there is no other place with LTX-2.5 to send them.
  */
+/** `quantizedLocal`: a transformer this GPU may take is there (models.ts fitsLocally: quantized, or bf16 on 32 GB or more). */
 export function localVerdict(plan: FinishPlan, quantizedLocal: boolean): { ok: boolean; warnings: string[] } {
   const warnings: string[] = [];
   if (!quantizedLocal) {
     return {
       ok: false,
-      warnings: ['The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8): the bf16 one does not fit a 16 GB card.'],
+      warnings: ['The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8), and the bf16 one needs a GPU with 32 GB or more.'],
     };
   }
   const big = plan.passes.some((p) => p.tiling.canvas === 'output' && p.tiling.outputSize !== 'FullHD');

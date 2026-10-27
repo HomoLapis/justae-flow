@@ -52,6 +52,24 @@ export const BASE_FILES = {
   vae: { file: 'ltx-2.5-video-vae-bf16.safetensors', directory: 'vae', url: `${HF}Lightricks/LTX-2.5/blob/main/vae/ltx-2.5-video-vae-bf16.safetensors` },
 } as const;
 
+/**
+ * The default base files on a 16 GB card: the int8 transformer and the int8 Gemma-4 text encoder the official
+ * LTX-2.5 templates download (workflows/ltx25-i2v.json names the same two files, same URLs). The bf16 pair above
+ * is listed as optional, for GPUs with 32 GB or more: on a smaller card the engine refuses it (fitsLocally).
+ */
+export const QUANTIZED_FILES = {
+  transformer: { file: 'ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors', directory: 'diffusion_models', url: `${HF}Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors` },
+  textEncoder: { file: 'gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors', directory: 'text_encoders', url: `${HF}Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors` },
+} as const;
+
+/** Who the bf16 pair is for (the manifests' `optional`). */
+export const FULL_PRECISION_FOR = 'for GPUs with 32 GB or more';
+
+/** GiB of GPU memory /system_stats reports for a "32 GB" card (a little under 32: the driver keeps some). */
+export const LARGE_GPU_GIB = 30;
+
+export const NO_QUANTIZED = 'The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8), and the bf16 one needs a GPU with 32 GB or more.';
+
 export interface FinishModels {
   transformer: string;
   textEncoder: string;
@@ -129,7 +147,7 @@ export function checkFiles(oi: NodeCatalog, needs: LoraId[], where: 'local' | 'c
     ? pick(unets, [/ltx-2\.5.*distilled.*nvfp4/i, /ltx-2\.5.*distilled.*int8/i, T])
     : pick(unets, [/ltx-2\.5.*distilled.*bf16/i, /ltx-2\.5.*distilled.*int8/i, T]);
   if (!transformer) {
-    missing.push({ what: 'LTX-2.5 distilled transformer', file: `${BASE_FILES.transformer.file} (or -comfy-int8-convrot / -nvfp4)`, repo: `${HF}Lightricks/LTX-2.5`, folder: 'models/diffusion_models' });
+    missing.push({ what: 'LTX-2.5 distilled transformer', file: `${QUANTIZED_FILES.transformer.file} (or -nvfp4; -bf16 on a GPU with 32 GB or more)`, repo: `${HF}Lightricks/LTX-2.5`, folder: 'models/diffusion_models' });
   } else if (where === 'cloud' && /nvfp4/i.test(transformer)) {
     notes.push(`Only the NVFP4 transformer is on this server (${transformer}): it needs a Blackwell GPU.`);
   }
@@ -138,7 +156,7 @@ export function checkFiles(oi: NodeCatalog, needs: LoraId[], where: 'local' | 'c
     ? pick(clips, [/gemma4-12b.*ltx-2\.5.*int8/i, /gemma4-12b.*ltx-2\.5/i])
     : pick(clips, [/gemma4-12b.*ltx-2\.5.*bf16/i, /gemma4-12b.*ltx-2\.5/i]);
   if (!textEncoder) {
-    missing.push({ what: 'Gemma-4 12B text encoder for LTX-2.5', file: `${BASE_FILES.textEncoder.file} (or -comfy-int8-convrot)`, repo: `${HF}Lightricks/LTX-2.5`, folder: 'models/text_encoders' });
+    missing.push({ what: 'Gemma-4 12B text encoder for LTX-2.5', file: `${QUANTIZED_FILES.textEncoder.file} (or -bf16 on a GPU with 32 GB or more)`, repo: `${HF}Lightricks/LTX-2.5`, folder: 'models/text_encoders' });
   }
 
   // DiffVAE first ("best quality" in the official Model Links); the conv VAE only when it is all there is.
@@ -180,4 +198,14 @@ export function checkModels(oi: NodeCatalog, plan: FinishPlan, where: 'local' | 
 /** True when a transformer a 16 GB card can hold is on the server (NVFP4 or int8). */
 export function hasQuantizedTransformer(oi: NodeCatalog): boolean {
   return comboOptions(oi, 'UNETLoader', 'unet_name').some((o) => /ltx-2\.5.*distilled.*(nvfp4|int8)/i.test(o));
+}
+
+/**
+ * True when the local ComfyUI has a transformer its GPU may take: a quantized one (NVFP4 or int8, measured on 16 GB),
+ * or — on a GPU that reports 32 GB or more (`vramGib`, its /system_stats) — the bf16 one. The pick order stays
+ * quantized first (checkFiles); bf16 alone on a large GPU is allowed, not measured here.
+ */
+export function fitsLocally(oi: NodeCatalog, vramGib: number | null): boolean {
+  if (hasQuantizedTransformer(oi)) return true;
+  return (vramGib ?? 0) >= LARGE_GPU_GIB && comboOptions(oi, 'UNETLoader', 'unet_name').some((o) => /ltx-2\.5.*distilled.*transformer/i.test(o));
 }

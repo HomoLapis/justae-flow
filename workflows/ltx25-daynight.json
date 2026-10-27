@@ -12,14 +12,14 @@
   },
   "models": [
     {
-      "name": "ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+      "name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
       "directory": "diffusion_models",
-      "url": "https://huggingface.co/Lightricks/LTX-2.5/blob/main/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
     },
     {
-      "name": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+      "name": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
       "directory": "text_encoders",
-      "url": "https://huggingface.co/Lightricks/LTX-2.5/blob/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors"
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"
     },
     {
       "name": "ltx-2.5-video-vae-bf16.safetensors",
@@ -30,6 +30,18 @@
       "name": "ltx-2.5-22b-ic-lora-day-to-night-0.9.safetensors",
       "directory": "loras",
       "url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Day-To-Night/blob/main/ltx-2.5-22b-ic-lora-day-to-night-0.9.safetensors"
+    },
+    {
+      "name": "ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/blob/main/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+      "optional": "for GPUs with 32 GB or more"
+    },
+    {
+      "name": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5/blob/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+      "optional": "for GPUs with 32 GB or more"
     }
   ],
   "source": {

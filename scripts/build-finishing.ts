@@ -10,8 +10,10 @@
  * them — the capability probes ("runs on Local ✓ · deployment ?"), the routing row (Settings ▸ Resources ▸ LTX
  * finishing), `npm run verify:workflows`, and the model list with where each file comes from.
  *
- * Files are named as Lightricks publishes them (bf16); a server's own precision (NVFP4, int8) and sub-folder
- * (loras/LTX2.5/) are swapped in by the usual model check.
+ * The graphs name the int8 transformer and the int8 Gemma-4 text encoder of the official LTX-2.5 templates (the files
+ * a 16 GB card takes; workflows/ltx25-i2v.json names the same two); the manifests list the bf16 pair Lightricks'
+ * example workflows download as optional, for GPUs with 32 GB or more. A server's own precision (NVFP4, bf16) and
+ * sub-folder (loras/LTX2.5/) are swapped in by the usual model check.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -22,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { DEFAULT_OPTIONS, planFinish, type FinishPresetId } from '../core/finishing/plan.ts';
 import { parseTilingSummary, tilingKey } from '../core/finishing/sizes.ts';
 import { buildFinishGraph } from '../core/finishing/graph.ts';
-import { BASE_FILES, HDR_EMBEDDING, LORAS, type FinishModels, type LoraId } from '../core/finishing/models.ts';
+import { BASE_FILES, FULL_PRECISION_FOR, HDR_EMBEDDING, LORAS, QUANTIZED_FILES, type FinishModels, type LoraId } from '../core/finishing/models.ts';
 import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
 import { buildSingleGraph, planSingle, type SingleLora } from '../core/finishing/single.ts';
 import { buildHdrGraph, planHdr } from '../core/finishing/hdr.ts';
@@ -34,16 +36,21 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, 'workflows');
 
 const models: FinishModels = {
-  transformer: BASE_FILES.transformer.file,
-  textEncoder: BASE_FILES.textEncoder.file,
+  transformer: QUANTIZED_FILES.transformer.file,
+  textEncoder: QUANTIZED_FILES.textEncoder.file,
   vae: BASE_FILES.vae.file,
   loras: Object.fromEntries(Object.entries(LORAS).map(([k, v]) => [k, v.file])) as FinishModels['loras'],
 };
 
 const base: ModelFile[] = [
-  { name: BASE_FILES.transformer.file, directory: BASE_FILES.transformer.directory, url: BASE_FILES.transformer.url },
-  { name: BASE_FILES.textEncoder.file, directory: BASE_FILES.textEncoder.directory, url: BASE_FILES.textEncoder.url },
+  { name: QUANTIZED_FILES.transformer.file, directory: QUANTIZED_FILES.transformer.directory, url: QUANTIZED_FILES.transformer.url },
+  { name: QUANTIZED_FILES.textEncoder.file, directory: QUANTIZED_FILES.textEncoder.directory, url: QUANTIZED_FILES.textEncoder.url },
   { name: BASE_FILES.vae.file, directory: BASE_FILES.vae.directory, url: BASE_FILES.vae.url },
+];
+/** The bf16 pair of Lightricks' example workflows, each listed when the graph loads its int8 counterpart. */
+const fullPrecision: Array<ModelFile & { instead: string }> = [
+  { name: BASE_FILES.transformer.file, directory: BASE_FILES.transformer.directory, url: BASE_FILES.transformer.url, optional: FULL_PRECISION_FOR, instead: QUANTIZED_FILES.transformer.file },
+  { name: BASE_FILES.textEncoder.file, directory: BASE_FILES.textEncoder.directory, url: BASE_FILES.textEncoder.url, optional: FULL_PRECISION_FOR, instead: QUANTIZED_FILES.textEncoder.file },
 ];
 const loraFile = (id: LoraId): ModelFile => ({ name: LORAS[id].file, directory: 'loras', url: `https://huggingface.co/${LORAS[id].repo}/blob/main/${LORAS[id].file}` });
 
@@ -106,7 +113,10 @@ for (const o of OUT) {
     task: 'finish-video', hosts: [], output: 'video', input: 'video',
     api: `${o.id}.api.json`,
     bindings: { video: `${load}.file` },
-    models: [...base, ...o.loras.map(loraFile)],
+    models: [
+      ...base, ...o.loras.map(loraFile),
+      ...fullPrecision.filter((f) => JSON.stringify(o.api).includes(JSON.stringify(f.instead))).map(({ instead: _, ...f }) => f),
+    ],
     source: { template: o.template, package: 'ComfyUI-LTXVideo (example_workflows/2.5), via core/finishing', version: '1.1.0' },
     license: LICENSE,
   };

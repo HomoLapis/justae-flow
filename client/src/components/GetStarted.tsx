@@ -2,7 +2,8 @@
  * Get started — three steps, each one line and one action, with live checks from the server:
  *
  *   ① Where to run   your ComfyUI found (or how to get one) · or the Comfy Developer Platform, by the README
- *   ② What's ready   "7 of 9 ready · 1 needs models (28.6 GB)" → Choose what to download
+ *   ② What's ready   "7 of 9 ready · 1 needs models (28.6 GB)" → Choose what to download; the suggested start:
+ *                    "Start with Z-Image · 1 workflow · 20.7 GB · not gated", then LTX-2.5 image to video (gated)
  *   ③ Try it         a Z-Image still on your ComfyUI, placed in the open comp
  *
  * Shown at the top of the Workflow tab on the first run, when no resource can take a job, or when fewer than half
@@ -15,7 +16,7 @@ import { serverJson } from '../bridge/server';
 import { useApp } from '../state/store';
 import { useResources } from '../lib/resources';
 import { mediaUrl } from '../lib/comp';
-import { formatBytes, makeTestImage, useReadiness } from '../lib/readiness';
+import { formatBytes, makeTestImage, suggestionText, useReadiness } from '../lib/readiness';
 
 /** The README section with the Comfy Developer Platform setup (Comfy Cloud with an API key, or a deployment). */
 export const PLATFORM_README = 'no-gpu-the-comfy-developer-platform';
@@ -77,6 +78,7 @@ export function GetStarted(): JSX.Element | null {
   };
 
   const c = data.counts;
+  const sug = data.suggestion;
   const missingParts = [
     c.missingModels ? `${c.missingModels} need${c.missingModels === 1 ? 's' : ''} models${data.missing.bytes ? ` (${formatBytes(data.missing.bytes)}${data.missing.unknownSizes ? '+' : ''})` : ''}` : '',
     ...data.entries.filter((e) => e.status === 'missing-nodes').map((e) => `${e.name.split(' · ')[0]} needs ${e.packs.filter((p) => p.installed === false).map((p) => p.name).join(' + ') || 'custom nodes'}`),
@@ -148,6 +150,26 @@ export function GetStarted(): JSX.Element | null {
           </div>
         ) : (
           <p className="text-[11px] leading-snug text-ink-mute">Once a ComfyUI answers (①), this says which workflows are ready and what to download.</p>
+        )}
+        {/* The suggested start, on your ComfyUI: Z-Image alone (not gated), then LTX-2.5 image to video (gated). */}
+        {local.online === true && (sug.files > 0 || sug.then.files > 0) && (
+          <div className="space-y-0.5 text-[11px] leading-snug" data-testid="step2-suggestion">
+            {sug.files > 0 && (
+              <button className="block text-left text-brand hover:underline" onClick={() => { setPicked(sug.ids); openPicker(true); }} data-testid="step2-start">
+                {suggestionText(sug)}
+              </button>
+            )}
+            {sug.then.files > 0 && (
+              <p className="text-ink-mute" data-testid="step2-then">
+                <button className="text-left hover:text-ink hover:underline" onClick={() => { setPicked(sug.files > 0 ? [...sug.ids, ...sug.then.ids] : sug.then.ids); openPicker(true); }}>
+                  {sug.files > 0 ? sug.then.label : sug.then.label.replace(/^then /, 'Next: ')}
+                </button>
+                {sug.then.pages.length > 0 && <> — {sug.then.pages.map((u, i) => (
+                  <span key={u}>{i > 0 && ', '}<a className="underline hover:text-ink" href={u} target="_blank" rel="noreferrer">{u.replace('https://huggingface.co/', '')}</a></span>
+                ))}</>}
+              </p>
+            )}
+          </div>
         )}
       </Step>
 

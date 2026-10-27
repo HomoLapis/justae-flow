@@ -31,7 +31,7 @@ import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
 import { localVerdict, planFinish, tilingRequests, type FinishOptions, type FinishPlan } from '../core/finishing/plan.ts';
 import type { TilingRequest, TilingSizes } from '../core/finishing/sizes.ts';
 import { tilingLookup } from './tiling.ts';
-import { checkFiles, comboOptions, hasQuantizedTransformer, HDR_EMBEDDING, LORAS, lorasOf, requiredNodes, type LoraId, type NodeCatalog } from '../core/finishing/models.ts';
+import { checkFiles, comboOptions, fitsLocally, HDR_EMBEDDING, LORAS, lorasOf, NO_QUANTIZED, requiredNodes, type LoraId, type NodeCatalog } from '../core/finishing/models.ts';
 import { buildFinishGraph } from '../core/finishing/graph.ts';
 import { buildSingleGraph, planSingle, singleNodes, type SinglePlan } from '../core/finishing/single.ts';
 import { buildHdrGraph, hdrNodes, planHdr, type HdrPlan } from '../core/finishing/hdr.ts';
@@ -2338,14 +2338,14 @@ export class Engine {
       plan.reason = HDR_EMBEDDING.missing;
       return;
     }
-    const quantized = hasQuantizedTransformer(oi);
+    const fits = fitsLocally(oi, await this.localVramGb());
     if (fp) {
-      const v = localVerdict(fp, quantized);
+      const v = localVerdict(fp, fits);
       if (!v.ok) { plan.ok = false; plan.reason = v.warnings.join(' '); return; }
       plan.warnings.push(...v.warnings);
-    } else if (!quantized) {
+    } else if (!fits) {
       plan.ok = false;
-      plan.reason = 'The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8): the bf16 one does not fit a 16 GB card.';
+      plan.reason = NO_QUANTIZED;
       return;
     }
     if (fp && (await this.decodeFor(fp.options)) === 'low-vram') {
@@ -2447,7 +2447,7 @@ export class Engine {
 
     // The local ComfyUI's catalogue: finishing runs only there (generate() refused anything else).
     const oi = (this.objectInfo ?? await this.comfy.objectInfo()) as unknown as NodeCatalog;
-    if (!hasQuantizedTransformer(oi)) throw new Error('The local ComfyUI has no quantized LTX-2.5 transformer (NVFP4 or int8): the bf16 one does not fit a 16 GB card.');
+    if (!fitsLocally(oi, await this.localVramGb())) throw new Error(NO_QUANTIZED);
     let fp: FinishPlan | null = null;
     let sp: SinglePlan | null = null;
     let hp: HdrPlan | null = null;

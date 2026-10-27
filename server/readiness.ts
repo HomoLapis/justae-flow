@@ -18,6 +18,8 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { formatBytes, parseHfUrl } from '../core/workflows/hf.ts';
 import { packsOf } from '../core/workflows/packs.ts';
+import { comboOptions, type NodeCatalog } from '../core/finishing/models.ts';
+import type { ModelFile } from '../core/workflows/manifest.ts';
 import { FEATURED, type FeaturedDef } from './api-featured.ts';
 import type { WorkflowLibrary } from './library.ts';
 import { checkModelsFolder, FolderIndex, ModelMeta } from './models.ts';
@@ -53,6 +55,8 @@ export interface ReadinessFile {
   partial?: number;
   /** Only the Draft tier's workflow needs it (MiniMax H3's turbo LoRA). */
   draftOnly?: boolean;
+  /** Not needed: an alternative for some users (the manifest's `optional`, e.g. "for GPUs with 32 GB or more"). Never counted as missing. */
+  optional?: string;
 }
 
 export interface ReadinessPack { id: string; name: string; repo: string; classes: string[]; installed: boolean | null }
@@ -96,10 +100,16 @@ export interface Readiness {
   usable: Array<{ id: string; label: string; kind: Resource['kind'] }>;
   speed: { bytesPerSec: number; at: string } | null;
   sizes: { pending: boolean; basis: string };
-  /** The suggested first download: a still and a shot, the smallest useful pair. */
-  suggestion: { ids: string[]; label: string; files: number; bytes: number; unknownSizes: number };
+  /**
+   * The suggested first download: Z-Image alone (one workflow, not gated); then, as a second step, LTX-2.5 image to
+   * video, whose repo is gated (its terms first). `gated`: true when a file of it is gated, false when none is, null
+   * while Hugging Face has not said.
+   */
+  suggestion: SuggestionPart & { then: SuggestionPart & { pages: string[] } };
   onboarding: { show: boolean; mode: OnboardingMode; reasons: string[]; firstRun: boolean; testImageAt: string | null; nothingUsable: boolean };
 }
+
+export interface SuggestionPart { ids: string[]; label: string; files: number; bytes: number; unknownSizes: number; gated: boolean | null }
 
 /* ─── Get started: the user's flag ─────────────────────────────────── */
 
@@ -145,8 +155,11 @@ export class Onboarding {
   }
 }
 
-/** The suggested first download. */
-export const SUGGESTED = { ids: ['zimage-t2i', 'ltx25-i2v'], label: 'Start with Z-Image + LTX-2.5 image to video' };
+/** The suggested first download: Z-Image alone (not gated), then LTX-2.5 image to video (gated: its terms first). */
+export const SUGGESTED = {
+  ids: ['zimage-t2i'], label: 'Start with Z-Image',
+  then: { ids: ['ltx25-i2v'], label: 'then LTX-2.5 image to video (accept the Hugging Face terms first)' },
+};
 
 /* ─── Readiness ────────────────────────────────────────────────────── */
 
@@ -162,13 +175,28 @@ export interface ReadinessDeps {
   onboarding: Onboarding;
 }
 
-/** The manifest files a workflow's graph uses (a manifest may list a file only another precision of the graph names). */
-function graphFiles(library: WorkflowLibrary, id: string): Array<{ name: string; directory: string; url: string }> {
+/**
+ * The manifest files a workflow's graph uses (a manifest may list a file only another precision of the graph names),
+ * and the ones it lists as optional (not in the graph: an alternative for some users).
+ */
+function graphFiles(library: WorkflowLibrary, id: string): ModelFile[] {
   const e = library.get(id);
   const g = library.graph(id);
   if (!e || !g) return [];
   const text = JSON.stringify(g);
-  return e.manifest.models.filter((x) => text.includes(JSON.stringify(x.name)));
+  return e.manifest.models.filter((x) => x.optional || text.includes(JSON.stringify(x.name)));
+}
+
+/** True when one of the graph's loader nodes offers the file (an optional file: the probe never looked for it). */
+function listedBy(oi: NodeCatalog, classes: Set<string>, name: string): boolean {
+  for (const c of classes) {
+    const spec = oi[c]?.input;
+    if (!spec) continue;
+    for (const field of Object.keys({ ...(spec.required ?? {}), ...(spec.optional ?? {}) })) {
+      if (comboOptions(oi, c, field).some((o) => o === name || o.split('/').pop() === name)) return true;
+    }
+  }
+  return false;
 }
 
 export function readiness(d: ReadinessDeps, resourceParam?: string | null): Readiness {
@@ -214,6 +242,7 @@ export function readiness(d: ReadinessDeps, resourceParam?: string | null): Read
     return { status: 'not-on-this-resource', note: `${r.label} lacks ${[...w.missingNodes, ...w.missingModels].slice(0, 3).join(', ')}.` };
   };
 
+  const localOi = s.caps.objectInfo(local.id);
   const urls: string[] = [];
   const entries: ReadinessEntry[] = [];
   const uniqueMissing = new Map<string, number | null>();
@@ -227,6 +256,7 @@ export function readiness(d: ReadinessDeps, resourceParam?: string | null): Read
     const files: ReadinessFile[] = [];
     for (const wid of ids) {
       const w = localCaps?.workflows[wid];
+      const classes = new Set(Object.values(library.graph(wid) ?? {}).map((n) => n.class_type));
       for (const x of graphFiles(library, wid)) {
         const key = `${x.directory}/${x.name}`;
         if (files.some((y) => y.key === key)) continue;
@@ -237,7 +267,15 @@ export function readiness(d: ReadinessDeps, resourceParam?: string | null): Read
         let using: string | undefined;
         const onDiskSize = folder ? d.folders.names(folder, x.directory).get(x.name) : undefined;
         const partial = folder ? d.folders.names(folder, x.directory).get(`${x.name}.part`) : undefined;
-        if (localCaps?.online && w && localCaps.models.known) {
+        if (x.optional && localCaps?.online && localOi) {
+          basis = 'comfyui';
+          state = listedBy(localOi as unknown as NodeCatalog, classes, x.name) ? 'present' : 'missing';
+        } else if (x.optional && folder) {
+          basis = 'folder';
+          state = onDiskSize !== undefined ? 'present' : 'missing';
+        } else if (x.optional) {
+          // unknown: no ComfyUI to ask, no folder to look in
+        } else if (localCaps?.online && w && localCaps.models.known) {
           basis = 'comfyui';
           const remap = w.remaps.find((r) => r.startsWith(`${x.name} → `));
           if (w.missingModels.includes(x.name)) state = 'missing';
@@ -254,10 +292,11 @@ export function readiness(d: ReadinessDeps, resourceParam?: string | null): Read
           ...(onDiskSize !== undefined && state === 'missing' && basis === 'comfyui' ? { onDisk: true } : {}),
           ...(partial !== undefined ? { partial } : {}),
           ...(wid !== f.id ? { draftOnly: true } : {}),
+          ...(x.optional ? { optional: x.optional } : {}),
         });
       }
     }
-    const missingFiles = files.filter((x) => x.state === 'missing' && !x.onDisk);
+    const missingFiles = files.filter((x) => x.state === 'missing' && !x.onDisk && !x.optional);
     for (const x of missingFiles) uniqueMissing.set(x.key, x.size);
     const missing = {
       count: missingFiles.length,
@@ -268,7 +307,6 @@ export function readiness(d: ReadinessDeps, resourceParam?: string | null): Read
     // Packs: those the graphs use, installed or not on the local ComfyUI.
     const classes = new Set<string>();
     for (const wid of ids) for (const n of Object.values(library.graph(wid) ?? {})) classes.add(n.class_type);
-    const localOi = s.caps.objectInfo(local.id);
     const packs: ReadinessPack[] = packsOf(classes).map((p) => ({
       id: p.id, name: p.name, repo: p.repo, classes: p.used, installed: localOi ? p.used.every((c) => !!localOi[c]) : null,
     }));
@@ -318,8 +356,25 @@ export function readiness(d: ReadinessDeps, resourceParam?: string | null): Read
     unknownSizes: [...uniqueMissing.values()].filter((v) => v === null).length,
   };
 
-  const sug = new Map<string, number | null>();
-  for (const id of SUGGESTED.ids) for (const x of entries.find((e) => e.id === id)?.files ?? []) if (x.state === 'missing' && !x.draftOnly) sug.set(x.key, x.size);
+  /** One part of the suggestion: what its workflows lack (each file once), and whether any of their repos is gated. */
+  const part = (ids: string[], label: string): SuggestionPart & { pages: string[] } => {
+    const need = new Map<string, number | null>();
+    const all: ReadinessFile[] = [];
+    for (const id of ids) {
+      for (const x of entries.find((e) => e.id === id)?.files ?? []) {
+        if (x.draftOnly || x.optional) continue;
+        all.push(x);
+        if (x.state === 'missing' && !x.onDisk) need.set(x.key, x.size);
+      }
+    }
+    const gated = all.some((x) => x.gated === true) ? true : all.length && all.every((x) => x.gated === false) ? false : null;
+    return {
+      ids, label, files: need.size, bytes: [...need.values()].reduce<number>((a, v) => a + (v ?? 0), 0),
+      unknownSizes: [...need.values()].filter((v) => v === null).length, gated,
+      pages: [...new Set(all.filter((x) => x.gated).map((x) => x.pageUrl))],
+    };
+  };
+  const { pages: _pages, ...first } = part(SUGGESTED.ids, SUGGESTED.label);
 
   const usable = reg.list().filter((r) => reg.canTakeJobs(r).ok && s.caps.cached(r.id)?.online === true).map((r) => ({ id: r.id, label: r.label, kind: r.kind }));
   const reasons: string[] = [];
@@ -345,10 +400,7 @@ export function readiness(d: ReadinessDeps, resourceParam?: string | null): Read
     usable,
     speed: sp ? { bytesPerSec: sp.bytesPerSec, at: sp.at } : null,
     sizes: { pending: d.meta.pending(wanted), basis: 'Hugging Face API (file sizes, sha256 and gating of each repo), kept a week' },
-    suggestion: {
-      ids: SUGGESTED.ids, label: SUGGESTED.label, files: sug.size,
-      bytes: [...sug.values()].reduce<number>((a, v) => a + (v ?? 0), 0), unknownSizes: [...sug.values()].filter((v) => v === null).length,
-    },
+    suggestion: { ...first, then: part(SUGGESTED.then.ids, SUGGESTED.then.label) },
     onboarding: { show, mode, reasons, firstRun: d.onboarding.firstRun(), testImageAt: d.onboarding.testImageAt(), nothingUsable: !usable.length },
   };
 }

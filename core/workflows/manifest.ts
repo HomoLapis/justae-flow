@@ -24,6 +24,11 @@ export interface ModelFile {
   name: string;
   directory: string;
   url: string;
+  /**
+   * Not used by the bundled graph: an alternative some users want, with who it is for ("for GPUs with 32 GB or more" —
+   * the bf16 pair of LTX finishing). Listed and downloadable, never counted as missing.
+   */
+  optional?: string;
 }
 
 export interface WorkflowManifest {

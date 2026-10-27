@@ -26,7 +26,11 @@ export interface ReadinessFile {
   onDisk?: boolean;
   partial?: number;
   draftOnly?: boolean;
+  /** An alternative some users want ("for GPUs with 32 GB or more"): listed and downloadable, never counted as missing. */
+  optional?: string;
 }
+
+export interface SuggestionPart { ids: string[]; label: string; files: number; bytes: number; unknownSizes: number; gated: boolean | null }
 
 export interface ReadinessPack { id: string; name: string; repo: string; classes: string[]; installed: boolean | null }
 
@@ -63,7 +67,8 @@ export interface Readiness {
   usable: Array<{ id: string; label: string; kind: ResourceKind }>;
   speed: { bytesPerSec: number; at: string } | null;
   sizes: { pending: boolean; basis: string };
-  suggestion: { ids: string[]; label: string; files: number; bytes: number; unknownSizes: number };
+  /** Z-Image alone (not gated); then LTX-2.5 image to video (gated: its terms first, on `pages`). */
+  suggestion: SuggestionPart & { then: SuggestionPart & { pages: string[] } };
   onboarding: { show: boolean; mode: 'auto' | 'hidden' | 'open'; reasons: string[]; firstRun: boolean; testImageAt: string | null; nothingUsable: boolean };
 }
 
@@ -219,17 +224,24 @@ export function comfyCommand(f: { url: string; directory: string; name: string }
   return `comfy${ws ? ` --workspace "${ws}"` : ''} model download --url "${url}" --relative-path "models/${f.directory}" --filename "${f.name}"`;
 }
 
-/** The files a set of workflows lacks on the local ComfyUI, each once, with the workflows that need it. */
+/** The files a set of workflows lacks on the local ComfyUI, each once, with the workflows that need it (optional files: never). */
 export function filesToGet(entries: ReadinessEntry[], ids: string[]): Array<ReadinessFile & { workflows: string[] }> {
   const out = new Map<string, ReadinessFile & { workflows: string[] }>();
   for (const e of entries) {
     if (!ids.includes(e.id)) continue;
     for (const f of e.files) {
-      if (f.state !== 'missing' || f.onDisk) continue;
+      if (f.state !== 'missing' || f.onDisk || f.optional) continue;
       const have = out.get(f.key);
       if (have) have.workflows.push(e.id);
       else out.set(f.key, { ...f, workflows: [e.id] });
     }
   }
   return [...out.values()];
+}
+
+/** "Start with Z-Image · 1 workflow · 20.7 GB · not gated" */
+export function suggestionText(p: SuggestionPart): string {
+  const size = `${formatBytes(p.bytes)}${p.unknownSizes ? '+' : ''}`;
+  const gate = p.gated === false ? 'not gated' : p.gated ? 'gated · accept terms' : 'gating not read yet';
+  return `${p.label} · ${p.ids.length} workflow${p.ids.length === 1 ? '' : 's'} · ${size} · ${gate}`;
 }

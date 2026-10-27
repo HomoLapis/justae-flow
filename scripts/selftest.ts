@@ -34,6 +34,7 @@ import { WorkflowLibrary } from '../server/library.ts';
 import { makeServices } from '../server/services.ts';
 import { FAKE_KEY, fakeV2, resourceChecks } from './selftest-resources.ts';
 import { LTX_LICENCE_LINE } from '../core/finishing/licence.ts';
+import { fitsLocally, NO_QUANTIZED } from '../core/finishing/models.ts';
 import { DEFAULT_OPTIONS as FINISH_DEFAULTS, planFinish, tilingRequests } from '../core/finishing/plan.ts';
 import { parseTilingSummary, tilingKey, windowsToCover, type TilingRequest } from '../core/finishing/sizes.ts';
 import { DEFAULT_PROMPTS as FINISH_PROMPTS, lintPrompt } from '../core/finishing/prompt.ts';
@@ -1367,7 +1368,42 @@ console.log('get started: readiness, the card\'s rules, the model downloads');
   rsvc.resources.clearRefusal('cloud');
   const onDefault = readiness(deps, 'default');
   check('readiness on Default: each entry on the resource its task row and Auto give', onDefault.resource.id === 'default' && byId(onDefault, 'zimage-t2i').on?.id === 'local');
-  check('the suggestion: Z-Image + LTX-2.5 image to video, only what is missing', onLocal.suggestion.ids.join() === 'zimage-t2i,ltx25-i2v' && onLocal.suggestion.files === 0);
+  check('the suggestion: Z-Image alone, not gated; then LTX-2.5 image to video, gated, with its page; only what is missing',
+    onLocal.suggestion.ids.join() === 'zimage-t2i' && onLocal.suggestion.label === 'Start with Z-Image' && onLocal.suggestion.files === 0 && onLocal.suggestion.gated === false
+    && onLocal.suggestion.then.ids.join() === 'ltx25-i2v' && onLocal.suggestion.then.label === 'then LTX-2.5 image to video (accept the Hugging Face terms first)'
+    && onLocal.suggestion.then.gated === true && onLocal.suggestion.then.pages.includes('https://huggingface.co/Lightricks/LTX-2.5'),
+    JSON.stringify(onLocal.suggestion));
+
+  // LTX finishing on a 16 GB card: the int8 pair by default, the bf16 pair optional (for GPUs with 32 GB or more).
+  const refineM = library.get('ltx25-refine')!.manifest;
+  const i2vM = library.get('ltx25-i2v')!.manifest;
+  const INT8_T = 'ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors';
+  const INT8_G = 'gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors';
+  const refineGraph = JSON.stringify(library.graph('ltx25-refine'));
+  check('the LTX Refine manifest: the int8 transformer and Gemma of ltx25-i2v by default (same URLs), the bf16 pair optional (for GPUs with 32 GB or more)',
+    refineM.models.filter((x) => !x.optional).map((x) => x.name).slice(0, 2).join() === `${INT8_T},${INT8_G}`
+    && [INT8_T, INT8_G].every((n) => refineM.models.find((x) => x.name === n)?.url === i2vM.models.find((x) => x.name === n)?.url)
+    && refineM.models.filter((x) => x.optional).map((x) => x.name).join() === 'ltx-2.5-22b-distilled-transformer-bf16.safetensors,gemma4-12b-with-proj-ltx-2.5-bf16.safetensors'
+    && refineM.models.filter((x) => x.optional).every((x) => x.optional === 'for GPUs with 32 GB or more')
+    && refineGraph.includes(INT8_T) && refineGraph.includes(INT8_G) && !/transformer-bf16|proj-ltx-2\.5-bf16/.test(refineGraph));
+  const rfE = byId(onLocal, 'ltx25-refine');
+  check('…readiness lists the bf16 pair as optional, never counted as missing (nor in the total)', rfE.files.filter((f) => f.optional).length === 2
+    && rfE.files.filter((f) => f.optional).every((f) => f.state === 'missing' && f.gated === true) && rfE.missing.count === 0 && onLocal.missing.files === 2);
+  // A 16 GB machine with the int8 files: the probe finds every file the graph names, so LTX Refine is Ready.
+  const oi16: ObjectInfo = JSON.parse(JSON.stringify(objectInfo));
+  (oi16.UNETLoader!.input!.required!.unet_name as string[][])[0] = [INT8_T];
+  const r16 = resolveModels(JSON.parse(refineGraph), oi16, refineM.models);
+  const saved = fakeCaps;
+  fakeCaps = capsOf(true);
+  (fakeCaps.local as { workflows: Record<string, unknown> }).workflows['ltx25-refine'] = { status: r16.missing.length ? 'missing' : 'ok', missingNodes: [], missingModels: r16.missing.map((x) => x.wanted), remaps: r16.remaps.map((x) => `${x.wanted} → ${x.using}`) };
+  const ready16 = byId(readiness(deps, 'local'), 'ltx25-refine');
+  check('…a 16 GB machine with the int8 files: LTX Refine is Ready, the bf16 pair not missing', r16.missing.length === 0 && r16.remaps.length === 0
+    && ready16.status === 'ready' && ready16.chip === 'Ready' && ready16.missing.count === 0, JSON.stringify([r16, ready16.chip]));
+  fakeCaps = saved;
+  const bf16Only = { UNETLoader: { input: { required: { unet_name: [['ltx-2.5-22b-distilled-transformer-bf16.safetensors']] } } } } as unknown as Parameters<typeof fitsLocally>[0];
+  check('the engine: the bf16 transformer alone is refused on 16 GB, taken on a GPU of 32 GB or more; a quantized one always',
+    !fitsLocally(bf16Only, 15.9) && !fitsLocally(bf16Only, null) && fitsLocally(bf16Only, 31.4)
+    && fitsLocally(oi16 as unknown as Parameters<typeof fitsLocally>[0], 15.9) && /32 GB or more/.test(NO_QUANTIZED));
 
   // Get started: when it shows.
   check('Get started shows on the first run (no flag in the config folder)', onLocal.onboarding.show && onLocal.onboarding.firstRun && onLocal.onboarding.reasons.join() === 'first-run');
