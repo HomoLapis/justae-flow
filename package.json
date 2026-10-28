@@ -4,6 +4,15 @@
   "private": true,
   "license": "GPL-3.0-only",
   "description": "Generative AI inside open-source compositing and image apps (EffectCraft, PhotoCraft), on your own ComfyUI.",
+  "author": "Homo Lapis (https://homolapis.ai)",
+  "homepage": "https://github.com/HomoLapis/justae-flow#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HomoLapis/justae-flow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HomoLapis/justae-flow/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.18"

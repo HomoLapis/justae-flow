@@ -6,7 +6,4 @@ client/dist/
 *.justae-flow/
 *.shiftfield/
 scripts/*.tmp.ts
-examples/**/*.mp4
-examples/**/*.png
-!examples/**/README.md
 .tmp/

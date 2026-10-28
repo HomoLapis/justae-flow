@@ -8,7 +8,7 @@
  *   POST /api/models/download                   {files: [{directory, name, url?}]} — manifest files only, into that folder
  *   GET  /api/models/downloads                  the queue: per file, bytes, speed, check, errors
  *   POST /api/models/downloads/cancel           stops it; the partial file stays and resumes next time
- *   GET  /api/readme?section=<anchor>           one section of the README (the app shows its setup instructions from it)
+ *   GET  /api/readme?section=<anchor>           one section of the guide, docs/GUIDE.md (the app shows its setup instructions from it)
  *
  * Routes that write or download want the page's session token, like the resource routes.
  */
@@ -118,8 +118,8 @@ export function setupRoutes(s: Services, library: WorkflowLibrary, root: string)
     ['GET', /^\/api\/models\/downloads$/, open((_q, res) => send(res, 200, { state: s.models.downloads.state() }))],
     ['GET', /^\/api\/readme$/, open((_q, res, _m, url) => {
       const anchor = url.searchParams.get('section') ?? '';
-      const sec = readmeSection(readFileSync(join(root, 'README.md'), 'utf8'), anchor);
-      if (!sec) return send(res, 404, { error: `No README section "${anchor}".` });
+      const sec = readmeSection(readFileSync(join(root, 'docs', 'GUIDE.md'), 'utf8'), anchor);
+      if (!sec) return send(res, 404, { error: `No section "${anchor}" in the guide.` });
       send(res, 200, { anchor, ...sec });
     })],
     ['POST', /^\/api\/models\/downloads\/cancel$/, guarded((_q, res) => { s.models.downloads.cancel(); send(res, 200, { ok: true }); })],

@@ -67,7 +67,7 @@ export function ResourcesSettings(): JSX.Element {
         <p className="text-[10px] leading-snug text-ink-mute">
           One key for Comfy Cloud and your deployments (v2 as a bearer token, v1 as X-API-Key). It is kept in
           the file above, on this machine only, and never sent to this page again. How to set up the Comfy Developer
-          Platform (no GPU here): <button className="text-brand hover:underline" onClick={() => useReadiness.getState().setReadme('no-gpu-the-comfy-developer-platform')}>Setup in the README</button>.
+          Platform (no GPU here): <button className="text-brand hover:underline" onClick={() => useReadiness.getState().setReadme('no-gpu-the-comfy-developer-platform')}>Setup guide</button>.
         </p>
 
         <ResourceCard r={cloud} caps={data.capabilities[cloud.id]} onCheck={load} toggle={(on) => apply({ resources: [{ id: cloud.id, enabled: on }] })}>

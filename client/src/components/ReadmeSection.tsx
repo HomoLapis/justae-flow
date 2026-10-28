@@ -1,9 +1,9 @@
 /**
- * A section of the README, shown in the window — the setup instructions live there and only there (the Comfy
- * Developer Platform: Comfy Cloud with an API key, or your own deployment). The server reads the section from the
- * README the user has (GET /api/readme?section=<anchor>); links to other sections open those, here.
+ * A section of the guide (docs/GUIDE.md), shown in the window — the setup instructions live there and only there (the
+ * Comfy Developer Platform: Comfy Cloud with an API key, or your own deployment). The server reads the section from the
+ * guide the user has (GET /api/readme?section=<anchor>); links to other sections open those, here.
  *
- * The Markdown is drawn by a small reader that knows what the README uses: headings, paragraphs, lists, tables,
+ * The Markdown is drawn by a small reader that knows what the guide uses: headings, paragraphs, lists, tables,
  * code blocks, `code`, **bold**, *emphasis* and links.
  */
 
@@ -30,7 +30,7 @@ export function ReadmeSection({ anchor, onClose }: { anchor: string; onClose: ()
       <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-line px-3.5">
         <div className="flex min-w-0 items-center gap-2">
           {stack.length > 1 && <button className="btn-quiet h-8 px-2 text-xs" onClick={() => setStack(stack.slice(0, -1))}>← Back</button>}
-          <h2 className="truncate text-sm font-semibold text-ink">README ▸ {sec?.title ?? '…'}</h2>
+          <h2 className="truncate text-sm font-semibold text-ink">Guide ▸ {sec?.title ?? '…'}</h2>
         </div>
         <button className="btn-quiet h-8 px-3 text-xs" onClick={onClose}>Done</button>
       </header>
@@ -66,7 +66,7 @@ function Inline({ text, onAnchor }: { text: string; onAnchor: (a: string) => voi
   return <>{out}</>;
 }
 
-/** The README's Markdown, block by block. */
+/** The guide's Markdown, block by block. */
 export function Markdown({ text, onAnchor }: { text: string; onAnchor: (a: string) => void }): JSX.Element {
   const lines = text.split('\n');
   const blocks: React.ReactNode[] = [];

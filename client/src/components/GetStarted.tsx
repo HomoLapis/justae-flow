@@ -1,7 +1,7 @@
 /**
  * Get started — three steps, each one line and one action, with live checks from the server:
  *
- *   ① Where to run   your ComfyUI found (or how to get one) · or the Comfy Developer Platform, by the README
+ *   ① Where to run   your ComfyUI found (or how to get one) · or the Comfy Developer Platform, by the guide (docs/GUIDE.md)
  *   ② What's ready   "7 of 9 ready · 1 needs models (28.6 GB)" → Choose what to download; the suggested start:
  *                    "Start with Z-Image · 1 workflow · 20.7 GB · not gated", then LTX-2.5 image to video (gated)
  *   ③ Try it         a Z-Image still on your ComfyUI, placed in the open comp
@@ -18,7 +18,7 @@ import { useResources } from '../lib/resources';
 import { mediaUrl } from '../lib/comp';
 import { formatBytes, makeTestImage, suggestionText, useReadiness } from '../lib/readiness';
 
-/** The README section with the Comfy Developer Platform setup (Comfy Cloud with an API key, or a deployment). */
+/** The guide's section with the Comfy Developer Platform setup (Comfy Cloud with an API key, or a deployment). */
 export const PLATFORM_README = 'no-gpu-the-comfy-developer-platform';
 const DESKTOP_URL = 'https://comfy.org/download';
 
@@ -121,7 +121,7 @@ export function GetStarted(): JSX.Element | null {
             </p>
             <p>
               <span className="text-ink">No GPU?</span> Comfy Developer Platform (Comfy Cloud with an API key, or your own deployment) — see{' '}
-              <button className="text-brand hover:underline" onClick={() => setReadme(PLATFORM_README)} data-testid="readme-platform">Setup in the README</button>;
+              <button className="text-brand hover:underline" onClick={() => setReadme(PLATFORM_README)} data-testid="readme-platform">Setup guide</button>;
               the key goes in <button className="text-brand hover:underline" onClick={() => openSettings(true)}>Settings ▸ Resources</button>.
             </p>
           </div>
