@@ -2095,8 +2095,9 @@ export class Engine {
       const still = clip.info.kind === 'still' || /\.(png|jpe?g|webp|tiff?|exr|bmp)$/i.test(clip.path);
       if (guided) {
         if (still) throw new Error('A still has no motion to carry on: open the card again, it plans the run from the still itself.');
-        // The clip's own frames under its out point (its own pixels, not the comp's composite), by frame number.
-        const last = Math.round((out - layer.start) * fps) - 1;
+        // The clip's own frames under its out point (its own pixels, not the comp's composite), by frame number —
+        // never past the clip's last real frame (an LTX-2.5 clip's sound makes its container a frame or two longer).
+        const last = await lastVideoFrame(clip.path, Math.round((out - layer.start) * fps) - 1);
         guide = fitGuide(last + 1);
         const first = last - guide + 1;
         if (!await framesOf(clip.path, first, last, input)) throw new Error('Extend takes the clip\'s last frames with ffmpeg: put ffmpeg on the PATH.');
@@ -3141,6 +3142,15 @@ function ffmpegOk(args: string[], out: string): Promise<boolean> {
 }
 
 /** How many video frames a file has (ffprobe, decoding them all); null when ffprobe is not there or fails. */
+/**
+ * The last frame number to take from a clip: `wanted` (from the host's out point), or the clip's own last frame when
+ * its video stream is shorter than its container says (the sound runs on). Unchanged when ffprobe cannot count.
+ */
+export async function lastVideoFrame(file: string, wanted: number): Promise<number> {
+  const n = await countFrames(file);
+  return n !== null && n > 0 && wanted > n - 1 ? n - 1 : wanted;
+}
+
 function countFrames(file: string): Promise<number | null> {
   return new Promise((done) => {
     let text = '';

@@ -769,6 +769,9 @@ console.log('comp tab');
     const { frameOf } = await import('../server/engine.ts');
     check('a frame asked for past the last video frame of a clip whose sound runs longer still comes back (Describe the clip, Extend)',
       await frameOf(longer, 1.15, join(dir, 'tiny_last.png')) && existsSync(join(dir, 'tiny_last.png')));
+    const { lastVideoFrame } = await import('../server/engine.ts');
+    check('Extend\'s guide ends on the clip\'s last real frame, not on the container\'s (24 video frames in 1.2 s: 28 → 23; 20 stays 20)',
+      await lastVideoFrame(longer, 28) === 23 && await lastVideoFrame(longer, 20) === 20);
   } else {
     console.log('  · ffmpeg is not on the PATH: the alpha master is not checked here');
   }
