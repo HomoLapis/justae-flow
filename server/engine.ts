@@ -25,6 +25,8 @@ import { layerNameFromPrompt, slugFromPrompt } from '../core/lib/filenames.ts';
 import { decodePngGrey } from '../core/lib/png.ts';
 import { ASPECTS, planReframe, subjectOf, type ReframePlan, type Smoothing, type SubjectFrame } from '../core/reframe/plan.ts';
 import { chainGraph, DELIVERY, joinGraph, planOutpaint } from '../core/reframe/outpaint.ts';
+import type { ColourFit } from '../core/reframe/colour.ts';
+import { matchReframeColour } from './colourmatch.ts';
 import { COMP_TOOLS, ltxExtendFrames, ltxGuidedFrames, resultName, toolById, type SourceInfo, type SourceKind, type ToolDef, type ToolOptions, type ToolPlan } from '../core/comp/tools.ts';
 import { finishSpec, SINGLE_TOOLS, type FinishSpec } from '../core/comp/finishing-tools.ts';
 import { DEFAULT_PROMPTS, singlePrompt } from '../core/finishing/prompt.ts';
@@ -2839,6 +2841,19 @@ export class Engine {
     }
     const { n, rel, abs, stem } = this.saveVersion(card, m, result, card.tool ? slugFromPrompt(card.tool.label ?? src.name, 28) : undefined);
 
+    // The model's colours drift a little from the clip's (measured on 28 Oct: brighter and more contrasted), and the
+    // step shows where the clip's soft edge meets the new space: the generated frame is matched to the clip, which it
+    // surrounds untouched. The model's own file stays beside it.
+    this.phase(card, 'Matching colours');
+    const asGenerated = abs.replace(/(\.[a-z0-9]+)$/i, '_as-generated$1');
+    renameSync(abs, asGenerated);
+    let colour: ColourFit | null = null;
+    try {
+      colour = await matchReframeColour(asGenerated, sourcePath, { gen: plan.gen, scaled: plan.scaled, inset: [il, it, ir, ib], pad }, abs);
+    } finally {
+      if (!existsSync(abs)) renameSync(asGenerated, abs);
+    }
+
     this.phase(card, 'Building the comp');
     const sourceName = src.name;
     const compName = card.tool ? this.toolCompName(card, n) : `${sourceName.replace(/\.[a-z0-9]{2,4}$/i, '')} · ${aspectName} v${String(n).padStart(3, '0')}`;
@@ -2864,7 +2879,11 @@ export class Engine {
         // Original: the clip alone in the new frame (the generated layer hidden); result: both.
         compare: { compId: built.compId, showing: 'result' as const, result: [[built.fillLayer, true]] as Array<[number, boolean]>, original: [[built.fillLayer, false]] as Array<[number, boolean]> },
       } : {}),
-    }, stem, { comp: compName, aspect: aspectName, plan, ...(card.tool ? { tool: card.tool, source: this.sourceRecord(src), delivery: plan.delivery } : {}) });
+    }, stem, {
+      comp: compName, aspect: aspectName, plan,
+      colour: colour ? { ...colour, file: colour.applied ? basename(abs) : null, asGenerated: colour.applied ? basename(asGenerated) : null } : null,
+      ...(card.tool ? { tool: card.tool, source: this.sourceRecord(src), delivery: plan.delivery } : {}),
+    });
     await this.setHostStatus(card, 'done');
   }
 

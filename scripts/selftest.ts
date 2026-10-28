@@ -24,6 +24,7 @@ import { convertUiToApi } from '../core/workflows/uiconvert.ts';
 import type { CardStatus } from '../core/storyboard/types.ts';
 import type { Box, CanvasHost, CanvasPlaceRequest, CompRequest, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, RenderRequest, RenderResult, TimelineHost } from '../hosts/types.ts';
 import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, SEAM_GUARD, vaceGenSize } from '../core/reframe/outpaint.ts';
+import { channelStats, fitColour, lutrgbFilter, matchRegions } from '../core/reframe/colour.ts';
 import { COMP_TOOLS, extendGuide, KEEP_COLOUR_DEFAULT, ltxExtendFrames, ltxGuidedFrames, toolById } from '../core/comp/tools.ts';
 import { compRoutes } from '../server/api-comp.ts';
 import { FEATURED, featuredRoutes, featuredView } from '../server/api-featured.ts';
@@ -620,8 +621,37 @@ console.log('comp tab');
   check('the auto crop offers the same six formats', JSON.stringify(library.get('sam3-reframe')!.manifest.params?.[0].options) === JSON.stringify([...REFRAME_ASPECTS]) && Math.abs(ASPECTS['21:9'] - 7 / 3) < 1e-9);
   const wide = planOutpaint({ width: 1280, height: 704, fps: 24, frames: 72 }, vaceGenSize('21:9', '1.3b'), DELIVERY['21:9'], 125);
   check('21:9 from a 1280×704 clip: the new space left and right, the clip the full height', wide.scaled[1] === 432 && wide.pad[1] === 0 && wide.pad[3] === 0 && wide.pad[0] + wide.pad[2] === 1008 - wide.scaled[0] + wide.inset[0] + wide.inset[2] && wide.bgScale === 250);
-  // The case of 25 Oct: the clip at x 111–895 of 1008; the model now sees it from x 111 + 28 to 895 − 28.
-  check('21:9: the model is shown the clip less 28 px left and right (the seam lands under the original)', JSON.stringify(wide.inset) === '[28,0,28,0]' && wide.pad[0] === 139 && wide.pad[2] === 140);
+  // The case of 25 Oct: the clip at x 111–895 of 1008; the model now sees it from x 111 + 36 to 895 − 36.
+  check('21:9: the model is shown the clip less 36 px left and right (the seam lands under the original)', JSON.stringify(wide.inset) === '[36,0,36,0]' && wide.pad[0] === 147 && wide.pad[2] === 148);
+  // The case of 28 Oct: 9:16 draft from a 1280×704 clip, the model's line at y 530–537 below its edge at 528. Now its
+  // edge is 28 px inside the clip, and the line (≤ 10 px past it) ends 6 px before the original turns soft.
+  const tall = planOutpaint({ width: 1280, height: 704, fps: 24, frames: 122 }, vaceGenSize('9:16', '1.3b'), DELIVERY['9:16'], 125);
+  const kTall = 480 / 1280;
+  const opaqueTo = (832 - tall.scaled[1]) / 2 + (704 - 1.5 * tall.feather) * kTall; // where the original turns soft
+  const edge = 832 - tall.pad[3];
+  check('9:16 from a 1280×704 clip: the model edge and the line past it lie under the opaque original',
+    JSON.stringify(tall.inset) === '[0,28,0,28]' && edge === 520 && edge + 10 <= opaqueTo);
+
+  // The colour match (28 Oct): the model's copy of the clip, brighter and more contrasted than the clip, is brought
+  // back onto it; the same picture is left alone, and so is a pair that is not the same picture.
+  {
+    const clipPx = new Uint8Array(3 * 64);
+    for (let i = 0; i < 64; i++) { clipPx[3 * i] = 40 + 2 * i; clipPx[3 * i + 1] = 30 + i; clipPx[3 * i + 2] = 200 - 2 * i; }
+    const drift = clipPx.map((v) => Math.min(255, Math.round(v * 1.05 + 4)));
+    const fit = fitColour(channelStats(drift), channelStats(clipPx));
+    const back = [0, 1, 2].map((c) => fit.gain[c] * channelStats(drift).mean[c] + fit.offset[c]);
+    check('colour match: a copy 5 % more contrasted and 4 levels brighter is mapped back onto the clip',
+      fit.applied && fit.gain.every((g) => Math.abs(g - 1 / 1.05) < 0.01) && back.every((v, c) => Math.abs(v - channelStats(clipPx).mean[c]) < 0.01));
+    check('colour match: the same picture is left alone', !fitColour(channelStats(clipPx), channelStats(clipPx)).applied);
+    const flat = new Uint8Array(3 * 64).fill(128);
+    check('colour match: a pair that is not the same picture is left alone', !fitColour(channelStats(clipPx), channelStats(flat.map((v, i) => v + (i % 2 ? 60 : -60)))).applied);
+    check('colour match: ffmpeg lutrgb with quoted expressions', /^lutrgb=r='clip\(val\*0\.95\d+\+-?\d+\.\d{4},0,255\)':g='clip\(/.test(lutrgbFilter(fit)));
+    // The 9:16 Final of 28 Oct: 720×1280, the clip at 720×396 less 34 px top and bottom, from y 476.
+    const reg = matchRegions([720, 1280], [720, 396], [0, 34, 0, 34], [0, 476, 0, 476]);
+    check('colour match: compared where the model was shown the clip, less its soft pad',
+      JSON.stringify(reg) === JSON.stringify({ generated: { x: 0, y: 500, width: 720, height: 280 }, clip: { x: 0, y: 58, width: 720, height: 280 } }));
+    check('colour match: a geometry that does not add up compares nothing', matchRegions([720, 1280], [720, 396], [0, 34, 0, 34], [0, 470, 0, 476]) === null);
+  }
 
   // Plans, before anything runs.
   const man = (id: string) => library.get(id)?.manifest;

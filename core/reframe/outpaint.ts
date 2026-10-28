@@ -109,9 +109,11 @@ export const OVERLAP = 8;
  * How far past the clip's soft edge the model's own edge is kept, generation pixels. Measured on the 21:9 draft
  * of 25 Oct (1008×432, clip 785×432 at x 111–895): the model drew a bright line 1–2 px wide at x 899–900, just
  * outside the edge it was given, where the original never covers it (the left edge, at x 111, stayed clean).
- * Whatever the model does at its edge now happens under the opaque part of the original.
+ * On the 9:16 draft of 28 Oct (480×832, its edge at y 528) the line filled the next latent row and spilled past it,
+ * y 530–537, and showed through the original's soft edge: two latent rows (16 px), so whatever the model does at its
+ * edge happens under the opaque part of the original.
  */
-export const SEAM_GUARD = 8;
+export const SEAM_GUARD = 16;
 
 export function planSegments(total: number, maxFrames: number, maxSegments: number, overlap = OVERLAP): Segment[] {
   const lattice = (n: number): number => 4 * Math.ceil((Math.max(1, n) - 1) / 4) + 1;

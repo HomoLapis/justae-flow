@@ -357,8 +357,13 @@ on this machine; nothing leaves it. The frames, the instruction and the answer a
 Sizes per format — the generation frame follows one rule (`core/reframe/outpaint.ts`, `vaceGenSize`): Wan 2.1's own
 frame where the format is its own, otherwise the size with exactly that aspect, both sides multiples of 16, whose
 pixel count is nearest to that frame's. The delivery comp is 1080 px on its short side. The model is shown the clip
-less a margin where it meets new space (1.5 × the soft edge + 8 px), so whatever it draws at its own edge lies under
-the opaque original.
+less a margin where it meets new space (1.5 × the soft edge + 16 px: on the 9:16 draft of 28 Oct the model's bright
+line at its edge filled a whole latent row and spilled past it), so whatever it draws at its own edge lies under the
+opaque original. The model also gives the clip back a little brighter and more contrasted than it is (measured on the
+9:16 Final of 28 Oct: about 4 levels and 5 % on every channel), and the new space around carries the same shift: the
+generated video is matched to your clip before it goes into the comp — a gain and an offset per channel that give
+the model's copy of the clip your clip's mean and spread (ffmpeg; `<name>_as-generated.mp4` beside it is the model's
+own file, and the job's `.job.json` has the values under `colour`).
 
 | Format | Final (14B) | Draft (1.3B) | Comp |
 |---|---|---|---|

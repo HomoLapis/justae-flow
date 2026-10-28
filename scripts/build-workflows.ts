@@ -166,6 +166,8 @@ const KEYFRAMES: Recipe[] = [
       // The template's MiniMaxH3ImageToVideo takes an optional last_frame (object_info): a second image, wired to it.
       api['130'] = { class_type: 'LoadImage', inputs: { image: 'last_frame.png' }, _meta: { title: 'Load Image (last frame)' } };
       api['105:104'].inputs.last_frame = ['130', 0];
+      // The template's own image is the first frame: named so, it reads as one of a pair in the shot's inputs.
+      api['114']._meta = { title: 'Load Image (first frame)' };
       // A scale node the template leaves without an input, and its size reader: not part of the run.
       delete api['119'];
       delete api['120'];
@@ -204,6 +206,7 @@ const KEYFRAMES: Recipe[] = [
     patch: (api) => {
       api['130'] = { class_type: 'LoadImage', inputs: { image: 'last_frame.png' }, _meta: { title: 'Load Image (last frame)' } };
       api['105:104'].inputs.last_frame = ['130', 0];
+      api['114']._meta = { title: 'Load Image (first frame)' };
       delete api['119'];
       delete api['120'];
       // The turbo branch, switched on: the model goes through the LoRA, the steps come from the turbo value.
