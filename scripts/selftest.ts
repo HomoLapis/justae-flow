@@ -1253,6 +1253,20 @@ console.log('featured workflows');
   check('GET /api/featured/:id/graph: the bundled graph with the local precision swapped in (int8 → nvfp4 here)',
     g.ok && Object.values(graph).some((n) => n.inputs.unet_name === 'ltx-2.5-22b-distilled-transformer-nvfp4.safetensors') && remaps.some((r) => /nvfp4/.test(r)));
   check('…and only for Featured entries', (await fetch(`${base}/api/featured/sam3-reframe/graph`)).status === 404);
+  {
+    // LTX-2.5 wires its size from a 16:9 ResolutionSelector: served to the Flow window, the manifest's two size
+    // numbers become plain knobs tagged for the comp, with the manifest's lattice and cap.
+    const t2v = await (await fetch(`${base}/api/featured/ltx25-t2v/graph`)).json() as Record<string, { class_type: string; inputs: Record<string, unknown>; _meta?: { title?: string; flowSize?: { multiple?: number; maxLongSide?: number } } }>;
+    const m = library.get('ltx25-t2v')!.manifest;
+    const [wn, wf] = m.bindings.width!.split('.');
+    const [hn, hf] = m.bindings.height!.split('.');
+    check('GET /api/featured/ltx25-t2v/graph: width and height are numbers the comp fills ([AE_WIDTH] / [AE_HEIGHT], multiple of 64, ≤ 1536)',
+      t2v[wn].inputs[wf] === 1280 && t2v[hn].inputs[hf] === 704
+      && /\[AE_WIDTH\]$/.test(t2v[wn]._meta?.title ?? '') && /\[AE_HEIGHT\]$/.test(t2v[hn]._meta?.title ?? '')
+      && t2v[wn]._meta?.flowSize?.multiple === 64 && t2v[hn]._meta?.flowSize?.maxLongSide === 1536);
+    check('…the bundled file itself is untouched (the engine sets the same two numbers from the manifest)',
+      Array.isArray(library.graph('ltx25-t2v')![wn].inputs[wf]));
+  }
   srv.close();
 }
 

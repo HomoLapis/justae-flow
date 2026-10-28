@@ -72,6 +72,12 @@ export interface FormField {
    * reject the graph.
    */
   aeConstraint?: { min?: number; step?: number; max?: number };
+  /**
+   * A size knob's own lattice and long-side cap, when the graph says them: a bundled workflow's manifest
+   * (`sizeMultiple`, `maxLongSide`), passed by the server in the node's `_meta.flowSize` next to its
+   * `[AE_WIDTH]` / `[AE_HEIGHT]` tag. Without it the comp's size is snapped to 32 and never capped.
+   */
+  aeSize?: { multiple?: number; maxLongSide?: number };
   /** True for the field the prompt box is bound to. */
   isPrompt?: boolean;
   isNegativePrompt?: boolean;
@@ -454,6 +460,7 @@ interface RoleClaim {
   role: AeRole;
   evidence: string;
   constraint?: { min?: number; step?: number; max?: number };
+  size?: { multiple?: number; maxLongSide?: number };
 }
 
 /**
@@ -641,11 +648,13 @@ export function resolveAeRoles(
     const named = numeric.find((f) => new RegExp(`^${m[1]}$`, 'i').test(f.field));
     const target = named ?? (numeric.length === 1 ? numeric[0] : undefined);
     if (!target) continue;
+    const flowSize = (node._meta as { flowSize?: { multiple?: number; maxLongSide?: number } } | undefined)?.flowSize;
     put(
       target.id,
       {
         role: tagRole(m[1], target.kind, { def: target.value, step: target.step, max: target.max }),
         evidence: `the ${m[0]} tag on "${node._meta?.title}"`,
+        size: flowSize,
       },
       'tag',
     );
@@ -815,6 +824,7 @@ function applyAeRoles(
     f.aeRole = claim?.role ?? null;
     f.aeRoleEvidence = claim?.evidence;
     f.aeConstraint = claim?.constraint;
+    f.aeSize = claim?.size;
   }
   return coverage;
 }
@@ -983,6 +993,22 @@ export function computeAutoFill(fields: FormField[], ctx: AeContext): AutoFill {
     : null;
   const fps = workflowFps ?? (ctx.fps && ctx.fps > 0 ? ctx.fps : 24);
 
+  // The workflow's own cap on the long side (a bundled manifest's maxLongSide): the comp scaled down to it.
+  const cap = Math.min(...fields
+    .filter((f) => (f.aeRole === 'width' || f.aeRole === 'height') && f.aeSize?.maxLongSide)
+    .map((f) => f.aeSize!.maxLongSide!));
+  if (Number.isFinite(cap) && ctx.width && ctx.height && Math.max(ctx.width, ctx.height) > cap
+    && !(ctx.maxLongSide && ctx.maxLongSide < cap)) {
+    const k = cap / Math.max(ctx.width, ctx.height);
+    const capNote = ` (comp ${ctx.width}×${ctx.height} scaled to this workflow's ${cap} px long side)`;
+    const inner = computeAutoFill(fields, { ...ctx, width: Math.round(ctx.width * k), height: Math.round(ctx.height * k), maxLongSide: undefined });
+    for (const id of Object.keys(inner.reasons)) {
+      const f = fields.find((x) => x.id === id);
+      if (f && (f.aeRole === 'width' || f.aeRole === 'height')) inner.reasons[id] += capNote;
+    }
+    return inner;
+  }
+
   // Draft: the comp scaled down so its long side is maxLongSide, said on the badge.
   if (ctx.maxLongSide && ctx.width && ctx.height && Math.max(ctx.width, ctx.height) > ctx.maxLongSide) {
     const k = ctx.maxLongSide / Math.max(ctx.width, ctx.height);
@@ -1003,14 +1029,16 @@ export function computeAutoFill(fields: FormField[], ctx: AeContext): AutoFill {
     switch (f.aeRole) {
       case 'width':
         if (ctx.width) {
-          values[f.id] = snap(ctx.width);
-          reasons[f.id] = describeSnap('Comp width', ctx.width, snap(ctx.width)) + via;
+          const mult = f.aeSize?.multiple ?? 32;
+          values[f.id] = snap(ctx.width, mult);
+          reasons[f.id] = describeSnap('Comp width', ctx.width, snap(ctx.width, mult), mult) + via;
         }
         break;
       case 'height':
         if (ctx.height) {
-          values[f.id] = snap(ctx.height);
-          reasons[f.id] = describeSnap('Comp height', ctx.height, snap(ctx.height)) + via;
+          const mult = f.aeSize?.multiple ?? 32;
+          values[f.id] = snap(ctx.height, mult);
+          reasons[f.id] = describeSnap('Comp height', ctx.height, snap(ctx.height, mult), mult) + via;
         }
         break;
       case 'longest':
@@ -1181,10 +1209,10 @@ export function snapFramesUp(target: number, min?: number, step?: number): numbe
   return floor + steps * stride;
 }
 
-function describeSnap(what: string, raw: number, snapped: number): string {
+function describeSnap(what: string, raw: number, snapped: number, multiple = 32): string {
   return raw === snapped
     ? `${what} (${raw}px)`
-    : `${what} ${raw}px, snapped to ${snapped}px (models need a multiple of 32)`;
+    : `${what} ${raw}px, snapped to ${snapped}px (this model needs a multiple of ${multiple})`;
 }
 
 function round(v: number, kind: FieldKind): number {

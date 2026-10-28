@@ -14,6 +14,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { ComfyNode, WorkflowJson } from '../core/comfy/types.ts';
 import { resolveModels, type WorkflowManifest } from '../core/workflows/manifest.ts';
 import type { WorkflowLibrary } from './library.ts';
 import type { Resource } from './resources.ts';
@@ -148,6 +149,36 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/**
+ * The graph as the Flow window should read it: sized by the comp, as the engine sizes it.
+ *
+ * The Flow window finds the knobs the comp fills by reading the graph (`client/src/workflows/form.ts`). A template that
+ * wires its size from a node of its own — LTX-2.5's `ResolutionSelector`, 16:9 at 0.9 MP — leaves it nothing to fill,
+ * so a 9:16 comp would get a 16:9 clip. The manifest names the two numbers that set the size (`bindings.width`,
+ * `bindings.height`): when one is wired, it becomes a plain number (the manifest's default) tagged `[AE_WIDTH]` /
+ * `[AE_HEIGHT]`, with the manifest's lattice and long-side cap in `_meta.flowSize` for the form to snap and scale to.
+ * The node that fed it is left unconnected, and ComfyUI does not run it.
+ */
+export function compSized(graph: WorkflowJson, m: WorkflowManifest): WorkflowJson {
+  const sides: Array<['width' | 'height', string | undefined]> = [['width', m.bindings.width], ['height', m.bindings.height]];
+  if (!sides.every(([, ref]) => !!ref)) return graph;
+  const out = structuredClone(graph);
+  for (const [side, ref] of sides) {
+    const dot = ref!.indexOf('.');
+    const node = out[ref!.slice(0, dot)];
+    const field = ref!.slice(dot + 1);
+    if (!node || !Array.isArray(node.inputs[field])) continue;
+    node.inputs[field] = m.defaults?.[side] ?? (side === 'width' ? 1280 : 704);
+    const title = String(node._meta?.title ?? node.class_type).replace(/\s*\[AE_[A-Z]+\]/g, '');
+    node._meta = {
+      ...node._meta,
+      title: `${title} [AE_${side.toUpperCase()}]`,
+      flowSize: { multiple: m.sizeMultiple ?? 32, ...(m.maxLongSide ? { maxLongSide: m.maxLongSide } : {}) },
+    } as ComfyNode['_meta'];
+  }
+  return out;
+}
+
 export function featuredRoutes(s: Services, library: WorkflowLibrary): Array<[string, RegExp, Handler]> {
   return [
     ['GET', /^\/api\/featured$/, (_q, res) => send(res, 200, { entries: featuredView(s, library) })],
@@ -155,7 +186,7 @@ export function featuredRoutes(s: Services, library: WorkflowLibrary): Array<[st
       const entry = library.get(m[1]);
       // A Featured entry, or the workflow of one of its tiers (MiniMax H3's Draft).
       if (!entry || !FEATURED.some((f) => f.id === m[1] || f.tiers?.draft.workflow === m[1])) return send(res, 404, { error: `No featured workflow "${m[1]}".` });
-      const graph = library.graph(m[1])!;
+      const graph = compSized(library.graph(m[1])!, entry.manifest);
       // The template names one precision of each model; the local ComfyUI may have another of the same weights.
       const oi = s.caps.objectInfo(s.resources.local().id);
       const check = oi ? resolveModels(graph, oi, entry.manifest.models) : null;
