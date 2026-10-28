@@ -88,7 +88,7 @@ for (const m of library.list()) {
   check(`${m.id}: every binding points at a real input`, broken.length === 0, broken.map(([k]) => k).join(', '));
   check(`${m.id}: open weights, licence named`, m.license.openWeights && m.license.weights.length > 3);
   if (m.id.startsWith('ltx')) {
-    check(`${m.id}: the LTX-2.x Community License as the README states it, with its link`,
+    check(`${m.id}: the LTX-2.x Community License as the guide states it, with its link`,
       m.license.weights.startsWith(LTX_LICENCE_LINE)
       && m.license.weights.includes('https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x'));
   }
@@ -761,6 +761,14 @@ console.log('comp tab');
     check('the export is remembered with the version', engine.state().cards.find((c) => c.id === mId)!.versions[0].exports?.[0]?.path === out.path);
     real.versions[0].file = keep.file;
     real.versions[0].source!.file = keep.source!.file;
+    // A container longer than its video (the sound runs on, as in an LTX-2.5 clip): a frame asked for past the last
+    // video frame still comes back, from a little earlier.
+    const longer = join(dir, 'tiny_sound_longer.mp4');
+    spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=64x36:rate=24', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1.2',
+      '-t', '1.2', '-map', '0:v', '-map', '1:a', '-frames:v', '24', '-pix_fmt', 'yuv420p', '-c:a', 'aac', longer]);
+    const { frameOf } = await import('../server/engine.ts');
+    check('a frame asked for past the last video frame of a clip whose sound runs longer still comes back (Describe the clip, Extend)',
+      await frameOf(longer, 1.15, join(dir, 'tiny_last.png')) && existsSync(join(dir, 'tiny_last.png')));
   } else {
     console.log('  · ffmpeg is not on the PATH: the alpha master is not checked here');
   }
@@ -1490,7 +1498,7 @@ console.log('get started: readiness, the card\'s rules, the model downloads');
     && byId(off, 'wan22-flf').files.every((f) => f.basis === 'folder'));
   fakeCaps = capsOf(true);
 
-  // The routes: the session token for writes; the README's setup section.
+  // The routes: the session token for writes; the guide's setup section.
   const routes = setupRoutes(rsvc, library, root);
   const { createServer: mkS } = await import('node:http');
   const srv = mkS(async (req, res) => {
@@ -1506,7 +1514,7 @@ console.log('get started: readiness, the card\'s rules, the model downloads');
     && /no checkpoints\/ or diffusion_models\//.test(((await badFolder.json()) as { error: string }).error));
   const rd = await fetch(`${base}/api/readme?section=no-gpu-the-comfy-developer-platform`);
   const rdj = await rd.json() as { title: string; markdown: string };
-  check('GET /api/readme: the README\'s Comfy Developer Platform section (what the app links to)', rd.ok && /Comfy Developer Platform/.test(rdj.title) && /platform\.comfy\.org/.test(rdj.markdown) && /#your-own-deployment/.test(rdj.markdown));
+  check('GET /api/readme: the Comfy Developer Platform section of the guide (what the app links to)', rd.ok && /Comfy Developer Platform/.test(rdj.title) && /platform\.comfy\.org/.test(rdj.markdown) && /#your-own-deployment/.test(rdj.markdown));
   check('…the anchors are GitHub\'s', anchorOf('No GPU: the Comfy Developer Platform') === 'no-gpu-the-comfy-developer-platform' && readmeSection('# A\n## B c\nx\n## D\n', 'b-c')?.markdown === 'x');
   srv.close();
   hf.close();

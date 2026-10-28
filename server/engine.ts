@@ -1353,7 +1353,7 @@ export class Engine {
       if (!layer || !path) throw new Error('The layer has no footage file to describe.');
       for (let i = 0; i < times.length; i++) {
         const at = info.media === 'image' ? 0 : Math.max(0, times[i] - layer.start);
-        if (!await frameOf(path, at, join(dir, `${String(i).padStart(3, '0')}.png`))) throw new Error('Describe the clip takes its frames with ffmpeg: put ffmpeg on the PATH.');
+        if (!await frameOf(path, at, join(dir, `${String(i).padStart(3, '0')}.png`))) throw new Error(`Describe the clip could not take the frame at ${at.toFixed(2)} s of the layer's file with ffmpeg (is ffmpeg on the PATH?).`);
       }
     } else {
       for (let i = 0; i < times.length; i++) await this.tl().frameAt(times[i] + 0.1 / fps, join(dir, `${String(i).padStart(3, '0')}.png`));
@@ -3097,13 +3097,25 @@ function setLtxLength(api: WorkflowJson, m: WorkflowManifest, frames: number): b
   return false;
 }
 
-/** One frame of a clip, at `seconds`, as a PNG (ffmpeg on the PATH); false when ffmpeg is not there or fails. */
-function frameOf(src: string, seconds: number, out: string): Promise<boolean> {
-  return new Promise((done) => {
-    const p = spawn('ffmpeg', ['-v', 'error', '-y', '-ss', seconds.toFixed(4), '-i', src, '-frames:v', '1', out], { windowsHide: true });
-    p.on('error', () => done(false));
-    p.on('close', (code) => done(code === 0 && existsSync(out)));
-  });
+/**
+ * One frame of a clip, at `seconds`, as a PNG (ffmpeg on the PATH); false when ffmpeg is not there or fails.
+ *
+ * A clip's length as EffectCraft reports it is the container's, which the sound can make longer than the video (an
+ * LTX-2.5 clip: 121 frames, 5.04 s of video in 5.08 s): a seek past the last frame gives ffmpeg nothing to write. So a
+ * seek that writes nothing steps back, a quarter of a second at a time, up to a second.
+ */
+export async function frameOf(src: string, seconds: number, out: string): Promise<boolean> {
+  for (const back of [0, 0.25, 0.5, 1]) {
+    if (back > 0 && seconds - back < 0) break;
+    const ok = await new Promise<boolean>((done) => {
+      rmSync(out, { force: true });
+      const p = spawn('ffmpeg', ['-v', 'error', '-y', '-ss', (seconds - back).toFixed(4), '-i', src, '-frames:v', '1', out], { windowsHide: true });
+      p.on('error', () => done(false));
+      p.on('close', (code) => done(code === 0 && existsSync(out)));
+    });
+    if (ok) return true;
+  }
+  return false;
 }
 
 /**
