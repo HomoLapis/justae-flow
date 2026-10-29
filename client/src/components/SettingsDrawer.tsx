@@ -70,14 +70,14 @@ export function SettingsDrawer(): JSX.Element | null {
               value={settings.defaults.fitMode}
               onChange={(e) => setDefaults({ fitMode: e.target.value as 'none' | 'fit' | 'fill' })}
             >
-              <option value="none">Don't scale (1:1)</option>
+              <option value="fill">Fill the comp (default)</option>
               <option value="fit">Fit inside the comp</option>
-              <option value="fill">Fill the comp (crops)</option>
+              <option value="none">Don't scale (1:1)</option>
             </select>
           </Field>
           <p className="text-[10px] leading-snug text-ink-mute">
-            1:1 is the default on purpose. Scaling a generated clip costs quality in a way that's
-            hard to spot on a small preview, so it only happens if you ask for it.
+            A shot is generated at the comp's aspect, as large as its model allows, then scaled to cover the comp;
+            only the model's rounding (a few pixels) is cropped. 1:1 keeps the clip at its generated size.
           </p>
 
           <Field label="Seed">

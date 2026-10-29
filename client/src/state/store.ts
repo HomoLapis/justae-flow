@@ -172,10 +172,13 @@ export interface Settings {
     fixedSeed: number;
     autoImport: boolean;
     workAreaMaxDuration: number;
+    /** How a result is scaled into the comp: 'fill' covers it (the default; the shot was planned at the comp's aspect, so only the model's rounding is cropped), 'fit' letterboxes, 'none' keeps 1:1. */
     fitMode: 'none' | 'fit' | 'fill';
     /** Let AE fill canvas size / shot length into the workflow. */
     aeAutoFill: boolean;
   };
+  /** Bumped when a default changes meaning; hydrateSettings migrates what older pages stored. */
+  settingsVersion: number;
   /**
    * The professional pipeline: draft, approve, final.
    * See pipeline/catalog.ts and docs/RESEARCH.md.
@@ -197,10 +200,14 @@ const DEFAULT_SETTINGS: Settings = {
     fixedSeed: 0,
     autoImport: true,
     workAreaMaxDuration: 8,
-    fitMode: 'none' as 'none' | 'fit' | 'fill',
+    // Every tool takes the comp's size: the shot is generated at the comp's aspect, within the model's cap, and
+    // placed to cover the comp. 1:1 (Flow 2's After Effects default) left a 1344×768 H3 shot in the middle of a
+    // 1920×1080 frame.
+    fitMode: 'fill' as 'none' | 'fit' | 'fill',
     aeAutoFill: true,
   },
   pipeline: { tier: 'final', draftLongSide: 1280, outputProfile: 'as-workflow' },
+  settingsVersion: 2,
 };
 
 /**
@@ -227,6 +234,9 @@ function hydrateSettings(): Settings {
     defaults: { ...DEFAULT_SETTINGS.defaults, ...(raw.defaults ?? {}) },
     pipeline: { ...DEFAULT_SETTINGS.pipeline, ...((raw as Partial<Settings>).pipeline ?? {}) },
   };
+  // Version 1 pages stored 'none' as the fit mode because it was the default, not a choice: results fill the comp now.
+  if ((raw.settingsVersion ?? 1) < 2 && merged.defaults.fitMode === 'none') merged.defaults.fitMode = 'fill';
+  merged.settingsVersion = DEFAULT_SETTINGS.settingsVersion;
   return merged;
 }
 
