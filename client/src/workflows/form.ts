@@ -1000,11 +1000,17 @@ export function computeAutoFill(fields: FormField[], ctx: AeContext): AutoFill {
   if (Number.isFinite(cap) && ctx.width && ctx.height && Math.max(ctx.width, ctx.height) > cap
     && !(ctx.maxLongSide && ctx.maxLongSide < cap)) {
     const k = cap / Math.max(ctx.width, ctx.height);
-    const capNote = ` (comp ${ctx.width}×${ctx.height} scaled to this workflow's ${cap} px long side)`;
     const inner = computeAutoFill(fields, { ...ctx, width: Math.round(ctx.width * k), height: Math.round(ctx.height * k), maxLongSide: undefined });
+    // One plain line per field: where the number comes from, in the order it was made.
     for (const id of Object.keys(inner.reasons)) {
       const f = fields.find((x) => x.id === id);
-      if (f && (f.aeRole === 'width' || f.aeRole === 'height')) inner.reasons[id] += capNote;
+      if (!f || (f.aeRole !== 'width' && f.aeRole !== 'height')) continue;
+      const base = f.aeRole === 'width' ? ctx.width : ctx.height;
+      const scaled = Math.round(base * k);
+      const got = Number(inner.values[id]);
+      const mult = f.aeSize?.multiple ?? 32;
+      inner.reasons[id] = `Comp ${f.aeRole} ${base} → ${scaled}, the comp scaled to this model's ${cap} px long side`
+        + (got !== scaled ? `, rounded to ${got} (it wants multiples of ${mult})` : '');
     }
     return inner;
   }

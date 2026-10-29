@@ -80,6 +80,13 @@ export function SettingsDrawer(): JSX.Element | null {
             only the model's rounding (a few pixels) is cropped. 1:1 keeps the clip at its generated size.
           </p>
 
+          <Toggle
+            checked={settings.defaults.upscaleToComp}
+            onChange={(v) => setDefaults({ upscaleToComp: v })}
+            label="Upscale to the comp size when the clip comes out smaller"
+            hint="The tick a shot row shows under its size when its model stops below the comp (MiniMax H3 at 1344 px, LTX-2.5 at 1280). On: SeedVR2 ×2 runs on the result first, a second job on the same resource; the first result stays in the shot folder. Off: the clip is enlarged as it is."
+          />
+
           <Field label="Seed">
             <div className="flex gap-2">
               <select

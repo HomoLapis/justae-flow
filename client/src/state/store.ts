@@ -176,6 +176,8 @@ export interface Settings {
     fitMode: 'none' | 'fit' | 'fill';
     /** Let AE fill canvas size / shot length into the workflow. */
     aeAutoFill: boolean;
+    /** The user's tick: a clip generated well below the comp's size (its model's cap) gets SeedVR2 ×2 before it is placed. */
+    upscaleToComp: boolean;
   };
   /** Bumped when a default changes meaning; hydrateSettings migrates what older pages stored. */
   settingsVersion: number;
@@ -205,6 +207,7 @@ const DEFAULT_SETTINGS: Settings = {
     // 1920×1080 frame.
     fitMode: 'fill' as 'none' | 'fit' | 'fill',
     aeAutoFill: true,
+    upscaleToComp: false,
   },
   pipeline: { tier: 'final', draftLongSide: 1280, outputProfile: 'as-workflow' },
   settingsVersion: 2,

@@ -309,8 +309,11 @@ value used. *Save setup / Load setup* keep a shot list as a file; the history li
 3. Open a row: the prompt and that workflow's inputs. Fields the comp can fill say *from comp*.
 4. **Generate clip** runs the ticked shots in series and places each clip at its slot, in the comp that was open when
    you pressed it. The shot is generated at the comp's aspect ratio, as large as its model allows (H3 stops at 1344
-   px, LTX-2.5 at 1280), and scaled to cover the comp; only the model's rounding, a few pixels, is cropped.
-   *Settings ▸ Scale generated clips* can fit it inside instead, or keep it 1:1.
+   px, LTX-2.5 at 1280), and scaled to cover the comp; only the model's rounding, a few pixels, is cropped. The
+   row says so under the inputs. When that would enlarge the clip by more than 15 %, the row offers a tick,
+   **Upscale to the comp size**: SeedVR2 ×2 runs on the result first, a second job on the same resource (the first
+   result stays in the shot folder). Off unless you tick it; the same switch is in *Settings ▸ On the timeline*,
+   where *Scale generated clips* can also fit the clip inside instead, or keep it 1:1.
 
 The panel's **layer tools** work on the selected clip: Cut out a subject (SAM 3, a luma track matte), Reframe
 (generate the new space, Wan VACE 14B or the 1.3B draft), Auto crop (SAM 3, Position keyframes that follow the

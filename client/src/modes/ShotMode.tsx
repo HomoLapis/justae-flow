@@ -30,6 +30,7 @@ import {
 } from '../workflows/form';
 import { useLibrary } from '../workflows/useLibrary';
 import { DynamicForm } from '../components/DynamicForm';
+import { computeAutoFill } from '../workflows/form';
 import { PromptBox } from '../components/PromptBox';
 import { GenerateButton } from '../components/GenerateButton';
 import { CostEstimateLine } from '../components/CostEstimateLine';
@@ -603,7 +604,61 @@ function WorkflowInputs({
         aeContext={aeContext}
         hidePromptId={hidePromptId}
       />
+      <SizeLine record={record} aeContext={aeContext} />
       {note && <p className="text-[10px] text-ok">{note}</p>}
+    </div>
+  );
+}
+
+/**
+ * Under the inputs, one line: the size the shot is made at and what happens to it on the way into the comp — the
+ * model's cap, the SeedVR2 pass when the comp is well above it, the scaling at placement. The notes under the width
+ * and height fields say where each number came from; this says what the user will get.
+ */
+function SizeLine({ record, aeContext }: {
+  record: NonNullable<ReturnType<typeof useApp.getState>['active']>;
+  aeContext: AeContext;
+}): JSX.Element | null {
+  const values = useApp((s) => s.values[record.id]);
+  const unlocked = useApp((s) => s.unlockedFields);
+  const autoFillOn = useApp((s) => s.settings.defaults.aeAutoFill);
+  const fitMode = useApp((s) => s.settings.defaults.fitMode);
+  const upscale = useApp((s) => s.settings.defaults.upscaleToComp);
+  const setDefaults = useApp((s) => s.setSettingsDefaults);
+  const fields = record.form.fields;
+  const auto = useMemo(() => (autoFillOn ? computeAutoFill(fields, aeContext) : { values: {}, reasons: {} }), [fields, aeContext, autoFillOn]);
+  const size = (role: 'width' | 'height'): number | null => {
+    const f = fields.find((x) => x.aeRole === role);
+    if (!f) return null;
+    const own = f.id in auto.values && !unlocked.includes(`${record.id}::${f.id}`);
+    const v = Number(own ? auto.values[f.id] : values?.[f.id] ?? f.value);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  };
+  const w = size('width');
+  const h = size('height');
+  const cw = aeContext.width;
+  const ch = aeContext.height;
+  if (!w || !h || !cw || !ch || (w === cw && h === ch)) return null;
+  const video = record.inspected.primaryOutputKind !== 'image';
+  const factor = Math.max(cw / w, ch / h);
+  const placed = (f: number): string => (fitMode === 'fill' ? `scaled ${Math.round(f * 100)} % to fill the ${cw}×${ch} comp`
+    : fitMode === 'fit' ? `fitted inside the ${cw}×${ch} comp` : `placed 1:1 in the ${cw}×${ch} comp`);
+  // Well below the comp: the user's tick, the same switch as Settings ▸ Upscale to the comp size.
+  const offer = video && factor > 1.15;
+  const text = offer && upscale
+    ? `Made at ${w}×${h} (this model's size), then SeedVR2 ×2 → ${w * 2}×${h * 2}, ${placed(factor / 2)}.`
+    : offer
+      ? `Made at ${w}×${h} (this model's size), ${placed(factor)}: soft.`
+      : `Made at ${w}×${h}, ${placed(factor)}.`;
+  return (
+    <div className="space-y-1" data-testid="size-line">
+      <p className="text-[10px] leading-snug text-ink-mute">{text}</p>
+      {offer && (
+        <label className="flex items-center gap-1.5 text-[10px] leading-snug text-ink-dim">
+          <input type="checkbox" checked={upscale} onChange={(e) => setDefaults({ upscaleToComp: e.target.checked })} />
+          Upscale to the comp size (SeedVR2 ×2, a second job on the same resource)
+        </label>
+      )}
     </div>
   );
 }

@@ -33,7 +33,7 @@ import type { Segment } from '../state/segments';
 import { buildProvider } from '../providers/registry';
 import type { OutputFile, VideoProvider } from '../providers/types';
 import {
-  applyFormValues, computeAutoFill, promptFieldOf, shotPlan, type AeContext,
+  applyFormValues, computeAutoFill, promptFieldOf, shotPlan, type AeContext, type FormField,
 } from '../workflows/form';
 import { pickPrimaryOutput } from '../workflows/inspector';
 import type { WorkflowRecord } from '../workflows/library';
@@ -49,6 +49,7 @@ import {
 } from '../lib/assets';
 import { ae, isErr, type CompInfo, type FitMode } from '../bridge/extendscript';
 import { serverHeaders } from '../bridge/server';
+import { useReadiness } from '../lib/readiness';
 
 interface UseGenerate {
   generate: () => Promise<void>;
@@ -635,8 +636,19 @@ function runShot(ctx: RunCtx): Promise<void> {
            * SeedVR2 ×2 — on the same resource, as the Comp tab's ×4 feeds its second pass with the first's result.
            * The draft stays in the shot folder beside it.
            */
-          const chain = useApp.getState().chains[record.id];
+          let chain = useApp.getState().chains[record.id];
           let chainNote: string | null = null;
+          // Every tool takes the comp's size. A clip its model stopped well below the comp (H3 at 1344 px in a
+          // 1920×1080 comp) would be enlarged soft: SeedVR2 ×2 runs on it first, unless a Final chain is set
+          // already, the setting is off, or SeedVR2 is not ready where this run went.
+          let autoPass = false;
+          if (!chain && primary.isVideo && s.defaults.upscaleToComp) {
+            const small = belowComp(fields, values, comp);
+            if (small) {
+              if (seedvr2ReadyOn(resource.id)) { chain = { then: 'seedvr2-upscale', scale: 2 }; autoPass = true; }
+              else chainNote = `Placed at ${small.w}×${small.h} in the ${comp.width}×${comp.height} comp, enlarged ${Math.round(small.factor * 100)} %: SeedVR2 is not ready on ${resource.label} (Workflow ▸ Featured ▸ SeedVR2 says what it needs).`;
+            }
+          }
           if (chain && primary.isVideo) {
             try {
               if (chain.then === 'ltx25-refine') {
@@ -652,10 +664,10 @@ function runShot(ctx: RunCtx): Promise<void> {
                   ...wsCtx, meta: { workflowId: chain.then, slotSeconds, scaleWithSlot: true },
                 });
                 primary = { ...primary, path: up.path };
-                chainNote = `Final: ${chain.then} ×${chain.scale} on the draft (job ${up.jobId}); the draft is ${basename(saved.find((x) => x.isVideo)?.path ?? '')}.`;
+                chainNote = `${autoPass ? 'Upscaled to the comp size' : 'Final'}: ${chain.then} ×${chain.scale} on the ${autoPass ? 'result' : 'draft'} (job ${up.jobId}); the ${autoPass ? 'first result' : 'draft'} is ${basename(saved.find((x) => x.isVideo)?.path ?? '')}.`;
               }
             } catch (e) {
-              chainNote = `Final: the second step (${chain.then}) failed — placed the draft. ${describe(e)}`;
+              chainNote = `${autoPass ? 'Upscale to the comp size' : 'Final'}: the second step (${chain.then}) failed — placed the ${autoPass ? 'result as it came' : 'draft'}. ${describe(e)}`;
             }
           }
 
@@ -849,6 +861,36 @@ async function place(
  * "wavelet" correction (measured closest to the original, core/comp/tools.ts KEEP_COLOUR_DEFAULT), 8-bit output
  * (EffectCraft decodes 8-bit H.264 only). Written beside the draft as "<name>_x2.mp4".
  */
+/**
+ * The generated size against the comp's: the width and height the run used (the comp's, scaled to the model's cap
+ * and rounded), and how much the comp would enlarge the clip. Below 15 % the fill is not worth a second job.
+ */
+function belowComp(
+  fields: FormField[], values: Record<string, string | number | boolean>, comp: { width: number; height: number },
+): { w: number; h: number; factor: number } | null {
+  const num = (role: 'width' | 'height'): number | null => {
+    const f = fields.find((x) => x.aeRole === role);
+    if (!f) return null;
+    const v = Number(values[f.id] ?? f.value);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  };
+  const w = num('width');
+  const h = num('height');
+  if (!w || !h || !comp.width || !comp.height) return null;
+  const factor = Math.max(comp.width / w, comp.height / h);
+  return factor > 1.15 ? { w, h, factor } : null;
+}
+
+/** Is the SeedVR2 preset ready on this resource, as far as the readiness probe knows? Unknown counts as ready: the run says otherwise. */
+function seedvr2ReadyOn(resourceId: string): boolean {
+  const e = useReadiness.getState().data?.entries.find((x) => x.id === 'seedvr2-upscale');
+  if (!e) return true;
+  const status = resourceId === 'local' ? e.local.status
+    : e.on?.id === resourceId ? e.status
+      : e.elsewhere.find((x) => x.id === resourceId)?.status ?? 'unknown';
+  return status === 'ready' || status === 'unknown';
+}
+
 async function runChained(
   provider: VideoProvider, chain: { then: string; scale: number }, file: string, dir: string,
   say: (m: string) => void, ctx: { clientId: string; meta: { workflowId: string; slotSeconds: number | null; scaleWithSlot: boolean } },
