@@ -146,7 +146,8 @@ broadcasters, museums and brands. JustAE Flow comes out of the studio's own work
 
 The same idea exists as a real plugin for Adobe After Effects: **JustAE**, at
 [justae.homolapis.ai](https://justae.homolapis.ai/). There is also a more advanced, smarter edition, the one we use
-every day in the studio; it isn't public. If that interests you, [write to us](https://homolapis.ai/contact/).
+every day in the studio; it isn't public, and we have plenty of ideas to take the tool further. If that interests
+you, [write to us](https://homolapis.ai/contact/).
 
 ## Licence
 
