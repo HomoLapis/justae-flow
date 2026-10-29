@@ -6,7 +6,7 @@ is [the guide](GUIDE.md).
 ## What you need
 
 - **Node.js 22.18+** and **ffmpeg** on the PATH.
-- **EffectCraft 0.11.1+** ([github.com/storytold/effectcraft](https://github.com/storytold/effectcraft)).
+- **EffectCraft 0.11.1 or newer** ([github.com/storytold/effectcraft](https://github.com/storytold/effectcraft)); tested with 0.11.1 and 0.18.0.
 - **ComfyUI 0.38+**, reachable over HTTP. The easiest is [ComfyUI Desktop](https://comfy.org/download); a ComfyUI in
   WSL, on another machine or behind a router works too.
 - A GPU with **16 GB** for the LTX-2.5 presets; the Wan VACE 14B reframe wants **48 GB or more**, so it is meant for a
@@ -21,13 +21,34 @@ npm run launch       # the server, EffectCraft with its control channel, the Flo
 ```
 
 On Windows, **JustAE Flow.cmd** does the same with a double-click (`node scripts/launch.ts --shortcut` puts a shortcut
-on the desktop). EffectCraft opens its control channel only when it is started with `--control 9877`, so let the
-launcher start it; an EffectCraft already open without the channel cannot be joined.
+on the desktop). The repository works as a ZIP download too: `npm run setup` skips the git hooks when there is no
+`.git`, and ends with a check of Node.js, ffmpeg and EffectCraft.
 
-**The panel in EffectCraft.** *Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access
-Network*, then *File ▸ Scripts ▸ Install ScriptUI Panel…* → `extensions/effectcraft/JustAE Flow.jsx`, then *Window ▸
-JustAE Flow*. The panel shows whether the server and EffectCraft's channel are up, opens the Flow window and adds
-marker pairs and placeholders.
+**The control channel.** EffectCraft listens for JustAE Flow only when it is started with `--control 9877`, or with
+the variable `EFFECTCRAFT_CONTROL_PORT=9877` (both from EffectCraft's own docs; 127.0.0.1 only, no password). The
+launcher starts it that way. On Windows the launcher also sets that variable for your user the first time it runs,
+so EffectCraft opens the channel even when you start it from the Start menu or the taskbar; `npm run launch -- --no-env`
+skips that, and this PowerShell line removes it again:
+
+```powershell
+[Environment]::SetEnvironmentVariable('EFFECTCRAFT_CONTROL_PORT', $null, 'User')
+```
+
+An EffectCraft already open without the channel cannot be joined: save, close it and start it again. When EffectCraft
+is not reachable, the Flow window says so at the top, with a **Start EffectCraft** button, and the launcher's console
+stays open with the reason.
+
+**Where EffectCraft is.** The launcher looks where the installer puts it (`%LOCALAPPDATA%\Programs\ArtCraft\EffectCraft`,
+`Program Files\ArtCraft\EffectCraft`, the older `Program Files\EffectCraft`, and the registry's App Paths), in
+`/Applications` on macOS, and on the PATH. A portable build: set `EFFECTCRAFT_EXE` to its `effectcraft.exe`.
+
+**Let scripts write files.** In EffectCraft, turn on *Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write
+Files and Access Network*. The Comp tab's renders and the panel below need it; without it EffectCraft answers
+"scripts can't write files" and the run stops there.
+
+**The panel in EffectCraft.** *File ▸ Scripts ▸ Install ScriptUI Panel…* → `extensions/effectcraft/JustAE Flow.jsx`,
+then *Window ▸ JustAE Flow*. The panel shows whether the server and EffectCraft's channel are up, opens the Flow window
+and adds marker pairs and placeholders.
 
 Settings are kept in your user folder (`%APPDATA%\JustAE Flow` on Windows, `~/Library/Application Support/JustAE Flow`
 on macOS, `~/.config/JustAE Flow` on Linux), never in the project or the repository.

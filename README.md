@@ -111,7 +111,7 @@ Flow window (docked) ────────────┘        │
 
 ## Get started
 
-You need Node.js 22.18+, EffectCraft 0.11.1+, ComfyUI 0.38+ and ffmpeg.
+You need Node.js 22.18+, EffectCraft 0.11.1 or newer, ComfyUI 0.38+ and ffmpeg.
 
 ```bash
 git clone https://github.com/HomoLapis/justae-flow.git && cd justae-flow
@@ -119,9 +119,12 @@ npm run setup        # install and build the window
 npm run launch       # the server, EffectCraft, and the Flow window docked beside it
 ```
 
-On Windows, double-click **JustAE Flow.cmd** instead. The first time, the Workflow tab opens on **Get started**: it
-finds your ComfyUI, says which presets are ready, offers the missing models for download and makes a test image in
-your comp.
+On Windows, double-click **JustAE Flow.cmd** instead. If EffectCraft is already open, save and close it first: the
+launcher starts it with its control channel, which an EffectCraft opened from its own icon does not have. On Windows
+the launcher also sets that up for your user, so after the first run the Start menu works too.
+
+The first time, the Workflow tab opens on **Get started**: it finds your ComfyUI, says which presets are ready, offers
+the missing models for download and makes a test image in your comp.
 
 The models, the Hugging Face terms for the LTX files, running without a GPU on the Comfy Developer Platform: read
 **[Setup](docs/SETUP.md)**. Every tab and tool, with what was measured: **[the guide](docs/GUIDE.md)**.

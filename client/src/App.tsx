@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { takeLegacySettings, useApp, type Tab } from './state/store';
 import { billingConfigured, migrateLegacySettings, useResources } from './lib/resources';
 import { ProviderPill, ProviderBanner } from './components/ProviderPill';
+import { HostBanner } from './components/HostBanner';
 import { WorkflowTab } from './components/WorkflowTab';
 import { ShotMode } from './modes/ShotMode';
 import { CompMode } from './modes/CompMode';
@@ -134,6 +135,7 @@ export function App(): JSX.Element {
       </nav>
 
       <ProviderBanner />
+      <HostBanner />
 
       <main className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'workflow' && <WorkflowTab />}

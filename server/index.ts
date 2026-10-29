@@ -14,7 +14,8 @@ import { PRODUCT } from '../core/brand.ts';
 import { configDir, loadSettings, type Settings } from './config.ts';
 import { comfyFor, Engine, makeHost } from './engine.ts';
 import { WorkflowLibrary } from './library.ts';
-import { allowedOrigin, handleBridge, HostBridge, withToken } from './bridge.ts';
+import { allowedOrigin, handleBridge, HostBridge, tokenOk, withToken } from './bridge.ts';
+import { diagnoseEffectCraft, effectcraftRunning, portListening, startEffectCraft } from '../hosts/effectcraft/locate.ts';
 import { openFlowWindow } from './dock.ts';
 import { makeServices } from './services.ts';
 import { taskOf } from './resources.ts';
@@ -237,6 +238,17 @@ const routes: Array<[string, RegExp, Handler]> = [
     send(res, 200, await opening);
   }],
   ['GET', /^\/api\/ui\/intent$/, (_q, res) => send(res, 200, uiIntent ?? { tab: null, at: 0 })],
+  // The Flow window's banner when EffectCraft cannot be reached: why, and a way to start it with its channel.
+  ['GET', /^\/api\/effectcraft\/diagnose$/, async (_q, res) => send(res, 200, await diagnoseEffectCraft(engine.settings.effectcraftPort))],
+  ['POST', /^\/api\/effectcraft\/start$/, async (req, res, _m, url) => {
+    if (!tokenOk(req, url)) return send(res, 403, { error: 'Not from this app.' });
+    const port = engine.settings.effectcraftPort;
+    if (await portListening(port)) return send(res, 200, { ok: true, how: 'connected' });
+    if (effectcraftRunning()) return send(res, 200, { ok: false, error: 'EffectCraft is open without its control channel: save, close it, then press Start again.' });
+    const exe = startEffectCraft(port);
+    if (!exe) return send(res, 200, { ok: false, error: 'EffectCraft not found: install it, or set EFFECTCRAFT_EXE and start the server again.' });
+    send(res, 200, { ok: true, how: 'starting', exe });
+  }],
   ['GET', /^\/api\/media\/(.+)$/, (req, res, m) => serveFile(res, engine.mediaDir, decodeURIComponent(m[1]), req)],
   ...resourceRoutes(services, engine),
   ...compRoutes(engine),

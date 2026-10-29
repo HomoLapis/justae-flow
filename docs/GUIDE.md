@@ -52,9 +52,12 @@ npm run launch       # the server, EffectCraft with its control channel, and the
 ```
 
 On Windows, double-click **JustAE Flow.cmd** instead (`node scripts/launch.ts --shortcut` puts a shortcut to it on
-the desktop). EffectCraft opens its control channel only when started with `--control 9877`, so the launcher starts
-it that way; an EffectCraft already open without it cannot be joined — the launcher says so and leaves it alone
-(save, close it, launch again). `npm start` runs the server alone on http://127.0.0.1:5199.
+the desktop). EffectCraft opens its control channel only when started with `--control 9877` or with
+`EFFECTCRAFT_CONTROL_PORT=9877`, so the launcher starts it that way and, on Windows, sets that variable for the user
+once, so the Start menu opens it with the channel too; an EffectCraft already open without it cannot be joined — the
+launcher and the Flow window's banner say so and leave it alone (save, close it, launch again). The launcher finds
+EffectCraft in the installer's folders, the registry's App Paths, `/Applications` or the PATH; `EFFECTCRAFT_EXE` names
+a portable build. `npm start` runs the server alone on http://127.0.0.1:5199.
 
 **The panel.** In EffectCraft: *Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access
 Network*; then *File ▸ Scripts ▸ Install ScriptUI Panel…* → `extensions/effectcraft/JustAE Flow.jsx`; then

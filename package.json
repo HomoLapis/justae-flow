@@ -22,7 +22,7 @@
     "launch": "node scripts/launch.ts",
     "dev": "vite",
     "build": "vite build && vite build --config vite.storyboard.config.ts",
-    "setup": "npm install && npm run build && git config core.hooksPath .githooks",
+    "setup": "npm install && npm run build && node scripts/setup.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p client/tsconfig.json",
     "selftest": "node scripts/selftest.ts",
     "verify:workflows": "node scripts/verify-workflows.ts",

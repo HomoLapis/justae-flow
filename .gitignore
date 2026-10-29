@@ -7,3 +7,4 @@ client/dist/
 *.shiftfield/
 scripts/*.tmp.ts
 .tmp/
+client-storyboard/dist/

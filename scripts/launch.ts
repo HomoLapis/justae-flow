@@ -3,20 +3,23 @@
  * the Flow window docked beside it.
  *
  *   npm run launch                 (Windows: double-click "JustAE Flow.cmd")
+ *   npm run launch -- --no-env     do not set EFFECTCRAFT_CONTROL_PORT for the Windows user
  *   node scripts/launch.ts --shortcut   put a "JustAE Flow" shortcut on the desktop (Windows)
  *
  * EffectCraft opens its control channel only when it is started with
- * `--control <port>` (or EFFECTCRAFT_CONTROL_PORT), so an EffectCraft that is
+ * `--control <port>` or with EFFECTCRAFT_CONTROL_PORT set, so an EffectCraft
  * already open without it cannot be joined: the launcher says so and leaves it
- * alone — closing it is the user's call, it may hold unsaved work.
+ * alone — closing it is the user's call, it may hold unsaved work. On Windows
+ * the launcher sets that variable for the user once, so from then on the Start
+ * menu and the taskbar open EffectCraft with the channel as well.
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, openSync } from 'node:fs';
-import { connect } from 'node:net';
+import { mkdirSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRODUCT } from '../core/brand.ts';
+import { effectcraftRunning, portListening, setUserControlPort, startEffectCraft, userControlPort } from '../hosts/effectcraft/locate.ts';
 import { configDir, loadSettings } from '../server/config.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,50 +27,13 @@ const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT 
 const EC_PORT = loadSettings(root).effectcraftPort;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-function listening(port: number): Promise<boolean> {
-  return new Promise((done) => {
-    const s = connect({ host: '127.0.0.1', port });
-    const end = (ok: boolean): void => { s.destroy(); done(ok); };
-    s.setTimeout(1000, () => end(false));
-    s.on('connect', () => end(true));
-    s.on('error', () => end(false));
-  });
-}
-
 async function waitFor(port: number, ms: number): Promise<boolean> {
   const until = Date.now() + ms;
   while (Date.now() < until) {
-    if (await listening(port)) return true;
+    if (await portListening(port)) return true;
     await sleep(500);
   }
   return false;
-}
-
-function effectcraftRunning(): boolean {
-  try {
-    if (process.platform === 'win32') {
-      return /effectcraft\.exe/i.test(execFileSync('tasklist', ['/FI', 'IMAGENAME eq effectcraft.exe', '/NH'], { encoding: 'utf8' }));
-    }
-    execFileSync('pgrep', ['-x', 'effectcraft'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** EFFECTCRAFT_EXE, the Windows installer's folder, or `effectcraft` on the PATH. */
-function effectcraftExe(): string | null {
-  const candidates = [
-    process.env.EFFECTCRAFT_EXE,
-    process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'EffectCraft', 'effectcraft.exe') : undefined,
-  ];
-  for (const c of candidates) if (c && existsSync(c)) return c;
-  try {
-    const found = execFileSync(process.platform === 'win32' ? 'where' : 'which', ['effectcraft'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
-    return found || null;
-  } catch {
-    return null;
-  }
 }
 
 function desktopShortcut(): void {
@@ -90,11 +56,25 @@ function desktopShortcut(): void {
   console.log(`Shortcut: ${where}`);
 }
 
+/** Windows: EffectCraft started from the Start menu or the taskbar has no channel unless the user variable asks for one. */
+function userVariable(): void {
+  if (process.platform !== 'win32' || process.argv.includes('--no-env')) return;
+  const have = userControlPort();
+  if (have === null) {
+    if (setUserControlPort(EC_PORT)) {
+      console.log(`EffectCraft: EFFECTCRAFT_CONTROL_PORT=${EC_PORT} is now set for your Windows user, so EffectCraft opens its control`);
+      console.log('  channel (127.0.0.1 only) however you start it. "npm run launch -- --no-env" skips this; docs/SETUP.md says how to remove it.');
+    }
+  } else if (have !== String(EC_PORT)) {
+    console.log(`Note: your Windows user has EFFECTCRAFT_CONTROL_PORT=${have} while this launcher uses ${EC_PORT}; open a new terminal so they agree.`);
+  }
+}
+
 async function main(): Promise<number> {
   if (process.argv.includes('--shortcut')) { desktopShortcut(); return 0; }
 
   // 1. The server.
-  if (await listening(PORT)) {
+  if (await portListening(PORT)) {
     console.log(`${PRODUCT} server: already running on 127.0.0.1:${PORT}`);
   } else {
     mkdirSync(configDir(), { recursive: true });
@@ -110,26 +90,26 @@ async function main(): Promise<number> {
 
   // 2. EffectCraft, with its control channel. A warning makes the exit code 2, so JustAE Flow.cmd stays open to be read.
   let warned = false;
-  if (await listening(EC_PORT)) {
+  userVariable();
+  if (await portListening(EC_PORT)) {
     console.log(`EffectCraft: connected on 127.0.0.1:${EC_PORT}`);
   } else if (effectcraftRunning()) {
     console.log(`EffectCraft is open without its control channel, so ${PRODUCT} cannot reach it.`);
-    console.log(`Save your work, close EffectCraft, and run ${PRODUCT} again: it will start EffectCraft with --control ${EC_PORT}.`);
+    console.log(`Save your work, close EffectCraft and start it again${process.platform === 'win32' ? ' (this launcher, or the Start menu now that the variable is set)' : ` with this launcher (effectcraft --control ${EC_PORT})`}.`);
     warned = true;
   } else {
-    const exe = effectcraftExe();
+    const exe = startEffectCraft(EC_PORT);
     if (!exe) {
-      console.log(`EffectCraft not found. Install it, or set EFFECTCRAFT_EXE to effectcraft${process.platform === 'win32' ? '.exe' : ''}.`);
+      console.log(`EffectCraft not found. Install it from https://github.com/storytold/effectcraft/releases, or set EFFECTCRAFT_EXE to its effectcraft${process.platform === 'win32' ? '.exe' : ''}.`);
       warned = true;
     } else {
-      spawn(exe, ['--control', String(EC_PORT)], { detached: true, stdio: 'ignore' }).unref();
-      console.log(`EffectCraft: starting with --control ${EC_PORT}…`);
+      console.log(`EffectCraft: starting ${exe} with --control ${EC_PORT}…`);
       if (await waitFor(EC_PORT, 90_000)) console.log(`EffectCraft: connected on 127.0.0.1:${EC_PORT}`);
       else { console.log('EffectCraft did not open its control channel in 90 s.'); warned = true; }
     }
   }
 
-  // 3. The Flow window, docked at EffectCraft's right edge.
+  // 3. The Flow window, docked at EffectCraft's right edge. Opened even after a warning: its banner says what is missing.
   const r = await fetch(`http://127.0.0.1:${PORT}/api/window/open`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   const w = await r.json() as { how?: string; docked?: string };
   console.log(`Flow window: ${w.how ?? 'opened'}${w.docked ? ` (${w.docked === 'side' ? 'docked beside EffectCraft' : w.docked === 'over' ? 'over EffectCraft\'s right edge' : w.docked})` : ''}`);

@@ -2,7 +2,7 @@
  * EffectCraft through its control channel (`effectcraft --control 9877`).
  *
  * Every engine command used here was checked against the installed app with
- * `effectcraft-cli commands --json` and on a live session (EffectCraft 0.11.1):
+ * `effectcraft-cli commands --json` and on live sessions (EffectCraft 0.11.1 and 0.18.0):
  *
  *   project.summary · comp.info · markers.list · markers.set (label, comment,
  *   cuePoint) · comp.addMarker · file.import · layer.addItem · layer.timing ·
