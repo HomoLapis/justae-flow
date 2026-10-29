@@ -217,6 +217,7 @@ export class Engine {
   private listeners = new Set<() => void>();
   private syncing: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastSaveError: string | undefined;
   private notice: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly clientId = crypto.randomUUID();
@@ -474,10 +475,19 @@ export class Engine {
   private flushSave(): void {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     if (!this.sidecarPath) return;
-    mkdirSync(dirname(this.sidecarPath), { recursive: true });
-    const tmp = this.sidecarPath + '.tmp';
-    writeFileSync(tmp, JSON.stringify(this.sidecar, null, 2));
-    renameSync(tmp, this.sidecarPath);
+    // A save runs from a timer: a folder removed under it (the project moved, a test folder cleaned up) must not
+    // take the server down. It is said once; the next change tries again.
+    try {
+      mkdirSync(dirname(this.sidecarPath), { recursive: true });
+      const tmp = this.sidecarPath + '.tmp';
+      writeFileSync(tmp, JSON.stringify(this.sidecar, null, 2));
+      renameSync(tmp, this.sidecarPath);
+    } catch (e) {
+      const msg = `Could not save the storyboard to ${this.sidecarPath}: ${e instanceof Error ? e.message : String(e)}`;
+      if (msg !== this.lastSaveError) { this.lastSaveError = msg; console.error(msg); }
+      return;
+    }
+    this.lastSaveError = undefined;
   }
 
   /* ─── Sync with the host ──────────────────────────────────────────── */
