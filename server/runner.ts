@@ -6,6 +6,8 @@
  *   V2Runner     Comfy API v2 through the SDK (server/v2run.ts): Comfy Cloud, a deployment, the proxy
  */
 
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { ComfyClient } from '../core/comfy/client.ts';
 import type { OutputFile, ProviderEvent, WorkflowJson } from '../core/comfy/types.ts';
 import type { Resource } from './resources.ts';
@@ -49,7 +51,15 @@ export class LocalRunner implements Runner {
     return this.comfy.upload(bytes, filename, mime);
   }
 
-  uploadFile(_path: string, bytes: () => Uint8Array, filename: string, mime: string): Promise<unknown> {
+  /**
+   * A video over ComfyUI's upload limit goes up as a visually lossless H.264 copy (the source stays as it is): a
+   * work-area render of a 2560×1408 comp is ProRes 422 HQ and passes the limit in about 3 s.
+   */
+  async uploadFile(path: string, bytes: () => Uint8Array, filename: string, mime: string): Promise<unknown> {
+    if (needsCompactUpload(mime, sizeOf(path))) {
+      const small = await compactVideo(path);
+      if (small) return this.comfy.upload(readFileSync(small), filename.replace(/\.[a-z0-9]+$/i, '') + '.mp4', 'video/mp4');
+    }
     return this.comfy.upload(bytes(), filename, mime);
   }
 
@@ -152,4 +162,30 @@ export class V2Runner implements Runner {
     const v = this.last.get(jobId) ?? await this.jobs.status(this.resource.id, jobId);
     return { executionMs: v.executionMs, derivedCredits: v.derivedCredits, costBasis: v.costBasis };
   }
+}
+
+/**
+ * ComfyUI's default upload limit is 100 MB (its --max-upload-size); measured on 29 Oct, a 3 s work area of a 2560×1408
+ * comp rendered as ProRes 422 HQ came back "HTTP 413 — Maximum request body size 104857600 exceeded". Below this, with
+ * room for the form around the file, a video goes up as it is.
+ */
+export const LOCAL_UPLOAD_LIMIT = 95 * 1024 * 1024;
+
+export function needsCompactUpload(mime: string, size: number | null): boolean {
+  return /^video\//.test(mime) && size !== null && size > LOCAL_UPLOAD_LIMIT;
+}
+
+function sizeOf(path: string): number | null {
+  try { return statSync(path).size; } catch { return null; }
+}
+
+/** `<source>_for-comfyui.mp4` beside the source: H.264 CRF 12, the sound kept. Null when ffmpeg is not there or fails. */
+function compactVideo(src: string): Promise<string | null> {
+  const out = src.replace(/\.[a-z0-9]+$/i, '') + '_for-comfyui.mp4';
+  return new Promise((done) => {
+    const p = spawn('ffmpeg', ['-v', 'error', '-y', '-i', src, '-c:v', 'libx264', '-preset', 'medium', '-crf', '12', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '192k', out], { windowsHide: true });
+    p.on('error', () => done(null));
+    p.on('close', (code) => done(code === 0 && existsSync(out) ? out : null));
+  });
 }

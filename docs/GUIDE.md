@@ -590,7 +590,9 @@ npm run dev                      # UI dev server on :5198 (proxying the API on :
   softer than the clip in the middle. On a 16 GB GPU the 1.3B draft takes about 6 minutes for 125 frames at 480p, and
   the 14B *Final* minutes per sampling step; one card makes at most four runs (about 20 s at 24 fps).
 - The Comp tab renders a work area or comp as ProRes 422 HQ (about 76 Mb/s at 1280×704); Comfy Cloud takes uploads
-  up to 100 MiB, so a longer render is refused before it is sent there.
+  up to 100 MiB, so a longer render is refused before it is sent there. Your ComfyUI has the same limit by default
+  (its `--max-upload-size`, 100 MB: a 3 s work area of a 2560×1408 comp came back HTTP 413 on 29 Oct), so a video
+  over 95 MiB goes to it as a visually lossless H.264 copy (CRF 12, `<render>_for-comfyui.mp4` beside the render).
 - EffectCraft renders and places only in the active comp: a queued run opens its comp for the time it renders and
   places, then gives the front back (see *Results*).
 - Extend carries on the motion of the last 17 frames; motion that started earlier than 0.7 s before the out point is

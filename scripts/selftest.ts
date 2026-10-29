@@ -25,6 +25,7 @@ import type { CardStatus } from '../core/storyboard/types.ts';
 import type { Box, CanvasHost, CanvasPlaceRequest, CompRequest, HostMarker, HostSnapshot, ItemInfo, OutpaintRequest, PlaceRequest, ReframeRequest, RenderRequest, RenderResult, TimelineHost } from '../hosts/types.ts';
 import { chainGraph, DELIVERY, joinGraph, planOutpaint, REFRAME_ASPECTS, SEAM_GUARD, vaceGenSize } from '../core/reframe/outpaint.ts';
 import { channelStats, fitColour, lutrgbFilter, matchRegions } from '../core/reframe/colour.ts';
+import { LOCAL_UPLOAD_LIMIT, needsCompactUpload } from '../server/runner.ts';
 import { COMP_TOOLS, extendGuide, KEEP_COLOUR_DEFAULT, ltxExtendFrames, ltxGuidedFrames, toolById } from '../core/comp/tools.ts';
 import { compRoutes } from '../server/api-comp.ts';
 import { FEATURED, featuredRoutes, featuredView } from '../server/api-featured.ts';
@@ -651,6 +652,10 @@ console.log('comp tab');
     check('colour match: compared where the model was shown the clip, less its soft pad',
       JSON.stringify(reg) === JSON.stringify({ generated: { x: 0, y: 500, width: 720, height: 280 }, clip: { x: 0, y: 58, width: 720, height: 280 } }));
     check('colour match: a geometry that does not add up compares nothing', matchRegions([720, 1280], [720, 396], [0, 34, 0, 34], [0, 470, 0, 476]) === null);
+    // 29 Oct: a 104.9 MB ProRes work-area render came back HTTP 413 from the local ComfyUI (its 100 MB default limit).
+    check('local upload: a video over the limit goes up as a compact copy, an image or a small video as it is',
+      needsCompactUpload('video/quicktime', 104_873_984 - 16_384) && !needsCompactUpload('video/mp4', 4_560_850)
+      && !needsCompactUpload('image/png', 200 * 1024 * 1024) && !needsCompactUpload('video/mp4', null) && LOCAL_UPLOAD_LIMIT < 100 * 1024 * 1024);
   }
 
   // Plans, before anything runs.
