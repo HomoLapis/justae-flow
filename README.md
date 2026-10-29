@@ -40,8 +40,9 @@ ComfyUI, or imports a file; each graph is read as a form, and the comp fills in 
 **Edit in ComfyUI** opens the same workflow in the ComfyUI editor: move around it, change its nodes, models and
 settings, save with Ctrl+S, press Refresh, and the panel follows. JustAE Flow is model-agnostic: it reads a workflow's
 inputs — prompts, images, size, length — not its model, so whatever model your ComfyUI runs, the Flow can use on your
-comp. The **Featured** presets are a place to start: they say what is ready on your machine and download only the
-models you pick.
+comp. Nothing is fixed to one model: every shot, each storyboard row and each marker pair, picks its own workflow. The
+**Featured** presets are a place to start: they say what is ready on your machine and download only the models you
+pick. The Comp tab's tools are presets too, and you can change them.
 
 JustAE Flow works only with ComfyUI — yours, or Comfy's in the cloud.
 
@@ -49,10 +50,10 @@ JustAE Flow works only with ComfyUI — yours, or Comfy's in the cloud.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/media/storyboard.jpg" alt="Four placeholder layers on the timeline, each filled with a generated shot"></td>
-<td><b>A storyboard from the timeline.</b> Block the cut with placeholder layers, say what happens in each, press
-Generate. LTX-2.5 makes every shot with its sound, one after the other, and drops each one in its slot, sized and
-timed by it.</td>
+<td width="50%"><img src="docs/media/storyboard.jpg" alt="The Storyboard tab: one row per placeholder layer, each with its own workflow"></td>
+<td><b>A storyboard from the timeline.</b> Block the cut with placeholder layers: each becomes a row with its own
+workflow. Say what happens in each, press Generate: every shot is made with its sound (LTX-2.5 here), one after the
+other, and dropped in its slot, sized and timed by it.</td>
 </tr>
 <tr>
 <td><img src="docs/media/transition.jpg" alt="Two clips with a marker pair around the gap, the shot between them generated"></td>
