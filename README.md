@@ -8,9 +8,9 @@
 <h1 align="center">JustAE Flow</h1>
 
 <p align="center">
-  <b>ComfyUI inside an open-source After Effects.</b><br>
-  Generate shots from your timeline, reframe with generated pixels, upscale, cut out, extend and restore whole comps
-  in EffectCraft — with open models, on your own GPU or on Comfy's.
+  <b>ComfyUI inside the open-source EffectCraft.</b><br>
+  Generate shots from your timeline, fill the cut between two clips, reframe with generated pixels, upscale, cut out,
+  extend and restore whole comps — with open models, on your own GPU or on Comfy's.
 </p>
 
 <p align="center">
@@ -39,13 +39,19 @@ Generate. LTX-2.5 makes every shot with its sound, one after the other, and drop
 timed by it.</td>
 </tr>
 <tr>
-<td><img src="docs/media/reframe.jpg" alt="A 16:9 shot reframed to 9:16, the new sky and sea generated"></td>
-<td><b>Reframe that generates.</b> 16:9 to 9:16, 4:5, 1:1, 21:9 or 4:3: Wan 2.1 VACE paints the space the new format
-needs instead of cropping your shot, which stays untouched in the middle. A social pack makes several formats in one
-queue.</td>
+<td><img src="docs/media/transition.jpg" alt="Two clips with a marker pair around the gap, the shot between them generated"></td>
+<td><b>The shot between two clips.</b> Put a pair of comp markers around a cut, take the last frame of one clip and the
+first of the next from the comp: MiniMax H3 generates the shot that joins them, with its sound, exactly as long as the
+gap — then SeedVR2 ×2 or LTX Refine on top if you like.</td>
 </tr>
 <tr>
-<td><img src="docs/media/finishing.jpg" alt="The same clip by day and at night, side by side"></td>
+<td><img src="docs/media/reframe.jpg" alt="A 16:9 shot reframed to 9:16, the new sky and sea generated"></td>
+<td><b>Reframe that generates.</b> 16:9 to 9:16, 4:5, 1:1, 21:9 or 4:3: Wan 2.1 VACE paints the space the new format
+needs instead of cropping your shot, which stays untouched in the middle, the new space matched to its colours. A
+social pack makes several formats in one queue.</td>
+</tr>
+<tr>
+<td><img src="docs/media/finishing.jpg" alt="A harbour by day and at night, split by a wipe"></td>
 <td><b>LTX finishing.</b> Lightricks' IC-LoRAs as VFX tools on the comp: Day → Night, Colorize, Archive restore,
 Deblur, Clean plate, SDR → HDR, and LTX Refine up to 4K by tiles, with 16-bit masters.</td>
 </tr>
@@ -61,9 +67,10 @@ local vision model can write the prompt from your frames. RIFE or FILM add the f
 </tr>
 </table>
 
-Behind the cards, any ComfyUI workflow of yours also runs from the Workflow tab, read as a form the comp fills in
-(size, length, frame rate). The curated **Featured** set says what is ready on your machine and downloads only the
-models you pick.
+JustAE Flow works only with ComfyUI — yours, or Comfy's in the cloud. The curated **Featured** presets are there to
+start, and they say what is ready on your machine and download only the models you pick; but any ComfyUI workflow,
+with any model you use in Comfy, runs from the Workflow tab too, read as a form the comp fills in (size, length, frame
+rate).
 
 ## Your GPU, or Comfy's
 
