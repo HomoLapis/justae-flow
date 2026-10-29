@@ -13,10 +13,9 @@
   reframe without cropping, upscale, cut out, extend and restore — on your own GPU or on Comfy's.
 </p>
 
-<p align="center">
-  <a href="docs/media/justae-flow-demo.mp4"><img src="docs/media/hero.jpg" alt="JustAE Flow docked beside EffectCraft's timeline" width="920"></a><br>
-  <sub>▶ <a href="docs/media/justae-flow-demo.mp4">Watch the two-minute demo</a></sub>
-</p>
+https://github.com/user-attachments/assets/ce75db72-97ce-42d5-8f43-b38c6abea809
+
+<p align="center"><sub>▶ The two-minute demo · <a href="docs/media/justae-flow-demo.mp4">full quality (1080p, 41 MB)</a></sub></p>
 
 <p align="center">
   <a href="docs/SETUP.md">Setup</a> · <a href="docs/GUIDE.md">Guide</a> · <a href="https://justae.homolapis.ai/">JustAE for After Effects</a> · <a href="https://homolapis.ai/">Homo Lapis</a>
