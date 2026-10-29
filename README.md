@@ -9,8 +9,8 @@
 
 <p align="center">
   <b>ComfyUI inside the open-source EffectCraft.</b><br>
-  Generate shots from your timeline, fill the cut between two clips, reframe with generated pixels, upscale, cut out,
-  extend and restore whole comps — with open models, on your own GPU or on Comfy's.
+  Your ComfyUI workflows, with any model, run against your timeline: generate shots, fill the cut between two clips,
+  reframe with generated pixels, upscale, cut out, extend and restore whole comps — on your own GPU or on Comfy's.
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
   <sub>▶ <a href="docs/media/justae-flow-demo.mp4">Watch the two-minute demo</a></sub>
 </p>
 
-<p align="center">GPL-3.0 · open weights only · no closed APIs · no telemetry · no account</p>
+<p align="center">GPL-3.0 · any ComfyUI workflow, any model · open-weight presets · no telemetry · no account</p>
 
 ---
 
@@ -28,6 +28,22 @@ workflows against your comp. Placeholder layers and markers become a storyboard 
 turns the whole comp into something new: another format, a sharper master, a cut-out with alpha, a longer shot. Every
 result lands in the project as a new comp or layer, never over your work, with its versions and the exact graph that
 made it.
+
+## Your ComfyUI, your workflows
+
+<p align="center">
+  <img src="docs/media/workflow.jpg" alt="A ComfyUI workflow open in the ComfyUI editor, its nodes being moved" width="920">
+</p>
+
+It is your usual ComfyUI, with your own workflows and your models. The Workflow tab lists the workflows saved in your
+ComfyUI, or imports a file; each graph is read as a form, and the comp fills in its size, length and frame rate.
+**Edit in ComfyUI** opens the same workflow in the ComfyUI editor: move around it, change its nodes, models and
+settings, save with Ctrl+S, press Refresh, and the panel follows. JustAE Flow is model-agnostic: it reads a workflow's
+inputs — prompts, images, size, length — not its model, so whatever model your ComfyUI runs, the Flow can use on your
+comp. The **Featured** presets are a place to start: they say what is ready on your machine and download only the
+models you pick.
+
+JustAE Flow works only with ComfyUI — yours, or Comfy's in the cloud.
 
 ## What it does
 
@@ -42,7 +58,7 @@ timed by it.</td>
 <td><img src="docs/media/transition.jpg" alt="Two clips with a marker pair around the gap, the shot between them generated"></td>
 <td><b>The shot between two clips.</b> Put a pair of comp markers around a cut, take the last frame of one clip and the
 first of the next from the comp: MiniMax H3 generates the shot that joins them, with its sound, exactly as long as the
-gap — then SeedVR2 ×2 or LTX Refine on top if you like.</td>
+gap — then SeedVR2 ×2 or LTX Refine on top if you like. Wan 2.2, or any video workflow of yours, can fill it too.</td>
 </tr>
 <tr>
 <td><img src="docs/media/reframe.jpg" alt="A 16:9 shot reframed to 9:16, the new sky and sea generated"></td>
@@ -51,9 +67,10 @@ needs instead of cropping your shot, which stays untouched in the middle, the ne
 social pack makes several formats in one queue.</td>
 </tr>
 <tr>
-<td><img src="docs/media/finishing.jpg" alt="A harbour by day and at night, split by a wipe"></td>
-<td><b>LTX finishing.</b> Lightricks' IC-LoRAs as VFX tools on the comp: Day → Night, Colorize, Archive restore,
-Deblur, Clean plate, SDR → HDR, and LTX Refine up to 4K by tiles, with 16-bit masters.</td>
+<td><img src="docs/media/finishing.jpg" alt="The same detail of a shot before and after SeedVR2 ×2, split by a wipe"></td>
+<td><b>Upscale and finishing.</b> SeedVR2 ×2 or ×4 adds real detail and keeps the colours; LTX Refine rebuilds detail
+to Full HD, 4K or 8K by tiles. Lightricks' IC-LoRAs work as VFX tools on the comp: Archive restore, Deblur,
+De-compression, Colorize, Clean plate, Day → Night, SDR → HDR, with 16-bit masters.</td>
 </tr>
 <tr>
 <td><img src="docs/media/cutout.jpg" alt="A subject cut out of a shot with its alpha matte"></td>
@@ -66,11 +83,6 @@ edges. The matte goes on the layer as a track matte; one click writes a ProRes 4
 local vision model can write the prompt from your frames. RIFE or FILM add the frames in between for slow motion.</td>
 </tr>
 </table>
-
-JustAE Flow works only with ComfyUI — yours, or Comfy's in the cloud. The curated **Featured** presets are there to
-start, and they say what is ready on your machine and download only the models you pick; but any ComfyUI workflow,
-with any model you use in Comfy, runs from the Workflow tab too, read as a form the comp fills in (size, length, frame
-rate).
 
 ## Your GPU, or Comfy's
 
@@ -100,7 +112,7 @@ Everything else, from the model list to the cloud setup and every tool, is in **
 |---|---|
 | Host | [EffectCraft](https://github.com/storytold/effectcraft) (MIT OR Apache-2.0); [PhotoCraft](https://github.com/storytold/photocraft) for stills |
 | Engine | [ComfyUI](https://github.com/comfyanonymous/ComfyUI) (GPL-3.0) and its official workflow templates (MIT) |
-| Models | open weights only: LTX-2.5, Wan 2.1 VACE, SeedVR2, SAM 3, Z-Image-Turbo, Qwen-Image-Edit, Qwen3-VL, RIFE, FILM |
+| Models | any model your ComfyUI runs; the presets use open weights only: LTX-2.5, MiniMax H3, Wan 2.2, Wan 2.1 VACE, SeedVR2, SAM 3, Z-Image-Turbo, Qwen-Image-Edit, Qwen3-VL, RIFE, FILM |
 | This plugin | GPL-3.0: the server, the Flow window, the EffectCraft panel |
 
 Model weights are not included. Each model keeps its own licence, listed in [NOTICE](NOTICE); read them before using
