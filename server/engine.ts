@@ -2806,7 +2806,7 @@ export class Engine {
       setRef(api, o.crop.width, plan.scaled[0] - il - ir);
       setRef(api, o.crop.height, plan.scaled[1] - it - ib);
     }
-    const pad = o.crop ? plan.pad : plan.pad.map((v, i) => v - plan.inset[i]);
+    const pad = (o.crop ? plan.pad : plan.pad.map((v, i) => v - plan.inset[i])) as [number, number, number, number];
     o.pad.forEach((ref, i) => setRef(api, ref, pad[i]));
 
     this.phase(card, 'Uploading');
@@ -2849,7 +2849,8 @@ export class Engine {
     renameSync(abs, asGenerated);
     let colour: ColourFit | null = null;
     try {
-      colour = await matchReframeColour(asGenerated, sourcePath, { gen: plan.gen, scaled: plan.scaled, inset: [il, it, ir, ib], pad }, abs);
+      const inset: [number, number, number, number] = [il, it, ir, ib];
+      colour = await matchReframeColour(asGenerated, sourcePath, { gen: plan.gen, scaled: plan.scaled, inset, pad }, abs);
     } finally {
       if (!existsSync(abs)) renameSync(asGenerated, abs);
     }

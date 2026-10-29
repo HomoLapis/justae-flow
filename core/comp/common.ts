@@ -92,7 +92,7 @@ export interface ToolDef {
   loras?: string[];
   /** A licence line the card carries (every LTX finishing card: the LTX-2.x Community License). */
   licence?: { line: string; url: string };
-  /** A card that is listed but cannot run, with why (DA VERIFICARE: its model card does not say how, or a file is not where the node reads). */
+  /** A card that is listed but cannot run, with why (to be verified: its model card does not say how, or a file is not where the node reads). */
   unavailable?: string;
   /**
    * `extra.prompt`: the card's text as typed now (the LTX "Look" is checked on every plan). `extra.tiling`: the LTX

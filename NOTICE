@@ -95,15 +95,15 @@ and the licence of the weights:
   Wan2.2 I2V 14B (high/low noise)                  Apache-2.0 (Wan-AI)
   MiniMax H3 open weights   commercial use of locally generated outputs needs
                      a MiniMax commercial licence (sold by Comfy); in the EU:
-                     DA VERIFICARE on the licence text. The 4-step turbo LoRA
+                     to be verified on the licence text. The 4-step turbo LoRA
                      of the Draft (Comfy-Org/MiniMax-H3, loras/) is named by
-                     the official template; its own licence: DA VERIFICARE
+                     the official template; its own licence: to be verified
   FILM (frame interpolation)   Apache-2.0 (google-research/frame-interpolation);
                      the file is Comfy-Org's repackaging, whose model card says
-                     "other": DA VERIFICARE
+                     "other": to be verified
   RIFE (rife47.pth)  MIT (hzwer: ECCV2022-RIFE, Practical-RIFE); the node pack
                      downloads it from Hugging Face mirrors it lists, not from
-                     the author: provenance DA VERIFICARE
+                     the author: provenance to be verified
 Read each licence before using the outputs commercially.
 
 Custom node packs the workflows above use (installed in your ComfyUI, not here):

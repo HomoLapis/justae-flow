@@ -37,6 +37,8 @@ Higgsfield has things this does not: "Seed audio" (voices, ambience), an MCP bri
 
 ## Requirements
 
+The short version of this section and the next, with the model table and the cloud steps, is [SETUP.md](SETUP.md).
+
 You need: **Node.js 22.18+**; **EffectCraft 0.11.1+**; **ComfyUI 0.38+** with the official templates package (it
 ships with ComfyUI), reachable over HTTP; **ffmpeg** on the PATH (masters, Extend, Describe the clip). The LTX-2.5
 workflows need a GPU with 16 GB or more; the Wan VACE 14B reframe is meant for a cloud GPU with 48 GB or more.
