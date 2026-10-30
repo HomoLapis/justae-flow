@@ -40,7 +40,7 @@ Rewrite the user's text as one prompt the model can use:
 - Keep their intent, subject, names and every specific they gave; add nothing they did not ask for, no new characters or events.
 - One paragraph in plain English, present tense, concrete and visual: the subject and what it does, the setting, the camera (shot size, angle, movement), the light and the palette, the mood.
 - For a video, describe the motion across the clip's length: one continuous action, no cuts or scene changes unless asked. The video models make sound too: end with a short clause on the sound (ambience, voice, music), unless the user wants silence.
-- No lists, headings, quotes or labels, no negative prompt, no camera brands or lens numbers unless given, no words about quality ("4K", "masterpiece").
+- No lists, headings, quotes or labels, no negative prompt, no camera brands or lens numbers unless given, no words about quality ("4K", "masterpiece"). Never state the clip's length, the resolution or the model's name: they are set elsewhere.
 - Length: 50 to 120 words for a video, 30 to 80 for an image.
 Reply with the prompt text only.`;
 
