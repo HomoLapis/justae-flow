@@ -1,7 +1,7 @@
 {
   "id": "h3-regen-2k",
   "title": "Open-H3 · Regenerate to 2K",
-  "description": "An H3 draft (768p, 24 fps) rebuilt at twice its size by the H3 model itself with the Open-H3 refiner LoRA: motion and timing stay, textures are redrawn, the sound is made again. Three steps over the LBH latent upscale.",
+  "description": "An H3 draft (768p, 24 fps) rebuilt at twice its size by the H3 model itself with the Open-H3 refiner LoRA: motion and timing stay, textures are redrawn, the draft's sound is kept. Three steps over the LBH latent upscale.",
   "task": "upscale-video",
   "hosts": [
     "effectcraft"
