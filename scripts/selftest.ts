@@ -403,6 +403,7 @@ const settings: Settings = {
   comfyUrl, comfyToken: '', comfyGpu: '', host: 'effectcraft', effectcraftPort: 0, photocraftPort: 0, photocraftTokenFile: '', photocraftRoot: projectDir,
   canvasPlaceholderWorkflow: 'zimage-t2i', selectionWorkflow: 'qwen-edit',
   markerWorkflow: 'ltx25-t2v', placeholderWorkflow: 'ltx25-t2v', placeholderSeconds: 4, pollSeconds: 60, setupDone: true,
+  assistProvider: 'off', assistUrl: '', assistModel: '',
 };
 {
   const secret = new Engine({ ...settings, comfyToken: 's3cret' }, library, makeServices(mkdtempSync(join(tmpdir(), 'jaf-svc-')), () => settings, library, 'http://127.0.0.1:9'), new FakeHost());
@@ -1268,7 +1269,7 @@ console.log('featured workflows');
   await services.caps.get('local', true);
   const entries = featuredView(services, library);
   const h3 = entries.find((e) => e.id === 'h3-flf');
-  check('Featured lists the nine entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 9 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
+  check('Featured lists the eleven entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 11 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
   check('…LTX Refine is a Comp tab card (its "Use it" opens Upscale ▸ LTX Refine), not a workflow for the shot tabs',
     entries.find((e) => e.id === 'ltx25-refine')?.comp?.tool === 'upscale' && entries.find((e) => e.id === 'ltx25-refine')?.comp?.engine === 'ltx' && entries.filter((e) => e.comp).length === 1);
   check('…from the probes: Local ✓ where the local ComfyUI has every node and model', entries.find((e) => e.id === 'ltx25-i2v')?.runsOn.find((r) => r.resource === 'local')?.status === 'ok' && entries.every((e) => e.runnable === e.runsOn.some((r) => r.status === 'ok' || r.status === 'proven')));
@@ -1400,9 +1401,9 @@ console.log('get started: readiness, the card\'s rules, the model downloads');
   await rsvc.models.meta.ensure(library.list().flatMap((m) => m.models.map((x) => x.url)));
   const onLocal = readiness(deps, 'local');
   const byId = (r: typeof onLocal, id: string) => r.entries.find((e) => e.id === id)!;
-  check('readiness: the nine Featured entries in two groups, in order',
-    onLocal.entries.map((e) => `${e.group}:${e.id}`).join() === FEATURED.map((f) => `${f.group}:${f.id}`).join() && onLocal.entries.length === 9
-    && FEATURED.filter((f) => f.group === 'generate').map((f) => f.id).join() === 'zimage-t2i,ltx25-i2v,ltx25-t2v,h3-flf,wan22-flf'
+  check('readiness: the eleven Featured entries in two groups, in order',
+    onLocal.entries.map((e) => `${e.group}:${e.id}`).join() === FEATURED.map((f) => `${f.group}:${f.id}`).join() && onLocal.entries.length === 11
+    && FEATURED.filter((f) => f.group === 'generate').map((f) => f.id).join() === 'zimage-t2i,ltx25-i2v,ltx25-t2v,h3-flf,h3-t2v,h3-i2v,wan22-flf'
     && FEATURED.filter((f) => f.group === 'edit').map((f) => f.id).join() === 'qwen-edit,seedvr2-upscale,sam3-matte,ltx25-refine');
   const wan = byId(onLocal, 'wan22-flf');
   check('readiness on Local: ready · missing-models (with the files, sizes from the Hugging Face API, total) · missing-nodes (the pack by name)',
@@ -1414,7 +1415,7 @@ console.log('get started: readiness, the card\'s rules, the model downloads');
     JSON.stringify([wan.status, wan.missing, wan.chip, byId(onLocal, 'ltx25-refine').chip]));
   check('…another precision of a file counts as there ("yours: …"); a gated repo is said', byId(onLocal, 'zimage-t2i').files.some((f) => f.state === 'variant' && f.using === 'z_image_turbo_fp8.safetensors')
     && byId(onLocal, 'ltx25-refine').files.some((f) => f.gated === true && f.pageUrl === 'https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details'));
-  check('…the counts and the missing files across entries (each file once)', onLocal.counts.ready === 7 && onLocal.counts.missingModels === 1 && onLocal.counts.missingNodes === 1
+  check('…the counts and the missing files across entries (each file once)', onLocal.counts.ready === 9 && onLocal.counts.missingModels === 1 && onLocal.counts.missingNodes === 1
     && onLocal.missing.files === 2 && onLocal.missing.bytes === 240_000, JSON.stringify([onLocal.counts, onLocal.missing]));
   const onDep = readiness(deps, 'deployment');
   check('readiness on a deployment: unknown until a run of it finished there (then ready), LTX finishing not on this resource',
@@ -1648,5 +1649,54 @@ canvas.stop();
 
 fake.close();
 v2fake.close();
+
+/* ─── Prompt assistant ─────────────────────────────────────────────── */
+{
+  const { assistRoutes, ASSIST_SYSTEM } = await import('../server/assist.ts');
+  const seen: { body?: string; auth?: string } = {};
+  const fakeOllama = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const body = Buffer.concat(chunks).toString('utf8');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (req.url === '/api/tags') return void res.end(JSON.stringify({ models: [{ name: 'qwen3:8b' }] }));
+    if (req.url === '/api/chat') {
+      seen.body = body;
+      seen.auth = req.headers.authorization;
+      return void res.end(JSON.stringify({ message: { content: '"A lighthouse keeper climbs the spiral stairs at dusk, handheld, warm lamp light, wind and gulls."' } }));
+    }
+    res.end('{}');
+  });
+  await new Promise<void>((r) => fakeOllama.listen(0, '127.0.0.1', () => r()));
+  const oBase = `http://127.0.0.1:${(fakeOllama.address() as { port: number }).port}`;
+  const fakeSettings: Settings = { ...settings, assistProvider: 'ollama', assistUrl: oBase, assistModel: 'qwen3:8b' };
+  const stub = { settings: fakeSettings, applySettings: (p: Partial<Settings>): void => { Object.assign(fakeSettings, p); } };
+  const routes = assistRoutes(stub, mkdtempSync(join(tmpdir(), 'jaf-assist-')));
+  const srv = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    for (const [method, re, h] of routes) { const m = re.exec(url.pathname); if (m && req.method === method) return void (await h(req, res, m, url)); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  const tok = { 'X-Flow-Token': SESSION_TOKEN, 'Content-Type': 'application/json' };
+  const v = await (await fetch(`${base}/api/assist`)).json() as { provider: string; model: string; key: { set: boolean } };
+  check('GET /api/assist: the provider, the model and whether a key is set — never the key', v.provider === 'ollama' && v.model === 'qwen3:8b' && typeof v.key.set === 'boolean');
+  const ms = await (await fetch(`${base}/api/assist/models`)).json() as { ok: boolean; models: string[] };
+  check('GET /api/assist/models lists what Ollama has pulled', ms.ok && ms.models.join() === 'qwen3:8b');
+  const denied = await fetch(`${base}/api/assist/prompt`, { method: 'POST', body: JSON.stringify({ text: 'a lighthouse' }) });
+  check('POST /api/assist/prompt refuses a call without the page token', denied.status === 403);
+  const r = await (await fetch(`${base}/api/assist/prompt`, { method: 'POST', headers: tok, body: JSON.stringify({ text: 'lighthouse keeper, stairs, dusk', context: { kind: 'video', seconds: 4.4, width: 1920, height: 1080, workflow: 'MiniMax H3 · Text to video' } }) })).json() as { ok: boolean; prompt?: string };
+  const sent = seen.body ? JSON.parse(seen.body) as { model: string; messages: Array<{ role: string; content: string }> } : null;
+  check('…with it: the rewrite comes back bare (quotes stripped); Ollama got the rules, the shot and no credential',
+    r.ok && r.prompt === 'A lighthouse keeper climbs the spiral stairs at dusk, handheld, warm lamp light, wind and gulls.'
+    && sent?.model === 'qwen3:8b' && sent.messages[0].content === ASSIST_SYSTEM && /4\.4 s long, 1920×1080, made with "MiniMax H3/.test(sent.messages[1].content) && seen.auth === undefined);
+  const off = await (await fetch(`${base}/api/assist`, { method: 'POST', headers: tok, body: JSON.stringify({ provider: 'off' }) })).json() as { provider: string };
+  const r2 = await (await fetch(`${base}/api/assist/prompt`, { method: 'POST', headers: tok, body: JSON.stringify({ text: 'x y z' }) })).json() as { ok: boolean; error?: string };
+  check('POST /api/assist sets the provider; off, a rewrite says where to turn it on', off.provider === 'off' && !r2.ok && /Settings/.test(r2.error ?? ''));
+  srv.close();
+  fakeOllama.close();
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

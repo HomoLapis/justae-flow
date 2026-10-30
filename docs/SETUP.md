@@ -74,6 +74,7 @@ The presets are official ComfyUI templates, converted to the API format with no 
 | Preset | Model | Weights licence |
 |---|---|---|
 | Text / image → video, Extend | LTX-2.5 | LTX-2.x Community License |
+| Text / image → video | MiniMax H3 | MiniMax H3 open weights (commercial use of local outputs needs MiniMax's licence) |
 | First + last frame → video | MiniMax H3, Wan 2.2 14B | MiniMax H3 open weights (commercial use of local outputs needs MiniMax's licence); Apache-2.0 |
 | Reframe (generative) | Wan 2.1 VACE 14B, 1.3B draft | Apache-2.0 |
 | Upscale | SeedVR2 3B | Apache-2.0 |
@@ -118,8 +119,23 @@ report and lags behind real usage.
 To try the platform's API against your own machine for free, run `pip install comfy-api-proxy` and start
 `comfy-api-proxy` next to your ComfyUI; its address goes in *Settings ▸ Resources* as well.
 
+## Prompt assistant
+
+Optional. ✦ Improve, under a prompt box, sends the text and the shot's facts (length, size, workflow) to a language
+model and writes back one paragraph the video model can use; Undo brings yours back. Pick where in *Settings ▸ Prompt
+assistant*:
+
+- **Ollama** (local): install it from [ollama.com](https://ollama.com), pull a model (`ollama pull qwen3:8b`), and the
+  model list fills in. The address is `http://127.0.0.1:11434` unless you changed it.
+- **LM Studio** (local): load a model and start its local server (Developer tab, `http://127.0.0.1:1234`).
+- **Claude**: an API key from [console.anthropic.com](https://console.anthropic.com), billed per use (a Claude.ai
+  subscription does not include it). The server keeps it in `anthropic-api-key.txt` in your user folder and sends it
+  to api.anthropic.com only; the model defaults to `claude-opus-5-5`.
+
+Nothing is sent until you press Improve, and only to the provider you chose.
+
 ## Privacy
 
 The server listens on 127.0.0.1 only and talks to what you set up: EffectCraft, your ComfyUI, and, once you add a key,
-Comfy Cloud and the deployment addresses you paste. The Workflow tab reads the public Hugging Face API for the sizes
+Comfy Cloud and the deployment addresses you paste, and the prompt assistant's model if you turned one on. The Workflow tab reads the public Hugging Face API for the sizes
 and gating of the preset files. No telemetry, no account of its own.

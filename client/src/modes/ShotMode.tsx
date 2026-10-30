@@ -424,6 +424,11 @@ function ShotRow({ seg, index, checked, comp, onToggle, onEnsureRecord }: RowPro
                   value={prompt}
                   onChange={(v) => setSegmentPrompt(seg.id, v)}
                   placeholder={`What happens in "${seg.label}"?`}
+                  assist={{
+                    kind: record?.inspected.primaryOutputKind === 'image' ? 'image' : 'video',
+                    seconds: typeof seg.duration === 'number' ? seg.duration : undefined,
+                    workflow: record?.name, width: comp?.width, height: comp?.height,
+                  }}
                 />
               ) : (
                 <p className="rounded-lg border border-warn/40 bg-warn/10 px-2.5 py-2 text-[11px] leading-snug text-ink">
@@ -542,7 +547,12 @@ function PlayheadShot({
         </select>
       </div>
       {promptField && (
-        <PromptBox value={prompt} onChange={setPrompt} placeholder="Describe the clip…" />
+        <PromptBox
+          value={prompt}
+          onChange={setPrompt}
+          placeholder="Describe the clip…"
+          assist={{ kind: record?.inspected.primaryOutputKind === 'image' ? 'image' : 'video', workflow: record?.name, width: comp?.width, height: comp?.height }}
+        />
       )}
       {record && (
         <PromptTargetRow

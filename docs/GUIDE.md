@@ -306,7 +306,9 @@ value used. *Save setup / Load setup* keep a shot list as a file; the history li
 1. Open a composition. For **Marker**, add markers in pairs around each gap (or *+ Marker pair* in the panel); for
    **Storyboard**, add adjustment layers (*+ Placeholder*), move and trim them.
 2. Pick a workflow in the **Workflow** tab — or per shot, in its row.
-3. Open a row: the prompt and that workflow's inputs. Fields the comp can fill say *from comp*.
+3. Open a row: the prompt and that workflow's inputs. Fields the comp can fill say *from comp*. ✦ Improve under
+   the prompt sends it to the prompt assistant (*Settings ▸ Prompt assistant*: Ollama, LM Studio or Claude) and
+   writes back one paragraph the model can use; *Undo* brings yours back.
 4. **Generate clip** runs the ticked shots in series and places each clip at its slot, in the comp that was open when
    you pressed it. The shot is generated at the comp's aspect ratio, as large as its model allows (H3 stops at 1344
    px, LTX-2.5 at 1280), and scaled to cover the comp; only the model's rounding, a few pixels, is cropped. The
@@ -559,7 +561,7 @@ client/      the Flow window (Flow 2's interface; bridge/ and lib/ are the parts
 extensions/  the EffectCraft panel and the host file
 core/        host-independent: ComfyUI client, workflow conversion, manifests, storyboard types, reframe planning, the Comp tab tools
 hosts/       one adapter per host app for the engine (effectcraft: a timeline, photocraft: a canvas)
-server/      the host bridge and relays, the window dock, the engine (layer tools, Comp tab, PhotoCraft storyboard), settings, HTTP API
+server/      the host bridge and relays, the window dock, the engine (layer tools, Comp tab, PhotoCraft storyboard), settings, HTTP API; assist.ts: the prompt assistant (Ollama, LM Studio, Claude)
 workflows/   bundled workflows: <id>.json manifest + <id>.api.json graph
 scripts/     launch, build-workflows, verify-workflows, verify-effectcraft, selftest, scan-secrets
 ```

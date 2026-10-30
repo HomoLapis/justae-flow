@@ -108,6 +108,8 @@ Flow window (docked) ────────────┘        │
 - **Where it runs** is your choice, per task: your local ComfyUI, your own Comfy API deployment, or Comfy Cloud, with
   one platform API key. Before a run the button shows an estimate of time and credits; after it, what the run used.
   Without a key everything stays on your machine.
+- **A prompt assistant**, if you want one: ✦ Improve under a prompt has a language model rewrite it for the shot, a
+  local one through Ollama or LM Studio, or Claude with your API key. Off until you pick one in Settings.
 
 ## Get started
 

@@ -49,6 +49,17 @@ const LTX_LICENCE = { text: 'LTX-2.x Community License: commercial use under USD
  * official template); Final runs the entry's workflow (the base model), then one of the chained steps on its result.
  * The licence lines shorten the manifests' own (`license.weights`), which stay the full text.
  */
+const H3_FEATURED_LICENCE = { text: 'MiniMax H3: commercial use of local outputs needs a MiniMax licence (sold by Comfy); EU: to be verified' };
+const H3_NOTE = 'Commercial use of locally generated H3 outputs needs a MiniMax commercial licence (sold by Comfy); in the EU: to be verified on the licence text.';
+/** Every H3 entry: Draft runs its turbo workflow; Final the base model, then SeedVR2 ×2 or LTX Refine on the result. */
+const h3Tiers = (draft: string): NonNullable<FeaturedDef['tiers']> => ({
+  draft: { workflow: draft, note: 'Draft = the 4-step turbo LoRA the official template names (Comfy-Org/MiniMax-H3), 4 steps: a quick look, never the final.' },
+  finals: [
+    { id: 'seedvr2', label: '+ SeedVR2 ×2', then: 'seedvr2-upscale', scale: 2, note: 'Final = the base model (20 steps), then SeedVR2 ×2 on its result (a second job), original colours kept.' },
+    { id: 'ltx', label: '+ LTX Refine', then: 'ltx25-refine', scale: 1, note: 'Final = the base model (20 steps), then LTX Refine to Full HD on its result (LTX-2.5 + Refine Details, tiled; a second job on your local ComfyUI, with a PNG 16-bit master). For 4K: Comp tab ▸ Upscale ▸ LTX Refine.' },
+  ],
+});
+
 export const FEATURED: FeaturedDef[] = [
   { id: 'zimage-t2i', group: 'generate', name: 'Z-Image-Turbo · text to image', line: 'A still in seconds: plates, keyframes, title backgrounds.', licence: { text: 'Apache-2.0' } },
   { id: 'ltx25-i2v', group: 'generate', name: 'LTX-2.5 · image to video', line: "A shot with sound from a frame: the marker's, or an image you attach.", licence: LTX_LICENCE },
@@ -64,6 +75,14 @@ export const FEATURED: FeaturedDef[] = [
       ],
     },
     licenceNote: 'Commercial use of locally generated H3 outputs needs a MiniMax commercial licence (sold by Comfy); in the EU: to be verified on the licence text.',
+  },
+  {
+    id: 'h3-t2v', group: 'generate', name: 'MiniMax H3 · text to video', line: 'A shot with sound from the prompt alone, sized and timed by the slot.',
+    licence: H3_FEATURED_LICENCE, tiers: h3Tiers('h3-t2v-draft'), licenceNote: H3_NOTE,
+  },
+  {
+    id: 'h3-i2v', group: 'generate', name: 'MiniMax H3 · image to video', line: "A shot with sound from the marker's frame, or an image you attach.",
+    licence: H3_FEATURED_LICENCE, tiers: h3Tiers('h3-i2v-draft'), licenceNote: H3_NOTE,
   },
   { id: 'wan22-flf', group: 'generate', name: 'Wan 2.2 14B · first + last frame', line: 'Keyframe to keyframe, under Apache-2.0.', licence: { text: 'Apache-2.0' } },
   { id: 'qwen-edit', group: 'edit', name: 'Qwen-Image-Edit 2511', line: 'Change an image as the prompt says.', licence: { text: 'Apache-2.0' } },

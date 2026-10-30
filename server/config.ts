@@ -33,6 +33,10 @@ export interface Settings {
   /** Seconds of host polling. */
   pollSeconds: number;
   setupDone: boolean;
+  /** The prompt assistant: where ✦ Improve sends a prompt (server/assist.ts), its address and its model. */
+  assistProvider: 'off' | 'ollama' | 'lmstudio' | 'claude';
+  assistUrl: string;
+  assistModel: string;
 }
 
 const DEFAULTS: Settings = {
@@ -51,6 +55,9 @@ const DEFAULTS: Settings = {
   placeholderSeconds: 4,
   pollSeconds: 1.5,
   setupDone: false,
+  assistProvider: 'off',
+  assistUrl: '',
+  assistModel: '',
 };
 
 /**

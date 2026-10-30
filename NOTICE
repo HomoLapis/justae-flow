@@ -125,6 +125,8 @@ client/ (the Flow window) and extensions/effectcraft/flow-host.jsx
   are not included.
 
 npm dependencies (installed, not vendored): react, react-dom, zustand (MIT);
+@anthropic-ai/sdk (MIT, Anthropic — run by the server for the prompt assistant,
+only with the user's own API key);
 @comfyorg/sdk 0.5.0 (MIT, Copyright (c) 2026 Comfy Org — run by the server for
 Comfy API v2) with its dependencies hash-wasm, zod and eventsource-parser (MIT);
 @fontsource/dm-sans and @fontsource/jetbrains-mono (fonts under the SIL Open

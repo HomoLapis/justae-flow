@@ -24,6 +24,7 @@ import { compRoutes } from './api-comp.ts';
 import { featuredRoutes } from './api-featured.ts';
 import { finishingRoutes } from './api-finishing.ts';
 import { setupRoutes } from './api-setup.ts';
+import { assistRoutes } from './assist.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.JUSTAE_FLOW_PORT ?? process.env.SHIFTFIELD_PORT ?? 5199);
@@ -255,6 +256,7 @@ const routes: Array<[string, RegExp, Handler]> = [
   ...featuredRoutes(services, library),
   ...finishingRoutes(services),
   ...setupRoutes(services, library, root),
+  ...assistRoutes(engine),
 ];
 
 const server = createServer(async (req, res) => {

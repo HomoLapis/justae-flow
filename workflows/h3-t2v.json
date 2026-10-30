@@ -1,0 +1,54 @@
+{
+  "id": "h3-t2v",
+  "title": "MiniMax H3 · Text to video",
+  "description": "A clip with sound from the prompt alone, at the comp's size and length (base model, 20 steps).",
+  "task": "t2v",
+  "hosts": [],
+  "output": "video",
+  "bindings": {
+    "prompt": "140:131.prompt",
+    "seed": "140:129.noise_seed",
+    "width": "140:131.width",
+    "height": "140:131.height",
+    "seconds": "140:133.value"
+  },
+  "sizeMultiple": 32,
+  "maxLongSide": 1344,
+  "defaults": {
+    "seconds": 5,
+    "width": 1344,
+    "height": 768
+  },
+  "license": {
+    "weights": "MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: to be verified on the licence text",
+    "openWeights": true
+  },
+  "api": "h3-t2v.api.json",
+  "models": [
+    {
+      "name": "minimax_h3_video_vae_int8_convrot.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    {
+      "name": "minimax_h3_audio_vae_fp32.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors"
+    },
+    {
+      "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+    },
+    {
+      "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+    }
+  ],
+  "source": {
+    "template": "video_minimax_h3_t2v",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}

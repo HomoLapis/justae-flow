@@ -290,7 +290,7 @@ function NumberField({ value, placeholder, disabled, onSave, testId }: {
   );
 }
 
-function UrlField({ value, placeholder, onSave }: { value: string; placeholder: string; onSave: (v: string) => Promise<void> }): JSX.Element {
+export function UrlField({ value, placeholder, onSave }: { value: string; placeholder: string; onSave: (v: string) => Promise<void> }): JSX.Element {
   const [draft, setDraft] = useState<string | null>(null);
   return (
     <input
@@ -304,7 +304,7 @@ function UrlField({ value, placeholder, onSave }: { value: string; placeholder: 
   );
 }
 
-function KeyField({ set, tail, file, label, placeholder, onSave }: {
+export function KeyField({ set, tail, file, label, placeholder, onSave }: {
   set: boolean; tail: string | null; file: string; label: string; placeholder: string; onSave: (v: string | null) => Promise<void>;
 }): JSX.Element {
   const [draft, setDraft] = useState('');

@@ -6,6 +6,7 @@
 import { useApp } from '../state/store';
 import { useReadiness } from '../lib/readiness';
 import { ResourcesSettings } from './ResourcesSettings';
+import { AssistSettings } from './AssistSettings';
 import { DraftDelivery } from './PipelineLibrary';
 
 export function SettingsDrawer(): JSX.Element | null {
@@ -27,6 +28,7 @@ export function SettingsDrawer(): JSX.Element | null {
       <div className="flex-1 space-y-5 overflow-y-auto px-3.5 py-4">
         <GetStartedRow onShow={() => setOpen(false)} />
         <ResourcesSettings />
+        <AssistSettings />
 
         {/* ── Timeline behaviour ───────────────────────────── */}
         <section className="space-y-2">

@@ -148,6 +148,46 @@ const INTERPOLATION: Recipe[] = [
  * Keyframe models for the Workflow tab's Featured section (the Flow window runs
  * them; `hosts: []` keeps them out of the panel's own pickers, which fill one image).
  */
+/** MiniMax H3's licence line, as every H3 recipe states it. */
+const H3_LICENSE = {
+  weights: 'MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: to be verified on the licence text',
+  openWeights: true,
+};
+/** The 8-step turbo LoRA the templates list: not in these graphs. */
+const H3_DROP = ['minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors'];
+const H3_TURBO_MODEL: ModelFile[] = [{
+  name: H3_TURBO_4STEP, directory: 'loras',
+  url: `https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/loras/${H3_TURBO_4STEP}`,
+}];
+
+/**
+ * The template's turbo branch (a LoRA loader, a model switch, a steps switch), taken out for the base model or
+ * switched on for the draft, by the ids of its nodes: the text-to-video template numbers its subgraph 140 (nodes
+ * 119–139), the image-to-video one 105 (nodes 6–126). ComfyUI validates every linked node, switch or not, so the
+ * branch that is not used goes, and a ComfyUI without the LoRA file can run the base graph.
+ */
+interface H3BranchIds { lora: string; modelSwitch: string; stepsSwitch: string; unet: string; baseSteps: string; turboSteps: string; enable: string }
+const T2V_IDS: H3BranchIds = { lora: '140:134', modelSwitch: '140:135', stepsSwitch: '140:136', unet: '140:127', baseSteps: '140:137', turboSteps: '140:138', enable: '140:139' };
+const I2V_IDS: H3BranchIds = { lora: '105:121', modelSwitch: '105:122', stepsSwitch: '105:123', unet: '105:6', baseSteps: '105:124', turboSteps: '105:125', enable: '105:126' };
+function h3Branch(api: WorkflowJson, ids: H3BranchIds, turbo: boolean): void {
+  for (const node of Object.values(api)) {
+    for (const [k, v] of Object.entries(node.inputs)) {
+      if (Array.isArray(v) && v[0] === ids.modelSwitch) node.inputs[k] = [turbo ? ids.lora : ids.unet, 0];
+      if (Array.isArray(v) && v[0] === ids.stepsSwitch) node.inputs[k] = [turbo ? ids.turboSteps : ids.baseSteps, 0];
+    }
+  }
+  if (turbo) {
+    api[ids.lora].inputs.lora_name = H3_TURBO_4STEP;
+    api[ids.lora].inputs.strength_model = 1;
+    api[ids.turboSteps].inputs.value = 4;
+    for (const id of [ids.modelSwitch, ids.stepsSwitch, ids.baseSteps, ids.enable]) delete api[id];
+  } else {
+    for (const id of [ids.lora, ids.modelSwitch, ids.stepsSwitch, ids.turboSteps, ids.enable]) delete api[id];
+  }
+}
+const H3_T2V_BINDINGS = { prompt: '140:131.prompt', seed: '140:129.noise_seed', width: '140:131.width', height: '140:131.height', seconds: '140:133.value' };
+const H3_I2V_BINDINGS = { prompt: '105:104.prompt', image: '114.image', seed: '105:15.noise_seed', width: '105:104.width', height: '105:104.height', seconds: '105:111.value' };
+
 const KEYFRAMES: Recipe[] = [
   {
     id: 'h3-flf',
@@ -221,6 +261,65 @@ const KEYFRAMES: Recipe[] = [
       api['105:125'].inputs.value = 4;
       for (const id of ['105:122', '105:123', '105:124', '105:126']) delete api[id];
       api['92'].inputs.filename_prefix = SLUG + '/h3_flf_draft';
+    },
+  },
+  {
+    id: 'h3-t2v',
+    template: 'video_minimax_h3_t2v',
+    title: 'MiniMax H3 · Text to video',
+    description: 'A clip with sound from the prompt alone, at the comp\'s size and length (base model, 20 steps).',
+    dropModels: H3_DROP,
+    task: 't2v', hosts: [], output: 'video',
+    bindings: H3_T2V_BINDINGS,
+    sizeMultiple: 32, maxLongSide: 1344, defaults: { seconds: 5, width: 1344, height: 768 },
+    license: H3_LICENSE,
+    patch: (api) => { h3Branch(api, T2V_IDS, false); api['92'].inputs.filename_prefix = SLUG + '/h3_t2v'; },
+  },
+  {
+    id: 'h3-t2v-draft',
+    template: 'video_minimax_h3_t2v',
+    title: 'MiniMax H3 · Text to video (Draft, turbo 4 steps)',
+    description: 'The H3 draft from the prompt alone: the template\'s turbo LoRA branch on, 4 steps. For a quick look; Final is the base model.',
+    dropModels: H3_DROP, extraModels: H3_TURBO_MODEL,
+    task: 't2v', hosts: [], output: 'video',
+    bindings: H3_T2V_BINDINGS,
+    sizeMultiple: 32, maxLongSide: 1344, defaults: { seconds: 5, width: 1344, height: 768 },
+    license: H3_LICENSE,
+    patch: (api) => { h3Branch(api, T2V_IDS, true); api['92'].inputs.filename_prefix = SLUG + '/h3_t2v_draft'; },
+  },
+  {
+    id: 'h3-i2v',
+    template: 'video_minimax_h3_i2v',
+    title: 'MiniMax H3 · Image to video',
+    description: 'A clip with sound that starts on the frame under the marker, or an image you attach (base model, 20 steps).',
+    dropModels: H3_DROP,
+    task: 'i2v', hosts: [], output: 'video', input: 'image',
+    bindings: H3_I2V_BINDINGS,
+    sizeMultiple: 32, maxLongSide: 1344, defaults: { seconds: 5, width: 1344, height: 768 },
+    license: H3_LICENSE,
+    patch: (api) => {
+      // The template's scale node without an input, and its size reader: not part of the run.
+      delete api['119'];
+      delete api['120'];
+      h3Branch(api, I2V_IDS, false);
+      api['92'].inputs.filename_prefix = SLUG + '/h3_i2v';
+    },
+  },
+  {
+    id: 'h3-i2v-draft',
+    template: 'video_minimax_h3_i2v',
+    title: 'MiniMax H3 · Image to video (Draft, turbo 4 steps)',
+    description: 'The H3 draft from one frame: the template\'s turbo LoRA branch on, 4 steps. For a quick look; Final is the base model.',
+    dropModels: H3_DROP, extraModels: H3_TURBO_MODEL,
+    task: 'i2v', hosts: [], output: 'video', input: 'image',
+    bindings: H3_I2V_BINDINGS,
+    sizeMultiple: 32, maxLongSide: 1344, defaults: { seconds: 5, width: 1344, height: 768 },
+    license: H3_LICENSE,
+    patch: (api) => {
+      delete api['119'];
+      delete api['120'];
+      h3Branch(api, I2V_IDS, true);
+      api['92'].inputs.filename_prefix = SLUG + '/h3_i2v_draft';
     },
   },
   {

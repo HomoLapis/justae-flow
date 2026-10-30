@@ -1,0 +1,270 @@
+{
+  "92": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "105:91",
+        0
+      ],
+      "filename_prefix": "justae-flow/h3_i2v",
+      "format": "auto",
+      "format.codec": "auto"
+    },
+    "_meta": {
+      "title": "SaveVideo"
+    }
+  },
+  "114": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "transparent_rgb_gaming_mouse.png"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "115": {
+    "class_type": "ResolutionSelector",
+    "inputs": {
+      "aspect_ratio": "1:1 (Square)",
+      "megapixels": 0.4,
+      "multiple": 32
+    },
+    "_meta": {
+      "title": "ResolutionSelector"
+    }
+  },
+  "105:11": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "105:24": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "105:23": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "105:14",
+        0
+      ],
+      "vae": [
+        "105:24",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecodeAudio"
+    }
+  },
+  "105:10": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "105:14",
+        0
+      ],
+      "vae": [
+        "105:11",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "105:17": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "res_multistep"
+    },
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "105:9": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "105:6",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": [
+        "105:124",
+        0
+      ],
+      "denoise": 1
+    },
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "105:14": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "105:15",
+        0
+      ],
+      "guider": [
+        "105:16",
+        0
+      ],
+      "sampler": [
+        "105:17",
+        0
+      ],
+      "sigmas": [
+        "105:9",
+        0
+      ],
+      "latent_image": [
+        "105:104",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "105:16": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "105:6",
+        0
+      ],
+      "conditioning": [
+        "105:104",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "BasicGuider"
+    }
+  },
+  "105:6": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "105:13": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "105:15": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 757358688076805
+    },
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "105:91": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "105:10",
+        0
+      ],
+      "fps": 24,
+      "audio": [
+        "105:23",
+        0
+      ],
+      "bit_depth": 8
+    },
+    "_meta": {
+      "title": "CreateVideo"
+    }
+  },
+  "105:104": {
+    "class_type": "MiniMaxH3ImageToVideo",
+    "inputs": {
+      "clip": [
+        "105:13",
+        0
+      ],
+      "vae": [
+        "105:11",
+        0
+      ],
+      "prompt": "Editorial tech product film. The transparent gaming mouse from <Picture 1> in its original scene: a pitch-black studio void with a dark, subtle reflective surface, lit by dramatic duotone vibrant blue and warm neon orange rim lighting, deep soft shadow falloff into pure black. Monochromatic dark palette with electric blue and amber accents. Material motif: glowing internal metallic micro-components and glossy acrylic refractions. The environment is constant throughout.\nSHOT 1: The scene opens exactly on image 1, the mouse resting confidently on the dark surface; the blue and orange lights slowly pulse brighter, refracting deeply through the transparent acrylic shell as the camera executes a slow, deliberate push-in to reveal the intricate circuitry.\nSHOT 2: Cut to an extreme macro profile of the ridged scroll wheel and layered internal micro-components; the camera glides slowly along the side as a sharp beam of warm orange light sweeps across the metallic textures, contrasting perfectly against the deep blue ambient glow.\nSHOT 3: Cut to a low-angle beauty shot: the mouse levitates weightlessly a few centimeters above the dark reflective surface, rotating in a slow, precise orbit; the duotone lighting flares gently along the glassy transparent edges before fading slowly into a sleek silhouette.\nAudio: deep pulsing sub-bass room tone, sharp tactile mechanical clicks, a sweeping glassy whoosh on cuts, and a rising electronic swell that resolves to near-silence on the final fade. ",
+      "width": [
+        "115",
+        0
+      ],
+      "height": [
+        "115",
+        1
+      ],
+      "length": [
+        "105:107",
+        1
+      ],
+      "first_frame": [
+        "114",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "MiniMaxH3ImageToVideo"
+    }
+  },
+  "105:107": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "105:111",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "ComfyMathExpression"
+    }
+  },
+  "105:111": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 5
+    },
+    "_meta": {
+      "title": "Float (duration)"
+    }
+  },
+  "105:124": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 20
+    },
+    "_meta": {
+      "title": "PrimitiveInt"
+    }
+  }
+}

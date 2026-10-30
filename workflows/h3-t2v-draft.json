@@ -1,0 +1,59 @@
+{
+  "id": "h3-t2v-draft",
+  "title": "MiniMax H3 · Text to video (Draft, turbo 4 steps)",
+  "description": "The H3 draft from the prompt alone: the template's turbo LoRA branch on, 4 steps. For a quick look; Final is the base model.",
+  "task": "t2v",
+  "hosts": [],
+  "output": "video",
+  "bindings": {
+    "prompt": "140:131.prompt",
+    "seed": "140:129.noise_seed",
+    "width": "140:131.width",
+    "height": "140:131.height",
+    "seconds": "140:133.value"
+  },
+  "sizeMultiple": 32,
+  "maxLongSide": 1344,
+  "defaults": {
+    "seconds": 5,
+    "width": 1344,
+    "height": 768
+  },
+  "license": {
+    "weights": "MiniMax H3 open weights: commercial use of locally generated outputs needs a MiniMax commercial licence (sold by Comfy); EU territory: to be verified on the licence text",
+    "openWeights": true
+  },
+  "api": "h3-t2v-draft.api.json",
+  "models": [
+    {
+      "name": "minimax_h3_video_vae_int8_convrot.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    {
+      "name": "minimax_h3_audio_vae_fp32.safetensors",
+      "directory": "vae",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors"
+    },
+    {
+      "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "directory": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+    },
+    {
+      "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "directory": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+    },
+    {
+      "name": "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+      "directory": "loras",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"
+    }
+  ],
+  "source": {
+    "template": "video_minimax_h3_t2v",
+    "package": "comfyui-workflow-templates",
+    "version": "0.11.76"
+  }
+}
