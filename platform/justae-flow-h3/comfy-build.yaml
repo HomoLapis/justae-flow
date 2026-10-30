@@ -1,0 +1,37 @@
+schema: comfy-build/1
+id: null
+name: justae-flow-h3
+description: 'JustAE Flow MiniMax H3 on a 96 GB GPU: Open-H3 Regenerate 2K (the H3 base model, the Open-H3 refiner LoRA, the LBH latent upscaler), and the H3 text / image / first + last frame presets.'
+syncedRevision: null
+definition:
+  schema: distribution-definition/0
+  baseComfyVersion: v0.38.0
+  models:
+    - filename: minimax_h3_fl2va_pruned_int8_convrot.safetensors
+      sha256: e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a
+      sourceUri: https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors
+      type: diffusion_models
+    - filename: minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors
+      sha256: 043e5a48e161610ef6c3ea974645220354d06fa618abca15f76d084812eb55c2
+      sourceUri: https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler/resolve/main/minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors
+      type: latent_upscale_models
+    - filename: minimax_h3_open_regenerate_2k_r128_comfyui_bf16.safetensors
+      sha256: 5033da44d703c912b38c131a53580fcd212e483233e10cdce24e7a1cbd01bf9d
+      sourceUri: https://huggingface.co/father558/H3-Open-Regenerate-2K-ComfyUI-r128/resolve/main/minimax_h3_open_regenerate_2k_r128_comfyui_bf16.safetensors
+      type: loras
+    - filename: qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+      sha256: 35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6
+      sourceUri: https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+      type: text_encoders
+    - filename: minimax_h3_audio_vae_fp32.safetensors
+      sha256: 8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48
+      sourceUri: https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors
+      type: vae
+    - filename: minimax_h3_video_vae_int8_convrot.safetensors
+      sha256: 52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e
+      sourceUri: https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors
+      type: vae
+  customNodes:
+    - gitRef: 40316cf008b2fd8663263270669eb4da23f89d2c
+      name: Comfyui_Minimax_h3_latent_Upscaler
+      repository: https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler

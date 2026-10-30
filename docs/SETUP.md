@@ -113,9 +113,11 @@ The presets run as they are on Comfy's GPUs. One key, three places to run:
 **The H3 deployment.** *Upscale ▸ Open-H3 2K* (the H3 model redrawing its own 768p draft at 2K) needs 96 GB of GPU
 memory, so it runs on a deployment of its own: a build with the H3 base model, the Open-H3 refiner LoRA and the LBH
 latent upscaler (about 43 GB of models the builder fetches from Hugging Face, nothing uploaded) on an RTX PRO 6000,
-`--min 0` so it costs nothing while idle. Add its endpoint in *Settings ▸ Resources* and route the *Regenerate to 2K*
-row to it. The definition is the one in this guide's deployment section, plus the `Comfyui_Minimax_h3_latent_Upscaler`
-pack (github.com/LBH-123-AI) and the model files named in `workflows/h3-regen-2k.json`.
+`--min 0` so it costs nothing while idle. Its spec is in the repo, `platform/justae-flow-h3/comfy-build.yaml` (model
+URLs and checksums, the `Comfyui_Minimax_h3_latent_Upscaler` pack pinned to a commit): `comfy build push
+platform/justae-flow-h3`, `comfy build release create --target linux/nvidia --watch`, then `comfy deploy up
+platform/justae-flow-h3 --gpu rtx-pro-6000-server --region us --min 0 --max 1 --name justae-flow-h3`. Add the endpoint
+`comfy deploy status` prints in *Settings ▸ Resources* and route the *Regenerate to 2K* row to it (`platform/README.md`).
 
 Then pick **Running on** at the top of the Workflow tab, or set it per task in *Settings ▸ Resources*. Before a run the
 Generate button shows an estimate of time and credits, from the GPU's rate and your earlier runs; after it, the time
