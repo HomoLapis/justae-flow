@@ -2057,6 +2057,13 @@ export class Engine {
     throw new Error(`${m.title} is not one of the Comp tab's tools.`);
   }
 
+  /** The source's sound onto a result without any, in place (streams copied, cut to the picture); nothing when the source has no sound. */
+  private async muxSound(result: string, source: string): Promise<void> {
+    const tmp = result.replace(/\.[^.]+$/, '') + '_sound.mp4';
+    if (!await ffmpegOk(['-v', 'error', '-y', '-i', result, '-i', source, '-map', '0:v:0', '-map', '1:a:0?', '-c', 'copy', '-shortest', tmp], tmp)) return;
+    renameSync(tmp, result);
+  }
+
   /**
    * The clip cut to the longest `min + step · n` frames it holds (H.264 CRF 8, no sound: the graph makes the sound
    * again); the clip itself when it fits already. The count comes from ffprobe; without it, from the item's duration.
@@ -2944,6 +2951,8 @@ export class Engine {
       result = await this.runJob(card, g, m, 'Pass 2 of 2', this.meta(m, seconds, ':pass2'));
     }
     const { n, rel, abs, stem } = this.saveVersion(card, m, result, slugFromPrompt(card.tool?.label ?? src.name, 28));
+    // Open-H3 makes the picture only: the draft's sound goes back onto the result.
+    if (card.tool?.options.engine === 'openh3') await this.muxSound(abs, src.path);
 
     this.phase(card, 'Building the comp');
     const upItem = await host.importFile(abs);

@@ -465,7 +465,7 @@ const RECIPES: Recipe[] = [
     id: 'h3-regen-2k',
     template: '', file: 'open-h3-regenerate-2k.json',
     title: 'Open-H3 · Regenerate to 2K',
-    description: 'An H3 draft (768p, 24 fps) rebuilt at twice its size by the H3 model itself with the Open-H3 refiner LoRA: motion and timing stay, textures are redrawn, the sound is made again. Three steps over the LBH latent upscale.',
+    description: 'An H3 draft (768p, 24 fps) rebuilt at twice its size by the H3 model itself with the Open-H3 refiner LoRA: motion and timing stay, textures are redrawn, the draft's sound is kept. Three steps over the LBH latent upscale.',
     task: 'upscale-video', hosts: ['effectcraft'], output: 'video', input: 'video',
     bindings: { video: '1.file', prompt: '10.value', seed: '17.noise_seed' },
     params: [

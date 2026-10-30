@@ -203,7 +203,7 @@ const upscale: ToolDef = {
  * Open-H3 Regenerate (NVlabs): the H3 model and its refiner LoRA redraw a 768p H3 draft at twice the size, over the
  * LBH latent upscaler, in three steps with the draft's prompt. It wants the draft as H3 made it, 24 fps and
  * 5 + 17 n frames; a longer clip is cut to the lattice before it goes up (server/engine.ts). Motion and timing stay,
- * textures are redrawn, and the sound is generated again. The job is a 96 GB one: it runs where "Regenerate to 2K"
+ * textures are redrawn, and the draft's sound is put back on the result. The job is a 96 GB one: it runs where "Regenerate to 2K"
  * is routed in Settings ▸ Resources, the H3 deployment on the Comfy platform.
  */
 function openH3Plan(src: SourceInfo, manifest: (id: string) => WorkflowManifest | undefined): ToolPlan {
@@ -231,7 +231,7 @@ function openH3Plan(src: SourceInfo, manifest: (id: string) => WorkflowManifest 
   plan.output = { width: w, height: h, seconds: frames / fps, fps };
   plan.jobs = [{ workflowId, seconds: frames / fps }];
   plan.makes = `A new comp at ${w}×${h}: the ${what(src)} redrawn by H3 at twice its size, with your original under it, switched off.`;
-  plan.notes.push(`Open-H3 (NVlabs): the H3 model with its refiner LoRA regenerates the draft at ${w}×${h} in three steps over the LBH latent upscale. Motion and timing stay, textures are redrawn, the sound is made again.`);
+  plan.notes.push(`Open-H3 (NVlabs): the H3 model with its refiner LoRA regenerates the draft at ${w}×${h} in three steps over the LBH latent upscale. Motion and timing stay, textures are redrawn, the draft's sound is kept.`);
   if (frames !== total) plan.notes.push(`${total} frames cut to ${frames}: H3 takes 5 + 17 n frames.`);
   if (Math.abs(fps - 24) > 0.01) plan.warnings.push(`The ${what(src)} is ${fps} fps; H3 drafts are 24 fps.`);
   if (Math.max(src.width, src.height) > 1400) plan.warnings.push('Meant for a 768p H3 draft (1344×768): a larger source makes a very large job.');
