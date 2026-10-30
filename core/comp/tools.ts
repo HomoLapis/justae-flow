@@ -26,7 +26,7 @@
 
 import { ASPECTS } from '../reframe/plan.ts';
 import { DELIVERY, planOutpaint, REFRAME_ASPECTS, aspectRatio } from '../reframe/outpaint.ts';
-import { planSize } from '../workflows/manifest.ts';
+import { planSize, type WorkflowManifest } from '../workflows/manifest.ts';
 
 export type { SourceKind, SourceInfo, ToolOptions, ToolPlan, ToolDef } from './common.ts';
 import { FINISHING_TOOLS, LTX_CARD_LICENCE, LTX_SIZES, ltxAlphaPlan, ltxRefinePlan, SINGLE_TOOLS } from './finishing-tools.ts';
@@ -158,6 +158,8 @@ const upscale: ToolDef = {
   plan(src, o, manifest, extra) {
     // The second engine: LTX-2.5 with the Refine Details IC-LoRA, Tiled Fusion (core/comp/finishing-tools.ts).
     if (o.engine === 'ltx') return ltxRefinePlan(src, o, manifest, extra);
+    // The third: Open-H3, the H3 model redrawing its own draft at twice the size.
+    if (o.engine === 'openh3') return openH3Plan(src, manifest);
     const scale = opt(o, 'scale', [2, 4] as const, 2);
     const workflowId = 'seedvr2-upscale';
     const m = manifest(workflowId);
@@ -196,6 +198,46 @@ const upscale: ToolDef = {
     return plan;
   },
 };
+
+/**
+ * Open-H3 Regenerate (NVlabs): the H3 model and its refiner LoRA redraw a 768p H3 draft at twice the size, over the
+ * LBH latent upscaler, in three steps with the draft's prompt. It wants the draft as H3 made it, 24 fps and
+ * 5 + 17 n frames; a longer clip is cut to the lattice before it goes up (server/engine.ts). Motion and timing stay,
+ * textures are redrawn, and the sound is generated again. The job is a 96 GB one: it runs where "Regenerate to 2K"
+ * is routed in Settings ▸ Resources, the H3 deployment on the Comfy platform.
+ */
+function openH3Plan(src: SourceInfo, manifest: (id: string) => WorkflowManifest | undefined): ToolPlan {
+  const workflowId = 'h3-regen-2k';
+  const m = manifest(workflowId);
+  const plan: ToolPlan = {
+    ok: true, workflowId, jobs: [], makes: '', notes: [], warnings: [], action: 'Regenerate ×2 (Open-H3)', params: {}, variant: 'openh3:x2',
+    prompt: { label: 'Prompt', placeholder: 'What the draft shows: the prompt that made it, ideally' },
+  };
+  const bad = needsVideo(src);
+  if (bad) return { ...plan, ok: false, reason: bad };
+  if (!m) return { ...plan, ok: false, reason: 'The Open-H3 workflow (h3-regen-2k) is missing from workflows/.' };
+  const snap = (v: number): number => Math.max(32, Math.round((v * 2) / 32) * 32);
+  const w = snap(src.width);
+  const h = snap(src.height);
+  const fps = src.fps || 24;
+  const total = Math.max(1, Math.round(src.seconds * fps));
+  const lat = m.frameLattice ?? { min: 5, step: 17 };
+  const frames = total < lat.min ? lat.min : lat.min + Math.floor((total - lat.min) / lat.step) * lat.step;
+  for (const [label, v] of [['Target width', w], ['Target height', h], ['Canvas width', w], ['Canvas height', h], ['Frames', frames]] as const) {
+    const ref = m.params?.find((p) => p.label === label)?.ref;
+    if (!ref) return { ...plan, ok: false, reason: `The Open-H3 workflow has no "${label}" field.` };
+    plan.params[ref] = v;
+  }
+  plan.output = { width: w, height: h, seconds: frames / fps, fps };
+  plan.jobs = [{ workflowId, seconds: frames / fps }];
+  plan.makes = `A new comp at ${w}×${h}: the ${what(src)} redrawn by H3 at twice its size, with your original under it, switched off.`;
+  plan.notes.push(`Open-H3 (NVlabs): the H3 model with its refiner LoRA regenerates the draft at ${w}×${h} in three steps over the LBH latent upscale. Motion and timing stay, textures are redrawn, the sound is made again.`);
+  if (frames !== total) plan.notes.push(`${total} frames cut to ${frames}: H3 takes 5 + 17 n frames.`);
+  if (Math.abs(fps - 24) > 0.01) plan.warnings.push(`The ${what(src)} is ${fps} fps; H3 drafts are 24 fps.`);
+  if (Math.max(src.width, src.height) > 1400) plan.warnings.push('Meant for a 768p H3 draft (1344×768): a larger source makes a very large job.');
+  plan.notes.push('Runs where "Regenerate to 2K" is routed in Settings ▸ Resources: the H3 deployment on the Comfy platform (a 16 GB card cannot hold it).');
+  return plan;
+}
 
 const matte: ToolDef = {
   id: 'matte',

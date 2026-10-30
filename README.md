@@ -74,8 +74,9 @@ several formats in one go.</td>
 <tr>
 <td><img src="docs/media/finishing.jpg" alt="The same detail of a shot before and after SeedVR2 ×2, split by a wipe"></td>
 <td><b>Upscale and finishing.</b> SeedVR2 ×2 or ×4 adds real detail and keeps the colours. LTX Refine rebuilds detail
-up to 4K and 8K, tile by tile. Lightricks' IC-LoRAs become tools on the comp: Archive restore, Deblur, De-compression,
-Colorize, Clean plate, Day → Night, SDR → HDR, with 16-bit masters.</td>
+up to 4K and 8K, tile by tile. Open-H3 has the H3 model redraw its own 768p draft at 2K. Lightricks' IC-LoRAs become
+tools on the comp: Archive restore, Deblur, De-compression, Colorize, Clean plate, Day → Night, SDR → HDR, with
+16-bit masters.</td>
 </tr>
 <tr>
 <td><img src="docs/media/cutout.jpg" alt="A subject cut out of a shot with its alpha matte"></td>

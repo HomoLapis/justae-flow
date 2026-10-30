@@ -2038,8 +2038,15 @@ export class Engine {
     // LTX finishing: the graph is built from the plan of the clip in hand, not filled in from the bundled one.
     const spec = card.tool ? finishSpec(card.tool.id, card.tool.options) : null;
     if (spec) return this.finishingTool(card, entry, spec, t0);
-    const src = await this.toolClip(card);
+    let src = await this.toolClip(card);
     if (m.task === 'outpaint-video') return this.outpaint(card, entry, api, seed, t0, src);
+    // Open-H3 takes 5 + 17 n frames: a longer clip is cut to the lattice first, and the graph's frame count follows.
+    if (card.tool?.options.engine === 'openh3' && m.frameLattice) {
+      const fit = await this.fitFrames(card, src, m.frameLattice);
+      src = fit.src;
+      const ref = m.params?.find((p) => p.label === 'Frames')?.ref;
+      if (ref) setRef(api, ref, fit.frames);
+    }
     this.phase(card, 'Uploading');
     setRef(api, m.bindings.video, await this.runner().uploadFile(src.path, () => readFileSync(src.path), `flow_${card.id}${extname(src.path)}`, videoMime(src.path)));
     const models = this.checkModels(api, m);
@@ -2048,6 +2055,25 @@ export class Engine {
     if (m.task === 'matte-video') return this.matteTool(card, entry, api, seed, models, t0, src);
     if (m.task === 'interpolate-video') return this.interpolateTool(card, entry, api, seed, models, t0, src);
     throw new Error(`${m.title} is not one of the Comp tab's tools.`);
+  }
+
+  /**
+   * The clip cut to the longest `min + step · n` frames it holds (H.264 CRF 8, no sound: the graph makes the sound
+   * again); the clip itself when it fits already. The count comes from ffprobe; without it, from the item's duration.
+   */
+  private async fitFrames(card: Card, src: ClipSource, lat: { min: number; step: number }): Promise<{ src: ClipSource; frames: number }> {
+    const counted = await countFrames(src.path);
+    const total = counted ?? Math.max(1, Math.round((src.info.duration || 0) * (src.info.frameRate || 24)));
+    const frames = total < lat.min ? lat.min : lat.min + Math.floor((total - lat.min) / lat.step) * lat.step;
+    if (frames >= total) return { src, frames };
+    const dir = join(this.mediaDir, card.id);
+    mkdirSync(dir, { recursive: true });
+    const out = join(dir, `${basename(src.path, extname(src.path))}_${frames}f.mp4`);
+    this.phase(card, `Cutting to ${frames} frames`);
+    if (!await ffmpegOk(['-v', 'error', '-y', '-i', src.path, '-frames:v', String(frames), '-c:v', 'libx264', '-crf', '8', '-pix_fmt', 'yuv420p', '-an', out], out)) {
+      throw new Error(`ffmpeg could not cut the clip to ${frames} frames.`);
+    }
+    return { src: { ...src, path: out }, frames };
   }
 
   /**

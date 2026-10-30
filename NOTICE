@@ -134,6 +134,13 @@ Font License 1.1); vite, @vitejs/plugin-react, tailwindcss, postcss,
 autoprefixer, typescript (MIT / Apache-2.0) — see their own licence files under
 node_modules.
 
+The Open-H3 Regenerate 2K preset (workflows/sources/open-h3-regenerate-2k.json)
+follows the community ComfyUI workflow published with father558's rank-128
+conversion of NVlabs' Open-H3-Regenerate-2K refiner (github.com/NVlabs/Sana,
+branch sol-engine; no licence stated on its page), without its SolAttnPatch
+node; it uses the LBH-123-AI Minimax H3 latent upscaler pack and weights under
+their own licence. The MiniMax H3 weights keep MiniMax's licence.
+
 EffectCraft and PhotoCraft are products of the ArtCraft Team. JustAE Flow is an
 independent project that talks to them through their documented control
 channels; it is not affiliated with or endorsed by the ArtCraft Team, and it

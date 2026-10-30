@@ -11,7 +11,7 @@
  * node field the host fills in. Nothing else is edited by hand.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SLUG } from '../core/brand.ts';
@@ -27,7 +27,10 @@ const outDir = join(root, 'workflows');
 const base = process.argv[2] ?? process.env.COMFY_URL ?? 'http://127.0.0.1:8188';
 
 type Recipe = Omit<WorkflowManifest, 'api' | 'models' | 'source'> & {
+  /** An official ComfyUI template the server serves at /templates/<name>.json … */
   template: string;
+  /** … or a workflow kept in workflows/sources/ (a community workflow with no template): converted the same way. */
+  file?: string;
   patch?: (api: WorkflowJson) => void;
   /** Card params whose choices are the node's own, read from the server's object_info at build time. */
   optionsFrom?: (oi: ObjectInfo) => void;
@@ -455,6 +458,36 @@ const RECIPES: Recipe[] = [
   },
   ...INTERPOLATION,
   {
+    // Open-H3 Regenerate 2K (NVlabs, github.com/NVlabs/Sana, branch sol-engine): the H3 model and its refiner LoRA
+    // redraw a 768p H3 draft at twice the size, over the LBH latent upscaler, in three steps with the draft's prompt.
+    // No official template: the community ComfyUI workflow (father558's rank-128 conversion), without its
+    // SolAttnPatch node (sparse attention, a speed-up a 96 GB card does not need), is kept in workflows/sources/.
+    id: 'h3-regen-2k',
+    template: '', file: 'open-h3-regenerate-2k.json',
+    title: 'Open-H3 · Regenerate to 2K',
+    description: 'An H3 draft (768p, 24 fps) rebuilt at twice its size by the H3 model itself with the Open-H3 refiner LoRA: motion and timing stay, textures are redrawn, the sound is made again. Three steps over the LBH latent upscale.',
+    task: 'upscale-video', hosts: ['effectcraft'], output: 'video', input: 'video',
+    bindings: { video: '1.file', prompt: '10.value', seed: '17.noise_seed' },
+    params: [
+      { ref: '5.mode.width', label: 'Target width' }, { ref: '5.mode.height', label: 'Target height' },
+      { ref: '11.width', label: 'Canvas width' }, { ref: '11.height', label: 'Canvas height' }, { ref: '11.length', label: 'Frames' },
+    ],
+    frameLattice: { min: 5, step: 17 }, sizeMultiple: 32,
+    license: {
+      weights: 'MiniMax H3 open weights (commercial use of locally generated outputs needs a MiniMax commercial licence, sold by Comfy; EU: to be verified); Open-H3 refiner LoRA: NVlabs, no licence stated on its page, merges LightX2V Turbo and LMS Sharp; LBH latent upscaler: its own licence',
+      openWeights: true,
+    },
+    ownModels: true,
+    extraModels: [
+      { name: 'minimax_h3_fl2va_pruned_int8_convrot.safetensors', directory: 'diffusion_models', url: 'https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors' },
+      { name: 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', directory: 'text_encoders', url: 'https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors' },
+      { name: 'minimax_h3_video_vae_int8_convrot.safetensors', directory: 'vae', url: 'https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors' },
+      { name: 'minimax_h3_open_regenerate_2k_r128_comfyui_bf16.safetensors', directory: 'loras', url: 'https://huggingface.co/father558/H3-Open-Regenerate-2K-ComfyUI-r128/resolve/main/minimax_h3_open_regenerate_2k_r128_comfyui_bf16.safetensors' },
+      { name: 'minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors', directory: 'latent_upscale_models', url: 'https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler/resolve/main/minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors' },
+    ],
+    patch: (api) => { api['22'].inputs.filename_prefix = SLUG + '/h3_regen_2k'; },
+  },
+  {
     id: 'birefnet-rmbg',
     template: 'utility_birefnet_remove_background',
     title: 'BiRefNet · Remove Background',
@@ -638,7 +671,7 @@ mkdirSync(outDir, { recursive: true });
 
 let failed = 0;
 for (const r of RECIPES) {
-  const ui = await comfy.template(r.template);
+  const ui = r.file ? JSON.parse(readFileSync(join(root, 'workflows', 'sources', r.file), 'utf8')) as unknown : await comfy.template(r.template);
   if (!ui) { console.error(`✖ ${r.id}: template ${r.template} not served by ${base}`); failed++; continue; }
   const conv = convertUiToApi(ui, objectInfo);
   if (conv.problems.length) { console.error(`✖ ${r.id}: ${conv.problems.join('; ')}`); failed++; continue; }
@@ -655,12 +688,12 @@ for (const r of RECIPES) {
     const node = api[ref.slice(0, dot)];
     if (!node || !(ref.slice(dot + 1) in node.inputs)) { console.error(`✖ ${r.id}: binding ${k} → ${ref} not in graph`); failed++; }
   }
-  const { template, patch: _patch, optionsFrom: _options, extraModels, ownModels, dropModels, ...rest } = r;
+  const { template, file, patch: _patch, optionsFrom: _options, extraModels, ownModels, dropModels, ...rest } = r;
   const manifest: WorkflowManifest = {
     ...rest,
     api: `${r.id}.api.json`,
     models: [...(ownModels ? [] : templateModels(ui).filter((x) => !dropModels?.includes(x.name))), ...(extraModels ?? [])],
-    source: { template, package: 'comfyui-workflow-templates', version },
+    source: file ? { template: `sources/${file}`, package: 'justae-flow', version: '1' } : { template, package: 'comfyui-workflow-templates', version },
   };
   writeFileSync(join(outDir, `${r.id}.api.json`), JSON.stringify(api, null, 2) + '\n');
   writeFileSync(join(outDir, `${r.id}.json`), JSON.stringify(manifest, null, 2) + '\n');

@@ -546,17 +546,32 @@ function FinishingCommon({ options, setOpt }: { options: ToolOptions; setOpt: (k
 function UpscaleControls({ options, setOpt, plan }: { options: ToolOptions; setOpt: (k: string, v: string | number | boolean) => void; plan: ToolPlan | null }): JSX.Element {
   const keep = options.colour !== 'model';
   const ltx = options.engine === 'ltx';
+  const openh3 = options.engine === 'openh3';
   const engine = (
     <Segmented
       label="Engine"
-      value={ltx ? 'ltx' : 'seedvr2'}
+      value={ltx ? 'ltx' : openh3 ? 'openh3' : 'seedvr2'}
       options={[
         { v: 'seedvr2', label: 'SeedVR2', title: 'Fast, keeps colours: ×2, or ×4 in two passes' },
         { v: 'ltx', label: 'LTX Refine', title: 'Rebuilds detail: LTX-2.5 with the Refine Details IC-LoRA, tiled — slower, local' },
+        { v: 'openh3', label: 'Open-H3 2K', title: 'The H3 model redraws its own 768p draft at twice the size (NVlabs Open-H3 refiner): minutes, on the H3 deployment of the Comfy platform' },
       ]}
       onChange={(v) => setOpt('engine', v)}
     />
   );
+  if (openh3) {
+    return (
+      <div className="space-y-1.5" data-testid="upscale-openh3">
+        {engine}
+        {plan?.output && (
+          <p className="pl-[62px] font-mono text-[11px] text-ink">
+            {plan.source.width}×{plan.source.height} → <span className="text-ok">{plan.output.width}×{plan.output.height}</span>
+          </p>
+        )}
+        <p className="pl-[62px] text-[10px] leading-snug text-ink-mute">For an H3 draft as it came (768p, 24 fps). The prompt below should be the draft's.</p>
+      </div>
+    );
+  }
   if (ltx) {
     return (
       <div className="space-y-1.5" data-testid="upscale-ltx">
@@ -792,7 +807,7 @@ function Advanced({ tool, draft, set, setOpt, plan }: {
             <span className="text-[10px] text-ink-mute">SeedVR2&rsquo;s colour correction (its own choices); wavelet matched best when measured</span>
           </div>
         )}
-        {((tool === 'upscale' && o.engine === 'ltx') || tool === 'restore') && (
+        {((tool === 'upscale' && (o.engine === 'ltx' || o.engine === 'openh3')) || tool === 'restore') && (
           <label className="flex cursor-pointer items-start gap-2 text-[11px] text-ink-dim" data-testid="preview-tile">
             <input type="checkbox" className="mt-0.5" checked={o.preview === true} onChange={(e) => setOpt('preview', e.target.checked)} />
             <span>Preview one tile — the middle tile of the first pass at 1:1, the first 41 frames: the look in minutes, before the full run.</span>

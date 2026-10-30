@@ -1269,9 +1269,9 @@ console.log('featured workflows');
   await services.caps.get('local', true);
   const entries = featuredView(services, library);
   const h3 = entries.find((e) => e.id === 'h3-flf');
-  check('Featured lists the eleven entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 11 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
+  check('Featured lists the twelve entries, in order, each with where it runs', entries.map((e) => e.id).join() === FEATURED.map((f) => f.id).join() && entries.length === 12 && entries.every((e) => e.runsOn.some((r) => r.resource === 'local')));
   check('…LTX Refine is a Comp tab card (its "Use it" opens Upscale ▸ LTX Refine), not a workflow for the shot tabs',
-    entries.find((e) => e.id === 'ltx25-refine')?.comp?.tool === 'upscale' && entries.find((e) => e.id === 'ltx25-refine')?.comp?.engine === 'ltx' && entries.filter((e) => e.comp).length === 1);
+    entries.find((e) => e.id === 'ltx25-refine')?.comp?.tool === 'upscale' && entries.find((e) => e.id === 'ltx25-refine')?.comp?.engine === 'ltx' && entries.filter((e) => e.comp).length === 2);
   check('…from the probes: Local ✓ where the local ComfyUI has every node and model', entries.find((e) => e.id === 'ltx25-i2v')?.runsOn.find((r) => r.resource === 'local')?.status === 'ok' && entries.every((e) => e.runnable === e.runsOn.some((r) => r.status === 'ok' || r.status === 'proven')));
   check('MiniMax H3 first + last frame: Draft / Final, Final = + SeedVR2 ×2 or + LTX Refine, and its licence note',
     h3?.tiers?.finals.map((x) => `${x.id}:${x.then}`).join() === 'seedvr2:seedvr2-upscale,ltx:ltx25-refine' && h3.tiers.finals[0].scale === 2
@@ -1401,10 +1401,10 @@ console.log('get started: readiness, the card\'s rules, the model downloads');
   await rsvc.models.meta.ensure(library.list().flatMap((m) => m.models.map((x) => x.url)));
   const onLocal = readiness(deps, 'local');
   const byId = (r: typeof onLocal, id: string) => r.entries.find((e) => e.id === id)!;
-  check('readiness: the eleven Featured entries in two groups, in order',
-    onLocal.entries.map((e) => `${e.group}:${e.id}`).join() === FEATURED.map((f) => `${f.group}:${f.id}`).join() && onLocal.entries.length === 11
+  check('readiness: the twelve Featured entries in two groups, in order',
+    onLocal.entries.map((e) => `${e.group}:${e.id}`).join() === FEATURED.map((f) => `${f.group}:${f.id}`).join() && onLocal.entries.length === 12
     && FEATURED.filter((f) => f.group === 'generate').map((f) => f.id).join() === 'zimage-t2i,ltx25-i2v,ltx25-t2v,h3-flf,h3-t2v,h3-i2v,wan22-flf'
-    && FEATURED.filter((f) => f.group === 'edit').map((f) => f.id).join() === 'qwen-edit,seedvr2-upscale,sam3-matte,ltx25-refine');
+    && FEATURED.filter((f) => f.group === 'edit').map((f) => f.id).join() === 'qwen-edit,seedvr2-upscale,sam3-matte,ltx25-refine,h3-regen-2k');
   const wan = byId(onLocal, 'wan22-flf');
   check('readiness on Local: ready · missing-models (with the files, sizes from the Hugging Face API, total) · missing-nodes (the pack by name)',
     byId(onLocal, 'zimage-t2i').status === 'ready' && wan.status === 'missing-models' && wan.missing.count === 2 && wan.missing.bytes === 240_000
@@ -1415,7 +1415,7 @@ console.log('get started: readiness, the card\'s rules, the model downloads');
     JSON.stringify([wan.status, wan.missing, wan.chip, byId(onLocal, 'ltx25-refine').chip]));
   check('…another precision of a file counts as there ("yours: …"); a gated repo is said', byId(onLocal, 'zimage-t2i').files.some((f) => f.state === 'variant' && f.using === 'z_image_turbo_fp8.safetensors')
     && byId(onLocal, 'ltx25-refine').files.some((f) => f.gated === true && f.pageUrl === 'https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details'));
-  check('…the counts and the missing files across entries (each file once)', onLocal.counts.ready === 9 && onLocal.counts.missingModels === 1 && onLocal.counts.missingNodes === 1
+  check('…the counts and the missing files across entries (each file once)', onLocal.counts.ready === 10 && onLocal.counts.missingModels === 1 && onLocal.counts.missingNodes === 1
     && onLocal.missing.files === 2 && onLocal.missing.bytes === 240_000, JSON.stringify([onLocal.counts, onLocal.missing]));
   const onDep = readiness(deps, 'deployment');
   check('readiness on a deployment: unknown until a run of it finished there (then ready), LTX finishing not on this resource',

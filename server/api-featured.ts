@@ -92,6 +92,11 @@ export const FEATURED: FeaturedDef[] = [
     id: 'ltx25-refine', group: 'edit', name: 'LTX Refine · more detail, up to 4K', line: 'Rebuilds fine detail on a clip (LTX-2.5 + Refine Details), on your local ComfyUI.',
     licence: LTX_LICENCE, comp: { tool: 'upscale', engine: 'ltx', label: 'Comp tab ▸ Upscale ▸ LTX Refine' },
   },
+  {
+    id: 'h3-regen-2k', group: 'edit', name: 'Open-H3 · regenerate an H3 draft to 2K', line: 'The H3 model redraws its own 768p draft at twice the size (NVlabs refiner): a 96 GB job, on the platform.',
+    licence: { text: 'MiniMax H3 open weights (+ a MiniMax licence for commercial use); Open-H3 refiner (NVlabs): no licence stated; LBH latent upscaler: its own' },
+    comp: { tool: 'upscale', engine: 'openh3', label: 'Comp tab ▸ Upscale ▸ Open-H3 2K' },
+  },
 ];
 
 export interface FeaturedRunsOn {

@@ -69,13 +69,14 @@ export interface Resource {
 }
 
 /** What each button runs: the rows of Settings ▸ Resources ▸ "Where each task runs" (PLAN v3 §2.1). */
-export type TaskId = 'video' | 'image' | 'reframe' | 'reframe-draft' | 'upscale' | 'matte' | 'interpolate' | 'restyle' | 'finishing';
+export type TaskId = 'video' | 'image' | 'reframe' | 'reframe-draft' | 'upscale' | 'regenerate' | 'matte' | 'interpolate' | 'restyle' | 'finishing';
 export const TASKS: Array<{ id: TaskId; label: string; default: string }> = [
   { id: 'video', label: 'Generate video (LTX, H3, Wan)', default: 'auto' },
   { id: 'image', label: 'Generate image', default: 'local' },
   { id: 'reframe', label: 'Generative reframe (VACE 14B)', default: 'cloud' },
   { id: 'reframe-draft', label: 'Reframe draft (VACE 1.3B)', default: 'local' },
   { id: 'upscale', label: 'Upscale (SeedVR2)', default: 'cloud' },
+  { id: 'regenerate', label: 'Regenerate to 2K (Open-H3, H3 drafts)', default: 'auto' },
   { id: 'matte', label: 'Cut-out / matte (SAM 3)', default: 'local' },
   { id: 'interpolate', label: 'Slow motion / fps (RIFE, FILM)', default: 'local' },
   { id: 'restyle', label: 'Restyle / edit video', default: 'auto' },
@@ -92,7 +93,7 @@ export function taskOf(manifestTask: Task, workflowId = ''): TaskId {
     case 'v2v': return 'restyle';
     case 't2i': case 'i2i': return 'image';
     case 'outpaint-video': return /draft/.test(workflowId) ? 'reframe-draft' : 'reframe';
-    case 'upscale-video': case 'upscale-image': return 'upscale';
+    case 'upscale-video': case 'upscale-image': return workflowId === 'h3-regen-2k' ? 'regenerate' : 'upscale';
     case 'matte-video': case 'reframe': case 'remove-bg': return 'matte';
     case 'interpolate-video': return 'interpolate';
     case 'finish-video': return 'finishing';
